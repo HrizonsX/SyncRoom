@@ -63,6 +63,34 @@ test("不支持的目标抛错", () => {
   );
 });
 
+test("裸 --target（末尾无值）立即抛错而非静默回退", () => {
+  assert.throws(
+    () => resolveTargetBrowser(["--target"], { TARGET_BROWSER: "firefox" }),
+    /Missing value for "--target"/,
+  );
+});
+
+test("--target 后紧跟另一个选项时抛错", () => {
+  assert.throws(
+    () => resolveTargetBrowser(["--target", "--verbose"], {}),
+    /Missing value for "--target"/,
+  );
+});
+
+test("--target= 空值抛错", () => {
+  assert.throws(
+    () => resolveTargetBrowser(["--target="], {}),
+    /Missing value for "--target="/,
+  );
+});
+
+test("前有有效值、后跟裸 --target 仍抛错（笔误不被吞）", () => {
+  assert.throws(
+    () => resolveTargetBrowser(["--target=firefox", "--target"], {}),
+    /Missing value for "--target"/,
+  );
+});
+
 test("distDirName 映射", () => {
   assert.equal(distDirName("chrome"), "dist");
   assert.equal(distDirName("firefox"), "dist-firefox");

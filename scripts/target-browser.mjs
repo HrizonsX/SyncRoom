@@ -14,15 +14,27 @@ export function resolveTargetBrowser(
   argv = process.argv.slice(2),
   env = process.env,
 ) {
+  const expected = `expected one of: ${[...SUPPORTED_TARGETS].join(", ")}`;
   let fromArg = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--target") {
-      fromArg = argv[index + 1] ?? fromArg;
+      // 裸 `--target`（末尾无值）或其后紧跟另一个选项，多为笔误；
+      // 静默回退会在发布流程里悄悄产出错误浏览器的包，必须直接报错。
+      const value = argv[index + 1];
+      if (value === undefined || value.startsWith("-")) {
+        throw new Error(`Missing value for "--target"; ${expected}.`);
+      }
+      fromArg = value;
+      index += 1; // 消费值，避免被后续迭代误解析
       continue;
     }
     if (arg.startsWith("--target=")) {
-      fromArg = arg.slice("--target=".length);
+      const value = arg.slice("--target=".length);
+      if (value === "") {
+        throw new Error(`Missing value for "--target="; ${expected}.`);
+      }
+      fromArg = value;
       continue;
     }
   }

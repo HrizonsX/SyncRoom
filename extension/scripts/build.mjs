@@ -33,6 +33,16 @@ if (targetBrowser === "firefox") {
       strict_min_version: "121.0",
     },
   };
+  // Firefox 不支持 MV3 background.service_worker（Bugzilla 1573659），
+  // 必须用 background.scripts（event page）。Firefox 121+ 才会在
+  // service_worker 存在时启动 background page，且支持 type:"module"
+  // ES module 后台脚本——与上面的 strict_min_version 对齐。
+  // 这是专用 Firefox 产物，去掉 Chrome 专属的 service_worker 键，
+  // 避免 web-ext lint 对不支持字段告警。
+  manifest.background = {
+    scripts: ["background.js"],
+    type: "module",
+  };
 } else {
   const extensionKey = normalizeExtensionKey(
     process.env.BILI_SYNCPLAY_EXTENSION_KEY,

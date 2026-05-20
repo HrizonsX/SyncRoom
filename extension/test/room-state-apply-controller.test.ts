@@ -453,6 +453,41 @@ test("drops deferred paused when a newer-versioned state arrives even if t-delta
   }
 });
 
+test("drops deferred paused when an empty-playback room state arrives", async () => {
+  const win = installWindowTimerStub();
+  try {
+    const video = createStubVideo(false);
+    const harness = createController({
+      video,
+      now: 30_000,
+      remotePauseDebounceMs: 250,
+    });
+    harness.runtimeState.localMemberId = "local-member";
+
+    await harness.controller.applyRoomState(
+      createRoomStateWithPlayback({
+        url: "https://www.bilibili.com/video/BV1xx411c7mD?p=1",
+        currentTime: 42,
+        playState: "paused",
+        actorId: "remote-member",
+        seq: 5,
+      }) as never,
+    );
+    assert.equal(harness.runtimeState.deferredRemotePausedState !== null, true);
+
+    // Empty room (no playback) — deferred snapshot's sharedVideo is now stale.
+    await harness.controller.applyRoomState(createEmptyRoomState());
+
+    assert.equal(harness.runtimeState.deferredRemotePausedState, null);
+    assert.equal(
+      harness.logs.some((m) => m.includes("superseded by empty playback")),
+      true,
+    );
+  } finally {
+    win.restore();
+  }
+});
+
 test("deferred timer is a no-op when fire-time freshness check sees a newer applied version", async () => {
   const win = installWindowTimerStub();
   try {

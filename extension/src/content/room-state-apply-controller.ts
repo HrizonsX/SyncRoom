@@ -202,39 +202,47 @@ export function createRoomStateApplyController(args: {
     // (e.g. duplicate paused echoes) don't accidentally drop themselves; the
     // version comparison only matters relative to the *currently-stashed*
     // deferred state.
-    if (
-      !fromDebounce &&
-      args.runtimeState.deferredRemotePausedState &&
-      state.playback
-    ) {
+    if (!fromDebounce && args.runtimeState.deferredRemotePausedState) {
       const deferredState = args.runtimeState.deferredRemotePausedState;
       const deferredPlayback = deferredState.playback;
       if (deferredPlayback) {
-        const sameUrl =
-          args.normalizeUrl(state.playback.url) ===
-          args.normalizeUrl(deferredPlayback.url);
-        const closeT =
-          Math.abs(state.playback.currentTime - deferredPlayback.currentTime) <
-          0.5;
-        const isMatchingFlicker =
-          state.playback.playState === "playing" && sameUrl && closeT;
-        const isNewerVersion =
-          state.playback.serverTime > deferredPlayback.serverTime ||
-          (state.playback.serverTime === deferredPlayback.serverTime &&
-            state.playback.seq > deferredPlayback.seq);
-        if (isMatchingFlicker) {
+        if (!state.playback) {
+          // Room emptied (no current playback) — the deferred snapshot's
+          // sharedVideo no longer reflects reality. Letting the timer fire
+          // would re-introduce the stale URL via the activeSharedUrl reset.
           clearDeferredRemotePaused();
           args.debugLog(
-            `Dropped flicker paused seq=${deferredPlayback.seq} superseded by playing seq=${state.playback.seq}`,
+            `Dropped stale deferred paused seq=${deferredPlayback.seq} superseded by empty playback`,
           );
-        } else if (isNewerVersion) {
-          // Any newer state supersedes the deferred paused — keeping it would
-          // let the timer fire later and clobber freshly applied state via the
-          // unconditional activeSharedUrl/intendedPlayState reset further down.
-          clearDeferredRemotePaused();
-          args.debugLog(
-            `Dropped stale deferred paused seq=${deferredPlayback.seq} superseded by ${state.playback.playState} seq=${state.playback.seq}`,
-          );
+        } else {
+          const sameUrl =
+            args.normalizeUrl(state.playback.url) ===
+            args.normalizeUrl(deferredPlayback.url);
+          const closeT =
+            Math.abs(
+              state.playback.currentTime - deferredPlayback.currentTime,
+            ) < 0.5;
+          const isMatchingFlicker =
+            state.playback.playState === "playing" && sameUrl && closeT;
+          const isNewerVersion =
+            state.playback.serverTime > deferredPlayback.serverTime ||
+            (state.playback.serverTime === deferredPlayback.serverTime &&
+              state.playback.seq > deferredPlayback.seq);
+          if (isMatchingFlicker) {
+            clearDeferredRemotePaused();
+            args.debugLog(
+              `Dropped flicker paused seq=${deferredPlayback.seq} superseded by playing seq=${state.playback.seq}`,
+            );
+          } else if (isNewerVersion) {
+            // Any newer state supersedes the deferred paused — keeping it
+            // would let the timer fire later and clobber freshly applied
+            // state via the unconditional activeSharedUrl/intendedPlayState
+            // reset further down.
+            clearDeferredRemotePaused();
+            args.debugLog(
+              `Dropped stale deferred paused seq=${deferredPlayback.seq} superseded by ${state.playback.playState} seq=${state.playback.seq}`,
+            );
+          }
         }
       }
     }

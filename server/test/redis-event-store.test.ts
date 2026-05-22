@@ -164,6 +164,44 @@ test("countsByEventInWindow returns accurate windowed counts even after the stre
   }
 });
 
+test("countsByEventInWindow keeps the 24h boundary minute bucket alive", async (t) => {
+  if (!REDIS_URL) {
+    t.skip("REDIS_URL is not configured.");
+    return;
+  }
+
+  const keys = createKeyTriplet();
+  const store = await createRedisEventStore(REDIS_URL, {
+    ...keys,
+    maxLen: 100,
+  });
+
+  try {
+    await store.append({
+      event: "rate_limited",
+      timestamp: "2026-03-26T10:00:00.000Z",
+      data: { result: "blocked" },
+    });
+    // Exactly 1440 minutes later: retention must keep the boundary bucket
+    // so the 24h ms query (covering 1441 minute indices) still includes it.
+    await store.append({
+      event: "rate_limited",
+      timestamp: "2026-03-27T10:00:00.000Z",
+      data: { result: "blocked" },
+    });
+
+    const now = Date.parse("2026-03-27T10:00:00.000Z");
+    const lastDay = await store.countsByEventInWindow(
+      ["rate_limited"],
+      now - 24 * 60 * 60_000,
+      now,
+    );
+    assert.equal(lastDay.rate_limited, 2);
+  } finally {
+    await store.close();
+  }
+});
+
 test("countsByEventInWindow drops minute buckets older than the retention window", async (t) => {
   if (!REDIS_URL) {
     t.skip("REDIS_URL is not configured.");

@@ -179,7 +179,10 @@ export async function createRedisEventStore(
       return;
     }
     lastPrunedMinute = currentMinute;
-    const oldestKept = currentMinute - MINUTE_BUCKET_RETENTION + 1;
+    // Keep MINUTE_BUCKET_RETENTION + 1 buckets (current minute plus the
+    // retention window of past minutes) so callers that pass a 24h ms range
+    // covering up to 1441 minute indices still see the boundary bucket.
+    const oldestKept = currentMinute - MINUTE_BUCKET_RETENTION;
     const fields = await redis.hkeys(minuteCountsKey);
     const stale: string[] = [];
     for (const field of fields) {

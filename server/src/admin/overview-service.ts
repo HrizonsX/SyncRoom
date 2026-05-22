@@ -14,10 +14,12 @@ const OVERVIEW_EVENT_NAMES = [
   "ws_connection_rejected",
 ] as const;
 
-const EVENT_WINDOWS = {
-  lastMinute: 60_000,
-  lastHour: 60 * 60_000,
-  lastDay: 24 * 60 * 60_000,
+const MINUTE_MS = 60_000;
+
+const EVENT_WINDOW_MINUTES = {
+  lastMinute: 1,
+  lastHour: 60,
+  lastDay: 24 * 60,
 } as const;
 
 type NodeWorkload = {
@@ -90,17 +92,30 @@ export function createAdminOverviewService(options: {
   return {
     async getOverview() {
       const currentTime = now();
+      // Align the windows to whole-minute buckets so the bucket-based event
+      // store cannot include events from the partial leading minute (which
+      // would systematically over-count near the bucket boundary). The
+      // semantic becomes "current minute bucket plus the N-1 buckets before
+      // it" — exact at minute granularity, deterministic, drift-free.
+      const currentMinute = Math.floor(currentTime / MINUTE_MS);
+      const alignedToMs = (currentMinute + 1) * MINUTE_MS - 1;
+      const windowRanges = Object.values(EVENT_WINDOW_MINUTES).map(
+        (windowMinutes) => ({
+          fromMs: (currentMinute - windowMinutes + 1) * MINUTE_MS,
+          toMs: alignedToMs,
+        }),
+      );
       const [
         lastMinuteEventCounts,
         lastHourEventCounts,
         lastDayEventCounts,
         totalEventCounts,
       ] = (await Promise.all([
-        ...Object.values(EVENT_WINDOWS).map((windowMs) =>
+        ...windowRanges.map(({ fromMs, toMs }) =>
           options.eventStore.countsByEventInWindow(
             OVERVIEW_EVENT_NAMES,
-            currentTime - windowMs,
-            currentTime,
+            fromMs,
+            toMs,
           ),
         ),
         options.eventStore.totalCountsByEvent(OVERVIEW_EVENT_NAMES),

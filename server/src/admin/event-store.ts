@@ -22,7 +22,10 @@ export function createEventStore(capacity = 1_000): EventStore {
   }
 
   function pruneMinuteBuckets(currentMinute: number): void {
-    const oldestKept = currentMinute - MINUTE_BUCKET_RETENTION + 1;
+    // Keep MINUTE_BUCKET_RETENTION + 1 buckets (current minute plus the
+    // retention window of past minutes) so callers that pass a 24h ms range
+    // covering up to 1441 minute indices still see the boundary bucket.
+    const oldestKept = currentMinute - MINUTE_BUCKET_RETENTION;
     for (const buckets of minuteBuckets.values()) {
       for (const minute of buckets.keys()) {
         if (minute < oldestKept) {

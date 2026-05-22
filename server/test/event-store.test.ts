@@ -160,6 +160,36 @@ test("countsByEventInWindow keeps accurate counts after the ring buffer evicts o
   assert.equal(queryResult.total, 1);
 });
 
+test("countsByEventInWindow keeps the 24h boundary minute bucket alive", async () => {
+  // The 24h ms range covers up to 1441 minute indices (start minute through
+  // end minute, inclusive). Retention must keep that boundary bucket so a
+  // direct, unaligned query at the boundary does not under-count.
+  const store = createEventStore();
+
+  await store.append({
+    event: "rate_limited",
+    timestamp: "2026-03-26T10:00:00.000Z",
+    data: { result: "blocked" },
+  });
+  // Exactly 1440 minutes later: triggers pruning of minute buckets older
+  // than (currentMinute - 1440). With 1440-bucket retention the 03-26
+  // 10:00 bucket would be pruned (it sits at the boundary); with 1441 it
+  // survives.
+  await store.append({
+    event: "rate_limited",
+    timestamp: "2026-03-27T10:00:00.000Z",
+    data: { result: "blocked" },
+  });
+
+  const now = Date.parse("2026-03-27T10:00:00.000Z");
+  const lastDay = await store.countsByEventInWindow(
+    ["rate_limited"],
+    now - 24 * 60 * 60_000,
+    now,
+  );
+  assert.equal(lastDay.rate_limited, 2);
+});
+
 test("countsByEventInWindow drops buckets older than the 24-hour retention", async () => {
   const store = createEventStore();
 

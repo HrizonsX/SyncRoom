@@ -11,7 +11,55 @@ import type { RuntimeEvent } from "./types.js";
 
 const DEFAULT_EVENT_STREAM_KEY = "bsp:events";
 const DEFAULT_EVENT_COUNTS_KEY = "bsp:event_counts";
+const DEFAULT_EVENT_WINDOW_INDEX_KEY_PREFIX = "bsp:event_window_index";
 const DEFAULT_EVENT_STREAM_MAX_LEN = 1_000;
+const MINUTE_MS = 60_000;
+const WINDOW_RETENTION_MS = 24 * 60 * 60_000;
+const LEGACY_COUNTS_MIGRATION_SNAPSHOT_SUFFIX = ":legacy_migrated";
+
+const MERGE_LEGACY_COUNTS_LUA = `
+if KEYS[1] == KEYS[2] then
+  return 0
+end
+local snapshotType = redis.call("TYPE", KEYS[3]).ok
+if snapshotType == "string" then
+  local countsExists = redis.call("EXISTS", KEYS[2])
+  redis.call("DEL", KEYS[3])
+  if countsExists == 1 then
+    local seedFields = redis.call("HGETALL", KEYS[1])
+    for index = 1, #seedFields, 2 do
+      redis.call("HSET", KEYS[3], seedFields[index], seedFields[index + 1])
+    end
+    return 0
+  end
+  snapshotType = "none"
+end
+if snapshotType ~= "none" and snapshotType ~= "hash" then
+  return redis.error_reply("legacy counts migration snapshot has unsupported type")
+end
+local fields = redis.call("HGETALL", KEYS[1])
+if #fields == 0 then
+  return 0
+end
+local migrated = 0
+for index = 1, #fields, 2 do
+  local value = tonumber(fields[index + 1])
+  if value ~= nil then
+    local previousValue = redis.call("HGET", KEYS[3], fields[index])
+    local previous = tonumber(previousValue)
+    if previous == nil then
+      previous = 0
+    end
+    local delta = value - previous
+    if delta > 0 then
+      redis.call("HINCRBY", KEYS[2], fields[index], delta)
+      migrated = migrated + delta
+    end
+    redis.call("HSET", KEYS[3], fields[index], value)
+  end
+end
+return migrated
+`;
 
 function normalizeNullable(value: string | undefined): string | null {
   return value && value.length > 0 ? value : null;
@@ -19,6 +67,18 @@ function normalizeNullable(value: string | undefined): string | null {
 
 function encodeNullable(value: string | null | undefined): string {
   return value ?? "";
+}
+
+function parseStreamFields(fieldValues: string[]): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (let i = 0; i < fieldValues.length; i += 2) {
+    const key = fieldValues[i];
+    const value = fieldValues[i + 1];
+    if (key !== undefined && value !== undefined) {
+      fields[key] = value;
+    }
+  }
+  return fields;
 }
 
 function parseEvent(
@@ -47,6 +107,14 @@ function parseEvent(
 
 function eventTime(event: RuntimeEvent): number {
   return Date.parse(event.timestamp);
+}
+
+function eventWindowIndexKey(prefix: string, eventName: string): string {
+  return `${prefix}:${encodeURIComponent(eventName)}`;
+}
+
+function retentionReferenceTimestamp(timestampMs: number): number {
+  return Math.min(timestampMs, Date.now());
 }
 
 function matchesQuery(
@@ -89,6 +157,8 @@ export async function createRedisEventStore(
   options: {
     streamKey?: string;
     countsKey?: string;
+    legacyCountsKey?: string;
+    windowIndexKeyPrefix?: string;
     maxLen?: number;
   } = {},
 ): Promise<GlobalEventStore & { close: () => Promise<void> }> {
@@ -98,11 +168,33 @@ export async function createRedisEventStore(
   });
   const streamKey = options.streamKey ?? DEFAULT_EVENT_STREAM_KEY;
   const countsKey = options.countsKey ?? DEFAULT_EVENT_COUNTS_KEY;
+  const legacyCountsKey =
+    options.legacyCountsKey && options.legacyCountsKey !== countsKey
+      ? options.legacyCountsKey
+      : undefined;
+  const windowIndexKeyPrefix =
+    options.windowIndexKeyPrefix ?? DEFAULT_EVENT_WINDOW_INDEX_KEY_PREFIX;
   const maxLen = options.maxLen ?? DEFAULT_EVENT_STREAM_MAX_LEN;
   let closing = false;
   let pendingAppend = Promise.resolve();
+  const lastPrunedMinuteByEvent = new Map<string, number>();
 
   await redis.connect();
+
+  async function mergeLegacyCountsIfNeeded() {
+    if (!legacyCountsKey) {
+      return;
+    }
+    await redis.eval(
+      MERGE_LEGACY_COUNTS_LUA,
+      3,
+      legacyCountsKey,
+      countsKey,
+      `${countsKey}${LEGACY_COUNTS_MIGRATION_SNAPSHOT_SUFFIX}`,
+    );
+  }
+
+  await mergeLegacyCountsIfNeeded();
 
   // Backfill cumulative counts from existing stream entries if the hash
   // does not exist yet (first startup after upgrade).
@@ -127,6 +219,67 @@ export async function createRedisEventStore(
         await redis.hset(countsKey, ...args);
       }
     }
+  }
+
+  // Backfill the window indexes from retained stream entries on every startup.
+  // ZADD by stream id is idempotent, so this cannot overwrite or double-count
+  // entries written concurrently by another node during a rolling restart.
+  {
+    const allEntries = await redis.xrange(streamKey, "-", "+");
+    if (allEntries.length > 0) {
+      const touchedEvents = new Map<string, number>();
+      const transaction = redis.multi();
+      for (const [id, fieldValues] of allEntries) {
+        const fields = parseStreamFields(fieldValues);
+        const eventName = fields.event;
+        const timestamp = fields.timestamp;
+        if (!eventName || !timestamp) continue;
+        const ts = Date.parse(timestamp);
+        if (!Number.isFinite(ts)) continue;
+        transaction.zadd(
+          eventWindowIndexKey(windowIndexKeyPrefix, eventName),
+          String(ts),
+          id,
+        );
+        touchedEvents.set(
+          eventName,
+          Math.max(
+            touchedEvents.get(eventName) ?? Number.NEGATIVE_INFINITY,
+            ts,
+          ),
+        );
+      }
+      if (touchedEvents.size > 0) {
+        await transaction.exec();
+        await Promise.all(
+          Array.from(touchedEvents, ([eventName, timestampMs]) =>
+            pruneEventWindowIndexIfNeeded(eventName, timestampMs),
+          ),
+        );
+      }
+    }
+  }
+
+  async function pruneEventWindowIndexIfNeeded(
+    eventName: string,
+    currentTimestampMs: number,
+  ) {
+    if (!Number.isFinite(currentTimestampMs)) {
+      return;
+    }
+    const retentionReferenceMs =
+      retentionReferenceTimestamp(currentTimestampMs);
+    const currentMinute = Math.floor(retentionReferenceMs / MINUTE_MS);
+    if (lastPrunedMinuteByEvent.get(eventName) === currentMinute) {
+      return;
+    }
+    lastPrunedMinuteByEvent.set(eventName, currentMinute);
+    const oldestKeptMs = retentionReferenceMs - WINDOW_RETENTION_MS;
+    await redis.zremrangebyscore(
+      eventWindowIndexKey(windowIndexKeyPrefix, eventName),
+      "-inf",
+      `(${oldestKeptMs}`,
+    );
   }
 
   async function queryEvents(
@@ -227,10 +380,22 @@ export async function createRedisEventStore(
             "Redis did not return a stream id for appended event.",
           );
         }
-        await Promise.all([
+        const timestampMs = Date.parse(timestamp);
+        const writeOperations: Promise<unknown>[] = [
           redis.xtrim(streamKey, "MAXLEN", "=", maxLen),
           redis.hincrby(countsKey, input.event, 1),
-        ]);
+        ];
+        if (Number.isFinite(timestampMs)) {
+          writeOperations.push(
+            redis.zadd(
+              eventWindowIndexKey(windowIndexKeyPrefix, input.event),
+              String(timestampMs),
+              streamId,
+            ),
+          );
+        }
+        await Promise.all(writeOperations);
+        await pruneEventWindowIndexIfNeeded(input.event, timestampMs);
 
         return {
           ...runtimeEvent,
@@ -253,12 +418,40 @@ export async function createRedisEventStore(
         return {};
       }
       await pendingAppend;
+      await mergeLegacyCountsIfNeeded();
       const values = await redis.hmget(countsKey, ...eventNames);
       return Object.fromEntries(
         eventNames.map((name, i) => [
           name,
           values[i] ? parseInt(values[i], 10) : 0,
         ]),
+      );
+    },
+    async countsByEventInWindow(
+      eventNames: readonly string[],
+      fromMs: number,
+      toMs: number,
+    ) {
+      if (eventNames.length === 0) {
+        return {};
+      }
+      await pendingAppend;
+      if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs) {
+        return Object.fromEntries(eventNames.map((name) => [name, 0]));
+      }
+
+      return Object.fromEntries(
+        await Promise.all(
+          eventNames.map(async (name) => {
+            await pruneEventWindowIndexIfNeeded(name, toMs);
+            const total = await redis.zcount(
+              eventWindowIndexKey(windowIndexKeyPrefix, name),
+              fromMs,
+              toMs,
+            );
+            return [name, total];
+          }),
+        ),
       );
     },
     async close() {

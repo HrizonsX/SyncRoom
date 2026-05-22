@@ -187,7 +187,10 @@ test("overview falls back to heartbeat room count when node workload is unavaila
 });
 
 test("overview aggregates event statistics from the event store", async () => {
-  const now = Date.parse("2026-04-05T12:00:00.000Z");
+  // Pick a mid-minute "now" so the windowed counters exercise a non-aligned
+  // current time and only events inside the literal ms range count for
+  // lastMinute.
+  const now = Date.parse("2026-04-05T12:00:30.000Z");
   const roomStore = createInMemoryRoomStore({ now: () => now });
   const runtimeStore = createInMemoryRuntimeStore(() => now);
   const eventStore = createEventStore();
@@ -198,7 +201,7 @@ test("overview aggregates event statistics from the event store", async () => {
 
   await eventStore.append({
     event: "room_created",
-    timestamp: new Date(now - 30_000).toISOString(),
+    timestamp: new Date(now - 5_000).toISOString(),
     data: { roomCode: "ROOM01", result: "ok" },
   });
   await eventStore.append({
@@ -208,12 +211,12 @@ test("overview aggregates event statistics from the event store", async () => {
   });
   await eventStore.append({
     event: "rate_limited",
-    timestamp: new Date(now - 90_000).toISOString(),
+    timestamp: new Date(now - 5 * 60_000).toISOString(),
     data: { result: "rejected" },
   });
   await eventStore.append({
     event: "ws_connection_rejected",
-    timestamp: new Date(now - 5_000).toISOString(),
+    timestamp: new Date(now - 2_000).toISOString(),
     data: { result: "rejected" },
   });
 
@@ -233,8 +236,62 @@ test("overview aggregates event statistics from the event store", async () => {
   assert.equal(overview.events.lastMinute.room_joined, 1);
   assert.equal(overview.events.lastMinute.rate_limited, 0);
   assert.equal(overview.events.lastMinute.ws_connection_rejected, 1);
+  assert.equal(overview.events.lastHour.rate_limited, 1);
   assert.equal(overview.events.totals.room_created, 1);
   assert.equal(overview.events.totals.room_joined, 1);
   assert.equal(overview.events.totals.rate_limited, 1);
   assert.equal(overview.events.totals.ws_connection_rejected, 1);
+});
+
+test("overview's last-minute window counts by ms timestamp across the bucket boundary", async () => {
+  // Regression for both boundary directions at 12:07:30 (last-minute
+  // ms range = [12:06:30, 12:07:30]):
+  //   - 12:06:15 lives in the 12:06 bucket but is OUTSIDE the ms range —
+  //     a pure minute-bucket sum would over-count it (Codex P1).
+  //   - 12:06:45 also lives in the 12:06 bucket but IS INSIDE the ms range —
+  //     snapping the query to the current minute bucket would under-count
+  //     it (Codex P2).
+  //   - 12:07:10 sits in the 12:07 bucket and is in range.
+  // The store's buffer-scan path must return ms-precise counts that
+  // include 12:06:45 + 12:07:10 and exclude 12:06:15.
+  const now = Date.parse("2026-04-05T12:07:30.000Z");
+  const roomStore = createInMemoryRoomStore({ now: () => now });
+  const runtimeStore = createInMemoryRuntimeStore(() => now);
+  const eventStore = createEventStore();
+  const persistenceConfig = {
+    ...getDefaultPersistenceConfig(),
+    instanceId: "instance-a",
+  };
+
+  await eventStore.append({
+    event: "rate_limited",
+    timestamp: "2026-04-05T12:06:15.000Z",
+    data: { result: "rejected" },
+  });
+  await eventStore.append({
+    event: "rate_limited",
+    timestamp: "2026-04-05T12:06:45.000Z",
+    data: { result: "rejected" },
+  });
+  await eventStore.append({
+    event: "rate_limited",
+    timestamp: "2026-04-05T12:07:10.000Z",
+    data: { result: "rejected" },
+  });
+
+  const service = createAdminOverviewService({
+    instanceId: persistenceConfig.instanceId,
+    serviceName: "bili-syncplay-server",
+    serviceVersion: "0.9.2-test",
+    persistenceConfig,
+    roomStore,
+    runtimeStore,
+    eventStore,
+    now: () => now,
+  });
+
+  const overview = await service.getOverview();
+  assert.equal(overview.events.lastMinute.rate_limited, 2);
+  assert.equal(overview.events.lastHour.rate_limited, 3);
+  assert.equal(overview.events.totals.rate_limited, 3);
 });

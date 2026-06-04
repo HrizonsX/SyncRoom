@@ -22,7 +22,9 @@ export const DEFAULT_SERVER_URL =
     : LOCALHOST_SERVER_URL;
 export const MAX_RECONNECT_ATTEMPTS = 5;
 export const SHARE_TOAST_TTL_MS = 8000;
-export const BILIBILI_VIDEO_URL_PATTERNS = [
+export const SUPPORTED_VIDEO_URL_PATTERNS = [
+  "http://*/*",
+  "https://*/*",
   "https://www.bilibili.com/video/*",
   "https://www.bilibili.com/bangumi/play/*",
   "https://www.bilibili.com/festival/*",

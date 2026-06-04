@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  normalizeBilibiliUrl,
+  normalizeSharedVideoUrl,
   type ClientMessage,
   type ErrorCode,
   type PlaybackState,
@@ -1265,10 +1265,10 @@ export function createRoomService(options: {
         );
       }
 
-      const sharedUrl = normalizeBilibiliUrl(
+      const sharedUrl = normalizeSharedVideoUrl(
         access.persistedRoom.sharedVideo.url,
       );
-      const playbackUrl = normalizeBilibiliUrl(playback.url);
+      const playbackUrl = normalizeSharedVideoUrl(playback.url);
       if (!sharedUrl || !playbackUrl || sharedUrl !== playbackUrl) {
         await runtimeStore.releaseMessageSlot(
           access.persistedRoom.code,

@@ -16,15 +16,14 @@ import type { PlaybackState, SharedVideo } from "../types/domain.js";
 import { isPlaybackSyncIntent } from "../types/domain.js";
 import {
   isActorId,
-  isBilibiliUrl,
   isFiniteNumber,
   isOptionalNonNegativeInteger,
   isPlaybackPlayState,
   isRecord,
   isRoomCode,
+  isSharedVideoReference,
   isString,
   isToken,
-  isVideoId,
 } from "./primitives.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 32;
@@ -56,9 +55,8 @@ export function isSharedVideo(value: unknown): value is SharedVideo {
   return (
     isRecord(value) &&
     isBoundedString(value.videoId, TITLE_MAX_LENGTH) &&
-    isVideoId(value.videoId) &&
     isBoundedString(value.url, URL_MAX_LENGTH) &&
-    isBilibiliUrl(value.url) &&
+    isSharedVideoReference({ videoId: value.videoId, url: value.url }) &&
     isBoundedString(value.title, TITLE_MAX_LENGTH) &&
     isOptionalBoundedString(value.sharedByMemberId, DISPLAY_NAME_MAX_LENGTH) &&
     (value.sharedByMemberId === undefined ||

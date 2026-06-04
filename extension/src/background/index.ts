@@ -21,9 +21,9 @@ import { executeFlushPendingShare } from "./room-manager";
 import { createPopupStateController } from "./popup-state-controller";
 import { createRoomSessionController } from "./room-session-controller";
 import {
-  BILIBILI_VIDEO_URL_PATTERNS,
   MAX_RECONNECT_ATTEMPTS,
   SHARE_TOAST_TTL_MS,
+  SUPPORTED_VIDEO_URL_PATTERNS,
 } from "./runtime-state";
 import { createServerMessageController } from "./server-message-controller";
 import { createServerUrlController } from "./server-url-controller";
@@ -93,7 +93,7 @@ const tabController = createTabController({
   shareState,
   log: (scope, message) => diagnosticsController.log(scope, message),
   normalizeUrl,
-  bilibiliVideoUrlPatterns: BILIBILI_VIDEO_URL_PATTERNS,
+  supportedVideoUrlPatterns: SUPPORTED_VIDEO_URL_PATTERNS,
 });
 const clockController = createClockController({
   connectionState,
@@ -450,7 +450,7 @@ function doResetRoomLifecycleTransientState(
 async function notifyContentScripts(
   message: BackgroundToContentMessage,
 ): Promise<void> {
-  await notifyContentTabs(message, BILIBILI_VIDEO_URL_PATTERNS);
+  await notifyContentTabs(message, SUPPORTED_VIDEO_URL_PATTERNS);
 }
 
 function notifyAll(): void {

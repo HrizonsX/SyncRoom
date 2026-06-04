@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Bili-SyncPlay is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized Bilibili watching. Users can create or join a room, share the current video, and keep playback, pause, seek, and playback rate in sync across participants.
+Bili-SyncPlay is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized web video watching. Users can create or join a room, share the current Bilibili or generic HTML5 video, and keep playback, pause, seek, and playback rate in sync across participants.
 
 It supports the full local workflow:
 
@@ -88,7 +88,7 @@ Firefox treats the extension background as a secure context, so non-localhost se
 
 1. Open the popup
 2. Create a room, or join one with `roomCode:joinToken`
-3. Open a supported Bilibili video page
+3. Open a supported Bilibili video page or a generic page with an HTML5 `<video>`
 4. Click `Sync current page video`
 5. Other members will open the same video and enter sync mode
 
@@ -117,6 +117,14 @@ If a member later browses to a different non-shared video while still in the roo
   - manual playback on a non-shared page stays local
 
 ## Supported Pages
+
+Generic support:
+
+- `http://*/*` and `https://*/*` pages that expose a standard HTML5 `<video>` element
+- the shared title falls back through the current part title, page heading, and `document.title`
+- the shared identity is generated from the normalized page URL
+
+Bilibili-specific support:
 
 - `https://www.bilibili.com/video/*`
 - `https://www.bilibili.com/bangumi/play/*`
@@ -503,7 +511,7 @@ During build, that manifest version is generated automatically from the root `pa
 - the background service worker only forwards playback updates from the currently recognized shared tab
 - switching the server URL disconnects the current socket and reconnects using the new address if the extension still has an active room or pending room creation
 - invalid persisted server URLs remain visible in extension state and block automatic reconnect until corrected
-- supported playback pages depend on Bilibili DOM and URL patterns, so festival pages and watch-later pages may need future compatibility updates if Bilibili changes them
+- Bilibili-specific pages use the Bilibili adapter for video IDs, episode URLs, and festival/watch-later metadata; generic pages use the HTML5 adapter and may be limited by DRM, cross-origin iframes, or sites that hide the main video element
 
 ### State Persistence
 
@@ -1394,7 +1402,7 @@ Common developer-facing failure cases:
 - `Too many requests.`: a room action or sync message hit the configured rate limit.
 - handshake rejected with `403`: the request `Origin` is not in `ALLOWED_ORIGINS`, or `Origin` is missing while `ALLOW_MISSING_ORIGIN_IN_DEV` is disabled. For temporary diagnostics, `ALLOW_ANY_ORIGIN_IN_DEV=true` disables this Origin gate.
 - connection-level IP limits appear ineffective: verify whether the reverse proxy socket IP is included in `TRUSTED_PROXY_ADDRESSES`; by default the server uses the real socket address only.
-- `Please open a Bilibili video page first.`: the active tab URL does not match the extension content-script targets.
+- `Open a supported video page first.`: the active tab URL is not a supported HTTP(S) page, or the extension cannot access the page.
 - `Current page does not have a playable video.`: the content script loaded, but the page did not expose a usable video payload.
 - `Cannot access the current page.`: Chrome could not deliver the message to the content script, often because the page was not reloaded after loading the unpacked extension or the tab is on an unsupported URL.
 
@@ -1425,7 +1433,7 @@ Chrome-side debugging tips:
 - check the extension service worker logs from `chrome://extensions`
 - copy the unpacked extension ID from `chrome://extensions` and use it in `ALLOWED_ORIGINS`
 - reload the unpacked extension after rebuilding `extension/dist`
-- reload open Bilibili tabs after the extension is reloaded so content scripts are injected again
+- reload open video tabs after the extension is reloaded so content scripts are injected again
 
 ### Build a Release Package
 

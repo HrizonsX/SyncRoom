@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import {
+  parseSharedVideoRef,
+  type PlaybackState,
+  type SharedVideo,
+} from "@bili-syncplay/protocol";
 import type { WebSocket } from "ws";
 import { createActiveRoomRegistry } from "../src/active-room-registry.js";
 import {
@@ -42,6 +46,16 @@ function createSharedVideo(
     url,
     title: "Video",
   };
+}
+
+function createGenericSharedVideo(url = "https://example.com/watch?v=abc") {
+  const ref = parseSharedVideoRef(url);
+  assert.ok(ref);
+  return {
+    videoId: ref.videoId,
+    url: ref.normalizedUrl,
+    title: "Example Video",
+  } satisfies SharedVideo;
 }
 
 function createPlayback(
@@ -1985,6 +1999,53 @@ test("room service deduplicates repeated playback:update with the same seq", asy
     playback,
   );
   assert.equal(second.ignored, true);
+});
+
+test("room service accepts generic html5 share and normalized playback updates", async () => {
+  const roomStore = createInMemoryRoomStore({ now: () => 1_000 });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => 1_000,
+    createRoomCode: () => "WEB001",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const video = createGenericSharedVideo("https://example.com/watch?v=abc");
+
+  const shared = await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    video,
+  );
+
+  assert.equal(shared.room.sharedVideo?.title, "Example Video");
+  assert.equal(shared.room.sharedVideo?.sharedByDisplayName, "Alice");
+  assert.equal(shared.room.sharedVideo?.url, "https://example.com/watch?v=abc");
+
+  const playback = createPlayback(owner.id, {
+    url: "https://example.com/watch?v=abc#comments",
+    currentTime: 25,
+    playState: "playing",
+    seq: 2,
+  });
+  const updated = await service.updatePlaybackForSession(
+    owner,
+    created.memberToken,
+    playback,
+  );
+
+  assert.equal(updated.ignored, false);
+  assert.equal(updated.room?.playback?.currentTime, 25);
+  assert.equal(updated.room?.playback?.url, playback.url);
 });
 
 test("concurrent joins both succeed when room has capacity for all", async () => {

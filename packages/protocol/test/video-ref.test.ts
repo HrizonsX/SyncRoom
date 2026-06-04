@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeBilibiliUrl, parseBilibiliVideoRef } from "../src/index.js";
+import {
+  normalizeBilibiliUrl,
+  normalizeSharedVideoUrl,
+  parseBilibiliVideoRef,
+  parseSharedVideoRef,
+} from "../src/index.js";
 
 test("parses a standard video URL", () => {
   assert.deepEqual(
@@ -137,4 +142,47 @@ test("normalizes supported URLs and rejects unsupported ones", () => {
     ),
     null,
   );
+});
+
+test("parses generic html5 page URLs without losing share identity", () => {
+  const ref = parseSharedVideoRef(
+    "https://example.com/watch/path/?v=abc&episode=2#comments",
+  );
+
+  assert.ok(ref);
+  assert.match(ref.videoId, /^web:[0-9a-f]{16}$/);
+  assert.equal(
+    ref.normalizedUrl,
+    "https://example.com/watch/path/?v=abc&episode=2",
+  );
+  assert.equal(
+    normalizeSharedVideoUrl(
+      "https://example.com/watch/path/?v=abc&episode=2#comments",
+    ),
+    "https://example.com/watch/path/?v=abc&episode=2",
+  );
+});
+
+test("shared video normalization preserves existing bilibili semantics", () => {
+  assert.deepEqual(
+    parseSharedVideoRef(
+      "https://www.bilibili.com/festival/demo?cid=987654&bvid=BV1ab411c7mD",
+    ),
+    {
+      videoId: "BV1ab411c7mD:987654",
+      normalizedUrl: "https://www.bilibili.com/video/BV1ab411c7mD?cid=987654",
+    },
+  );
+  assert.equal(
+    normalizeSharedVideoUrl(
+      "https://www.bilibili.com/list/watchlater?bvid=BV1xx411c7mD&p=2",
+    ),
+    "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
+  );
+});
+
+test("shared video parsing rejects unsupported page URLs", () => {
+  assert.equal(parseSharedVideoRef("file:///C:/video.mp4"), null);
+  assert.equal(parseSharedVideoRef("chrome://extensions"), null);
+  assert.equal(parseSharedVideoRef("not-a-url"), null);
 });

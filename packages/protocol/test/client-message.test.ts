@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isClientMessage } from "../src/index.js";
+import { isClientMessage, parseSharedVideoRef } from "../src/index.js";
 
 const VALID_TOKEN = "valid-member-token-123";
 const DISPLAY_NAME_MAX_LENGTH = 32;
@@ -453,6 +453,26 @@ test("rejects video:share with an invalid bilibili url", () => {
       },
     }),
     false,
+  );
+});
+
+test("accepts video:share with a generic html5 video reference", () => {
+  const ref = parseSharedVideoRef("https://example.com/watch?v=abc");
+  assert.ok(ref);
+
+  assert.equal(
+    isClientMessage({
+      type: "video:share",
+      payload: {
+        memberToken: "1234567890abcdef",
+        video: {
+          videoId: ref.videoId,
+          url: ref.normalizedUrl,
+          title: "Example Video",
+        },
+      },
+    }),
+    true,
   );
 });
 

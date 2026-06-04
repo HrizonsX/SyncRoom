@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Bili-SyncPlay 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的哔哩哔哩同步观影项目。用户可以创建或加入房间，分享当前视频，并在参与者之间同步播放、暂停、跳转和播放速率。
+Bili-SyncPlay 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的网页视频同步观影项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 视频，并在参与者之间同步播放、暂停、跳转和播放速率。
 
 它覆盖了完整的本地使用链路：
 
@@ -88,7 +88,7 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
 
 1. 打开扩展弹窗
 2. 创建房间，或者使用 `roomCode:joinToken` 加入已有房间
-3. 打开受支持的 Bilibili 视频页面
+3. 打开受支持的 Bilibili 视频页面，或带标准 HTML5 `<video>` 的普通网页
 4. 在弹窗中点击 `同步当前页视频`
 5. 其他房间成员会打开同一视频并进入同步模式
 
@@ -117,6 +117,14 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
   - 在未共享页面上的手动播放仅在本地生效
 
 ## 支持的页面
+
+通用支持：
+
+- 暴露标准 HTML5 `<video>` 元素的 `http://*/*` 与 `https://*/*` 页面
+- 共享标题会依次从当前分集标题、页面标题元素、`document.title` 中兜底
+- 共享身份由规范化后的页面 URL 生成
+
+Bilibili 专用支持：
 
 - `https://www.bilibili.com/video/*`
 - `https://www.bilibili.com/bangumi/play/*`
@@ -503,7 +511,7 @@ Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
 - background service worker 只会转发当前识别为共享标签页的播放更新
 - 切换服务器地址会断开当前 socket；如果扩展仍有活动房间或待创建房间，会使用新地址重新连接
 - 如果持久化的服务器地址非法，扩展会保留该值并阻止自动重连，直到用户修正地址
-- 支持的播放页面依赖 Bilibili 的 DOM 和 URL 模式，因此如果 Bilibili 后续改版，festival 页面和稍后再看页面可能需要兼容性更新
+- Bilibili 专用页面使用 B 站 adapter 识别视频 ID、剧集 URL、festival / 稍后再看元数据；通用页面使用 HTML5 adapter，可能受 DRM、跨域 iframe、或站点隐藏主视频元素影响
 
 ### 状态持久化
 
@@ -1394,7 +1402,7 @@ sudo systemctl restart bili-syncplay-global-admin
 - `请求过于频繁。`：某个房间操作或同步消息触发了配置的限流。
 - 握手阶段返回 `403`：请求的 `Origin` 不在 `ALLOWED_ORIGINS` 中，或者在 `ALLOW_MISSING_ORIGIN_IN_DEV` 关闭时缺少 `Origin`。临时排障时可用 `ALLOW_ANY_ORIGIN_IN_DEV=true` 关闭这一 Origin 闸门。
 - 连接级 IP 限制看起来未生效：检查反向代理的 socket IP 是否已加入 `TRUSTED_PROXY_ADDRESSES`；默认情况下服务器只使用真实 socket 地址。
-- `请先打开一个哔哩哔哩视频页面。`：当前活动标签页 URL 不匹配扩展内容脚本的目标页面。
+- `请先打开一个支持同步的视频页面。`：当前活动标签页不是受支持的 HTTP(S) 页面，或扩展无法访问该页面。
 - `当前页面没有可播放的视频。`：内容脚本已加载，但页面没有暴露可用的视频载荷。
 - `无法访问当前页面。`：Chrome 无法把消息传给内容脚本，通常是因为加载未打包扩展后没有刷新页面，或当前标签页 URL 不受支持。
 
@@ -1425,7 +1433,7 @@ Chrome 侧调试建议：
 - 在 `chrome://extensions` 查看扩展 service worker 日志
 - 从 `chrome://extensions` 复制未打包扩展 ID，并加入 `ALLOWED_ORIGINS`
 - 重新构建 `extension/dist` 后，重新加载未打包扩展
-- 扩展重新加载后，刷新已打开的 Bilibili 标签页，以便重新注入内容脚本
+- 扩展重新加载后，刷新已打开的视频标签页，以便重新注入内容脚本
 
 ### 构建发布包
 

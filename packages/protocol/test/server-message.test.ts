@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isServerMessage } from "../src/index.js";
+import { isServerMessage, parseSharedVideoRef } from "../src/index.js";
 
 const VALID_TOKEN = "valid-member-token-123";
 
@@ -351,6 +351,28 @@ test("rejects room:state when shared video url is invalid", () => {
       },
     }),
     false,
+  );
+});
+
+test("accepts room:state with a generic html5 shared video", () => {
+  const ref = parseSharedVideoRef("https://example.com/watch?v=abc");
+  assert.ok(ref);
+
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: {
+          videoId: ref.videoId,
+          url: ref.normalizedUrl,
+          title: "Example Video",
+        },
+        playback: null,
+        members: [],
+      },
+    }),
+    true,
   );
 });
 

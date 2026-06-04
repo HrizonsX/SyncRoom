@@ -81,7 +81,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     adminClosedRoom: "当前房间已被管理员关闭。",
     leftRoomWithReason: "已退出房间：{reason}",
     popupErrorNoActiveTab: "当前没有活动标签页。",
-    popupErrorOpenBilibiliVideo: "请先打开一个哔哩哔哩视频页面。",
+    popupErrorOpenBilibiliVideo: "请先打开一个支持同步的视频页面。",
     popupErrorNoPlayableVideo: "当前页面没有可播放的视频。",
     popupErrorCannotAccessPage: "无法访问当前页面。",
     popupErrorMemberTokenMissing: "成员令牌缺失，请重新加入房间。",
@@ -188,7 +188,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     adminClosedRoom: "This room was closed by an admin.",
     leftRoomWithReason: "You left the room: {reason}",
     popupErrorNoActiveTab: "No active tab.",
-    popupErrorOpenBilibiliVideo: "Open a Bilibili video page first.",
+    popupErrorOpenBilibiliVideo: "Open a supported video page first.",
     popupErrorNoPlayableVideo:
       "No playable video was found on the current page.",
     popupErrorCannotAccessPage: "Cannot access the current page.",

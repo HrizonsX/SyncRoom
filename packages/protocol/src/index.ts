@@ -1,7 +1,10 @@
 export {
   normalizeBilibiliUrl,
+  normalizeSharedVideoUrl,
   parseBilibiliVideoRef,
+  parseSharedVideoRef,
   type BilibiliVideoRef,
+  type SharedVideoRef,
 } from "./video-ref.js";
 export * from "./types/common.js";
 export * from "./types/domain.js";

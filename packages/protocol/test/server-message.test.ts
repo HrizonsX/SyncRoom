@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isServerMessage } from "../src/index.js";
+import { isServerMessage, parseSharedVideoRef } from "../src/index.js";
 
 const VALID_TOKEN = "valid-member-token-123";
 
@@ -354,6 +354,28 @@ test("rejects room:state when shared video url is invalid", () => {
   );
 });
 
+test("accepts room:state with a generic html5 shared video", () => {
+  const ref = parseSharedVideoRef("https://example.com/watch?v=abc");
+  assert.ok(ref);
+
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: {
+          videoId: ref.videoId,
+          url: ref.normalizedUrl,
+          title: "Example Video",
+        },
+        playback: null,
+        members: [],
+      },
+    }),
+    true,
+  );
+});
+
 test("rejects room:state when playback actorId format is invalid", () => {
   assert.equal(
     isServerMessage({
@@ -475,6 +497,82 @@ test("rejects room:joined when serverProtocolVersion is negative", () => {
         memberId: "member-1",
         memberToken: VALID_TOKEN,
         serverProtocolVersion: -1,
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts a valid voice:access-granted message", () => {
+  assert.equal(
+    isServerMessage({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "wss://voice.example.com",
+        token: VALID_TOKEN,
+        roomName: "bili-syncplay:ABC123",
+        participantIdentity: "member-1",
+        expiresAt: 1_725_000_000_000,
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects voice:access-granted when it exposes malformed connection details", () => {
+  assert.equal(
+    isServerMessage({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "https://voice.example.com",
+        token: VALID_TOKEN,
+        roomName: "bili-syncplay:ABC123",
+        participantIdentity: "member-1",
+        expiresAt: 1_725_000_000_000,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isServerMessage({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "wss://voice.example.com",
+        token: "short-token",
+        roomName: "bili-syncplay:ABC123",
+        participantIdentity: "member-1",
+        expiresAt: 1_725_000_000_000,
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts a valid voice:state server message", () => {
+  assert.equal(
+    isServerMessage({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-1",
+        connected: true,
+        muted: false,
+        speaking: true,
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects voice:state server messages with invalid status", () => {
+  assert.equal(
+    isServerMessage({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-1",
+        connected: "yes",
+        muted: false,
       },
     }),
     false,

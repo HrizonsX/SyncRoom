@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isClientMessage } from "../src/index.js";
+import { isClientMessage, parseSharedVideoRef } from "../src/index.js";
 
 const VALID_TOKEN = "valid-member-token-123";
 const DISPLAY_NAME_MAX_LENGTH = 32;
@@ -456,6 +456,26 @@ test("rejects video:share with an invalid bilibili url", () => {
   );
 });
 
+test("accepts video:share with a generic html5 video reference", () => {
+  const ref = parseSharedVideoRef("https://example.com/watch?v=abc");
+  assert.ok(ref);
+
+  assert.equal(
+    isClientMessage({
+      type: "video:share",
+      payload: {
+        memberToken: "1234567890abcdef",
+        video: {
+          videoId: ref.videoId,
+          url: ref.normalizedUrl,
+          title: "Example Video",
+        },
+      },
+    }),
+    true,
+  );
+});
+
 test("rejects video:share with an invalid videoId format", () => {
   assert.equal(
     isClientMessage({
@@ -699,6 +719,70 @@ test("rejects room:join when protocolVersion is a float", () => {
         roomCode: "ABC123",
         joinToken: VALID_TOKEN,
         protocolVersion: 1.5,
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts a valid voice:access message", () => {
+  assert.equal(
+    isClientMessage({
+      type: "voice:access",
+      payload: {
+        memberToken: VALID_TOKEN,
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects voice:access without a valid member token", () => {
+  assert.equal(
+    isClientMessage({
+      type: "voice:access",
+      payload: {
+        memberToken: "short-token",
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts a valid voice:state message", () => {
+  assert.equal(
+    isClientMessage({
+      type: "voice:state",
+      payload: {
+        memberToken: VALID_TOKEN,
+        connected: true,
+        muted: false,
+        speaking: true,
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects voice:state when status flags are invalid", () => {
+  assert.equal(
+    isClientMessage({
+      type: "voice:state",
+      payload: {
+        memberToken: VALID_TOKEN,
+        connected: "yes",
+        muted: false,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "voice:state",
+      payload: {
+        memberToken: VALID_TOKEN,
+        connected: true,
+        muted: "no",
       },
     }),
     false,

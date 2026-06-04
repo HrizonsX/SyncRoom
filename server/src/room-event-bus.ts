@@ -32,6 +32,16 @@ export type RoomEventBusMessage =
       roomCode: string;
       sourceInstanceId: string;
       emittedAt: number;
+    }
+  | {
+      type: "voice_state_updated";
+      roomCode: string;
+      sourceInstanceId: string;
+      emittedAt: number;
+      memberId: string;
+      connected: boolean;
+      muted: boolean;
+      speaking?: boolean;
     };
 
 export type RoomEventType = RoomEventBusMessage["type"];
@@ -47,6 +57,7 @@ export const ROOM_EVENT_TYPES = [
   "room_member_joined",
   "room_member_left",
   "room_deleted",
+  "voice_state_updated",
 ] as const satisfies readonly RoomEventType[];
 
 type _EnsureAllRoomEventTypesCovered =

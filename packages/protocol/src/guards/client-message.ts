@@ -9,20 +9,21 @@ import type {
   ShareVideoMessage,
   SyncPingMessage,
   SyncRequestMessage,
+  VoiceAccessMessage,
+  ClientVoiceStateMessage,
 } from "../types/client-message.js";
 import type { PlaybackState, SharedVideo } from "../types/domain.js";
 import { isPlaybackSyncIntent } from "../types/domain.js";
 import {
   isActorId,
-  isBilibiliUrl,
   isFiniteNumber,
   isOptionalNonNegativeInteger,
   isPlaybackPlayState,
   isRecord,
   isRoomCode,
+  isSharedVideoReference,
   isString,
   isToken,
-  isVideoId,
 } from "./primitives.js";
 
 const DISPLAY_NAME_MAX_LENGTH = 32;
@@ -54,9 +55,8 @@ export function isSharedVideo(value: unknown): value is SharedVideo {
   return (
     isRecord(value) &&
     isBoundedString(value.videoId, TITLE_MAX_LENGTH) &&
-    isVideoId(value.videoId) &&
     isBoundedString(value.url, URL_MAX_LENGTH) &&
-    isBilibiliUrl(value.url) &&
+    isSharedVideoReference({ videoId: value.videoId, url: value.url }) &&
     isBoundedString(value.title, TITLE_MAX_LENGTH) &&
     isOptionalBoundedString(value.sharedByMemberId, DISPLAY_NAME_MAX_LENGTH) &&
     (value.sharedByMemberId === undefined ||
@@ -214,6 +214,40 @@ function isSyncPingMessage(value: unknown): value is SyncPingMessage {
   );
 }
 
+function isVoiceAccessPayload(
+  value: unknown,
+): value is VoiceAccessMessage["payload"] {
+  return isRecord(value) && isToken(value.memberToken);
+}
+
+function isVoiceAccessMessage(value: unknown): value is VoiceAccessMessage {
+  return (
+    isRecord(value) &&
+    value.type === "voice:access" &&
+    isVoiceAccessPayload(value.payload)
+  );
+}
+
+function isVoiceStatePayload(
+  value: unknown,
+): value is ClientVoiceStateMessage["payload"] {
+  return (
+    isRecord(value) &&
+    isToken(value.memberToken) &&
+    typeof value.connected === "boolean" &&
+    typeof value.muted === "boolean" &&
+    (value.speaking === undefined || typeof value.speaking === "boolean")
+  );
+}
+
+function isVoiceStateMessage(value: unknown): value is ClientVoiceStateMessage {
+  return (
+    isRecord(value) &&
+    value.type === "voice:state" &&
+    isVoiceStatePayload(value.payload)
+  );
+}
+
 export function isClientMessage(value: unknown): value is ClientMessage {
   if (!isRecord(value) || !isString(value.type)) {
     return false;
@@ -236,6 +270,10 @@ export function isClientMessage(value: unknown): value is ClientMessage {
       return isSyncRequestMessage(value);
     case "sync:ping":
       return isSyncPingMessage(value);
+    case "voice:access":
+      return isVoiceAccessMessage(value);
+    case "voice:state":
+      return isVoiceStateMessage(value);
     default:
       return false;
   }

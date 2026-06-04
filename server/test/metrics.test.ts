@@ -102,6 +102,12 @@ test("metrics collector renders event counters, histograms, and redis failure co
     ),
     true,
   );
+  assert.equal(
+    rendered.includes(
+      'bili_syncplay_room_event_publish_dropped_total{event_type="voice_state_updated"} 0',
+    ),
+    true,
+  );
 });
 
 test("metrics collector can rebind to the effective runtime store", async () => {

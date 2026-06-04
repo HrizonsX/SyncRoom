@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Bili-SyncPlay is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized Bilibili watching. Users can create or join a room, share the current video, and keep playback, pause, seek, and playback rate in sync across participants.
+Bili-SyncPlay is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized web video watching. Users can create or join a room, share the current Bilibili or generic HTML5 video, and keep playback, pause, seek, and playback rate in sync across participants.
 
 It supports the full local workflow:
 
@@ -88,7 +88,7 @@ Firefox treats the extension background as a secure context, so non-localhost se
 
 1. Open the popup
 2. Create a room, or join one with `roomCode:joinToken`
-3. Open a supported Bilibili video page
+3. Open a supported Bilibili video page or a generic page with an HTML5 `<video>`
 4. Click `Sync current page video`
 5. Other members will open the same video and enter sync mode
 
@@ -104,6 +104,10 @@ If a member later browses to a different non-shared video while still in the roo
   - share the current page video from the popup
   - sync play, pause, seek, and playback rate
   - automatically open the currently shared video for room members
+- Optional LiveKit voice chat
+  - room members can hear voice by default when LiveKit is enabled
+  - microphones stay muted until the user clicks the mic button
+  - voice-enabled rooms are capped at 4 members
 - In-page feedback
   - member join and leave toasts
   - shared video change toasts
@@ -113,6 +117,14 @@ If a member later browses to a different non-shared video while still in the roo
   - manual playback on a non-shared page stays local
 
 ## Supported Pages
+
+Generic support:
+
+- `http://*/*` and `https://*/*` pages that expose a standard HTML5 `<video>` element
+- the shared title falls back through the current part title, page heading, and `document.title`
+- the shared identity is generated from the normalized page URL
+
+Bilibili-specific support:
 
 - `https://www.bilibili.com/video/*`
 - `https://www.bilibili.com/bangumi/play/*`
@@ -140,6 +152,7 @@ Bili-SyncPlay/
 ## Documentation
 
 - [Documentation index](./docs/README.md)
+- [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md)
 - [Multi-node operations runbook](./docs/runbook/multi-node-operations.zh-CN.md)
 - [Multi-node global admin migration](./docs/operations/multi-node-global-admin-migration.md)
 - [Privacy policy](./docs/legal/privacy.md)
@@ -171,6 +184,7 @@ Bili-SyncPlay/
 - Empty server URL input falls back to the build-time default
 - Only `ws://` and `wss://` are accepted
 - Local unpacked extension development requires `ALLOWED_ORIGINS=chrome-extension://<extension-id>` (Chrome/Edge) or the current `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true` (Firefox; see "Start the local server")
+- Voice chat is disabled by default and requires a self-hosted LiveKit server. See [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md).
 
 ### Open the Admin Control Panel
 
@@ -497,7 +511,7 @@ During build, that manifest version is generated automatically from the root `pa
 - the background service worker only forwards playback updates from the currently recognized shared tab
 - switching the server URL disconnects the current socket and reconnects using the new address if the extension still has an active room or pending room creation
 - invalid persisted server URLs remain visible in extension state and block automatic reconnect until corrected
-- supported playback pages depend on Bilibili DOM and URL patterns, so festival pages and watch-later pages may need future compatibility updates if Bilibili changes them
+- Bilibili-specific pages use the Bilibili adapter for video IDs, episode URLs, and festival/watch-later metadata; generic pages use the HTML5 adapter and may be limited by DRM, cross-origin iframes, or sites that hide the main video element
 
 ### State Persistence
 
@@ -542,7 +556,7 @@ npm run build:release
 
 When the environment variable is unset, the build output still uses `ws://localhost:8787`. When it is set, clearing the server URL in the popup and saving also falls back to that injected value.
 
-For local unpacked-extension development, `ALLOWED_ORIGINS` must include the current `chrome-extension://<extension-id>` or the server will reject the WebSocket handshake with `origin_not_allowed`.
+For local unpacked-extension development, `ALLOWED_ORIGINS` should include the current `chrome-extension://<extension-id>` or the server will reject the WebSocket handshake with `origin_not_allowed`. For short-lived diagnostics, `ALLOW_ANY_ORIGIN_IN_DEV=true` skips this Origin gate.
 
 The server now also supports an optional JSON config file. Resolution order is:
 
@@ -573,6 +587,12 @@ Example `server.config.json`:
     "nodeHeartbeatEnabled": true,
     "redisUrl": "redis://127.0.0.1:6379"
   },
+  "voice": {
+    "enabled": true,
+    "livekitUrl": "wss://voice.example.com",
+    "tokenTtlSeconds": 900,
+    "maxMembers": 4
+  },
   "adminUi": {
     "enabled": false
   }
@@ -584,6 +604,11 @@ Sensitive admin secrets remain env-only:
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD_HASH`
 - `ADMIN_SESSION_SECRET`
+
+LiveKit signing secrets are also env-only:
+
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
 
 The current server implementation:
 
@@ -597,6 +622,7 @@ The current server implementation:
 - reissues `memberToken` after reconnect or server restart
 - keeps empty rooms until `EMPTY_ROOM_TTL_MS` expires instead of deleting them immediately
 - supports origin allowlists, connection throttling, message throttling, and structured security logs
+- optionally issues room-scoped LiveKit voice tokens when `VOICE_ENABLED=true` and LiveKit config is complete
 
 ### Multi-Node Deployment and Global Admin
 
@@ -805,10 +831,17 @@ The server accepts the following environment variables. Safe defaults are built 
 - if `ALLOWED_ORIGINS` is empty, the server rejects all explicit `Origin` values by default
 - `ALLOW_MISSING_ORIGIN_IN_DEV`: allow missing `Origin` headers when set to `true`
 - `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN`: when `true`, accept any well-formed `moz-extension://<uuid>` origin; Firefox assigns a random per-install UUID that a public/shared server cannot enumerate in `ALLOWED_ORIGINS`. Still rejects web-page origins (a page can never present a `moz-extension://` origin) and does not replace room/member-token auth; default `false`
+- `ALLOW_ANY_ORIGIN_IN_DEV`: when `true`, skip WebSocket Origin checks for both explicit and missing Origin values. Use only for local development or short-lived diagnostics; default `false`
 - `TRUSTED_PROXY_ADDRESSES`: comma-separated proxy socket IP allowlist; only requests arriving from these proxies can use `X-Forwarded-For`
 - `MAX_CONNECTIONS_PER_IP`: max concurrent WebSocket connections per IP
 - `CONNECTION_ATTEMPTS_PER_MINUTE`: max handshake attempts per IP per minute
 - `MAX_MEMBERS_PER_ROOM`: room member cap
+- `VOICE_ENABLED`: enable server-side LiveKit voice token issuance
+- `LIVEKIT_URL`: browser-reachable LiveKit WebSocket URL, normally `wss://voice.example.com` in production
+- `LIVEKIT_API_KEY`: LiveKit API key, env-only
+- `LIVEKIT_API_SECRET`: LiveKit API secret, env-only
+- `VOICE_TOKEN_TTL_SECONDS`: voice token lifetime, default `900`
+- `VOICE_MAX_MEMBERS`: voice-enabled room cap, capped to `4`
 - `MAX_MESSAGE_BYTES`: WebSocket message size cap in bytes
 - `INVALID_MESSAGE_CLOSE_THRESHOLD`: number of invalid messages before disconnect
 - `ROOM_STORE_PROVIDER`: `memory` or `redis`
@@ -855,6 +888,11 @@ ROOM_CLEANUP_INTERVAL_MS=60000 \
 MAX_CONNECTIONS_PER_IP=10 \
 CONNECTION_ATTEMPTS_PER_MINUTE=20 \
 MAX_MEMBERS_PER_ROOM=8 \
+VOICE_ENABLED=true \
+LIVEKIT_URL=wss://voice.example.com \
+LIVEKIT_API_KEY=$LIVEKIT_API_KEY \
+LIVEKIT_API_SECRET=$LIVEKIT_API_SECRET \
+VOICE_MAX_MEMBERS=4 \
 MAX_MESSAGE_BYTES=8192 \
 ADMIN_USERNAME=admin \
 ADMIN_PASSWORD_HASH=sha256:<hex-password-hash> \
@@ -877,7 +915,7 @@ Admin control panel:
 
 - open `http://localhost:8787/admin`
 - authenticate with the account configured by `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, and `ADMIN_ROLE`
-- the UI covers login, overview, rooms, room detail, events, audit logs, config summary, and the existing admin actions
+- the UI covers login, overview, rooms, room detail, events, IP blacklist, audit logs, config summary, and the existing admin actions
 
 Role model:
 
@@ -889,6 +927,8 @@ Action behavior notes:
 
 - `kick member` disconnects the current member session and temporarily blocks immediate auto rejoin attempts that reuse the old `memberToken`
 - `disconnect session` only closes the specified socket; if the client still holds valid room context, it may join again normally
+- `add to blacklist` stores the IP, immediately disconnects current sessions from the same IP, and rejects future WebSocket upgrades from that IP
+- the IP blacklist is process-local in memory mode; when Redis persistence providers are enabled, Redis stores and shares it across nodes, while disk durability depends on Redis AOF / RDB settings
 
 Implemented endpoints:
 
@@ -902,8 +942,11 @@ Implemented endpoints:
 - `GET /api/admin/config`
 - `GET /api/admin/rooms`
 - `GET /api/admin/rooms/:roomCode`
+- `GET /api/admin/ip-blocks`
 - `GET /api/admin/events`
 - `GET /api/admin/audit-logs`
+- `POST /api/admin/ip-blocks`
+- `DELETE /api/admin/ip-blocks/:ip`
 - `POST /api/admin/rooms/:roomCode/close`
 - `POST /api/admin/rooms/:roomCode/expire`
 - `POST /api/admin/rooms/:roomCode/clear-video`
@@ -1336,7 +1379,7 @@ If you run multiple room nodes, prefer a rolling restart instead of restarting e
 - Rooms are not deleted immediately when the last member leaves; the server writes `expiresAt` and retains the room until `EMPTY_ROOM_TTL_MS` elapses.
 - Room join requires both `roomCode` and `joinToken`; room messages require a valid `memberToken`.
 - `memberToken` is session-bound, never restored from persistence, and is re-issued after reconnect or restart.
-- Handshake origin checks are deny-by-default unless you explicitly allow missing `Origin` in development.
+- Handshake origin checks are deny-by-default unless you configure `ALLOWED_ORIGINS`, explicitly allow missing `Origin` in development, or temporarily set `ALLOW_ANY_ORIGIN_IN_DEV=true`.
 - `X-Forwarded-For` is ignored unless the socket peer matches `TRUSTED_PROXY_ADDRESSES`.
 - Health checks are available on both `GET /` and `GET /healthz`; readiness is `GET /readyz`.
 - If you use a cloud firewall, allow inbound `80` and `443`, but keep `8787` private to localhost.
@@ -1357,9 +1400,9 @@ Common developer-facing failure cases:
 - `Join token is invalid.`: the invite string is wrong, stale, or from another room.
 - `Member token is invalid.`: the current session lost its room binding, the server restarted, or the client must rejoin to obtain a fresh token.
 - `Too many requests.`: a room action or sync message hit the configured rate limit.
-- handshake rejected with `403`: the request `Origin` is not in `ALLOWED_ORIGINS`, or `Origin` is missing while `ALLOW_MISSING_ORIGIN_IN_DEV` is disabled.
+- handshake rejected with `403`: the request `Origin` is not in `ALLOWED_ORIGINS`, or `Origin` is missing while `ALLOW_MISSING_ORIGIN_IN_DEV` is disabled. For temporary diagnostics, `ALLOW_ANY_ORIGIN_IN_DEV=true` disables this Origin gate.
 - connection-level IP limits appear ineffective: verify whether the reverse proxy socket IP is included in `TRUSTED_PROXY_ADDRESSES`; by default the server uses the real socket address only.
-- `Please open a Bilibili video page first.`: the active tab URL does not match the extension content-script targets.
+- `Open a supported video page first.`: the active tab URL is not a supported HTTP(S) page, or the extension cannot access the page.
 - `Current page does not have a playable video.`: the content script loaded, but the page did not expose a usable video payload.
 - `Cannot access the current page.`: Chrome could not deliver the message to the content script, often because the page was not reloaded after loading the unpacked extension or the tab is on an unsupported URL.
 
@@ -1390,7 +1433,7 @@ Chrome-side debugging tips:
 - check the extension service worker logs from `chrome://extensions`
 - copy the unpacked extension ID from `chrome://extensions` and use it in `ALLOWED_ORIGINS`
 - reload the unpacked extension after rebuilding `extension/dist`
-- reload open Bilibili tabs after the extension is reloaded so content scripts are injected again
+- reload open video tabs after the extension is reloaded so content scripts are injected again
 
 ### Build a Release Package
 

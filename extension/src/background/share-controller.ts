@@ -1,5 +1,5 @@
 import {
-  parseBilibiliVideoRef,
+  parseSharedVideoRef,
   type PlaybackState,
   PROTOCOL_VERSION,
   type SharedVideo,
@@ -83,7 +83,7 @@ export function createShareController(args: {
       };
     }
 
-    if (!activeTab.url || !parseBilibiliVideoRef(activeTab.url)) {
+    if (!activeTab.url || !parseSharedVideoRef(activeTab.url)) {
       return {
         ok: false,
         payload: null,

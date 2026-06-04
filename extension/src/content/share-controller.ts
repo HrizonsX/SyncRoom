@@ -198,6 +198,7 @@ export function createShareController(args: {
       headingTitle: document.querySelector("h1")?.textContent?.trim() ?? null,
       currentPartTitle: currentPart.title,
       pageSnapshot: matchingFestivalSnapshot,
+      hasVideoElement: getVideoElement() !== null,
       festivalSnapshot: matchingFestivalSnapshot,
     });
   }

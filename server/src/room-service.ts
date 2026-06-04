@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
-  normalizeBilibiliUrl,
+  normalizeSharedVideoUrl,
   type ClientMessage,
   type ErrorCode,
   type PlaybackState,
@@ -160,6 +160,10 @@ export function createRoomService(options: {
     memberToken: string,
     messageType: ClientMessage["type"],
   ) => Promise<ReturnType<typeof roomStateOf>>;
+  getVoiceMemberAccessForSession: (
+    session: Session,
+    memberToken: string,
+  ) => Promise<{ roomCode: string; memberId: string; displayName: string }>;
   getActiveRoom: (roomCode: string) => ReturnType<RuntimeStore["getRoom"]>;
   getPlaybackAuthority: (roomCode: string) => PlaybackAuthority | null;
   getRoomStateByCode: (
@@ -1261,10 +1265,10 @@ export function createRoomService(options: {
         );
       }
 
-      const sharedUrl = normalizeBilibiliUrl(
+      const sharedUrl = normalizeSharedVideoUrl(
         access.persistedRoom.sharedVideo.url,
       );
-      const playbackUrl = normalizeBilibiliUrl(playback.url);
+      const playbackUrl = normalizeSharedVideoUrl(playback.url);
       if (!sharedUrl || !playbackUrl || sharedUrl !== playbackUrl) {
         await runtimeStore.releaseMessageSlot(
           access.persistedRoom.code,
@@ -1482,6 +1486,19 @@ export function createRoomService(options: {
         persistedRoom,
         await runtimeStore.listClusterSessionsByRoom(persistedRoom.code),
       );
+    },
+
+    async getVoiceMemberAccessForSession(session, memberToken) {
+      const access = await requireJoinedRoomSession(
+        session,
+        memberToken,
+        "voice:access",
+      );
+      return {
+        roomCode: access.persistedRoom.code,
+        memberId: session.memberId ?? session.id,
+        displayName: session.displayName,
+      };
     },
 
     getActiveRoom(roomCode) {

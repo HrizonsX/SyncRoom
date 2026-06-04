@@ -26,6 +26,37 @@ test("resolves standard page video and prefers current part title", () => {
   });
 });
 
+test("resolves generic html5 video pages with a stable non-empty identity", () => {
+  const video = resolvePageSharedVideo({
+    pageUrl: "https://example.com/watch/path/?v=abc#comments",
+    pathname: "/watch/path/",
+    documentTitle: "Example Video - Site",
+    headingTitle: null,
+    currentPartTitle: null,
+    festivalSnapshot: null,
+    hasVideoElement: true,
+  });
+
+  assert.ok(video);
+  assert.match(video.videoId, /^web:[0-9a-f]{16}$/);
+  assert.equal(video.url, "https://example.com/watch/path/?v=abc");
+  assert.equal(video.title, "Example Video - Site");
+});
+
+test("does not classify generic pages without a video element as shareable", () => {
+  const video = resolvePageSharedVideo({
+    pageUrl: "https://example.com/article",
+    pathname: "/article",
+    documentTitle: "Article - Site",
+    headingTitle: "Article",
+    currentPartTitle: null,
+    festivalSnapshot: null,
+    hasVideoElement: false,
+  });
+
+  assert.equal(video, null);
+});
+
 test("normalizes standard video share url and strips tracking query params", () => {
   const video = resolvePageSharedVideo({
     pageUrl:

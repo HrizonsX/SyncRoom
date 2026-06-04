@@ -1,5 +1,6 @@
 import {
   parseBilibiliVideoRef,
+  parseSharedVideoRef,
   type PlaybackState,
   type SharedVideo,
 } from "@bili-syncplay/protocol";
@@ -15,6 +16,7 @@ export interface PageVideoSource {
     url: string;
     title: string;
   } | null;
+  hasVideoElement?: boolean;
   festivalSnapshot: {
     videoId: string;
     url: string;
@@ -29,6 +31,14 @@ export interface VideoPlaybackSnapshot {
 }
 
 export function resolvePageSharedVideo(
+  source: PageVideoSource,
+): SharedVideo | null {
+  return (
+    resolveBilibiliSharedVideo(source) ?? resolveGenericHtml5SharedVideo(source)
+  );
+}
+
+function resolveBilibiliSharedVideo(
   source: PageVideoSource,
 ): SharedVideo | null {
   if (source.pageSnapshot) {
@@ -52,6 +62,23 @@ export function resolvePageSharedVideo(
     return null;
   }
 
+  return {
+    videoId: fallbackVideoRef.videoId,
+    url: fallbackVideoRef.normalizedUrl,
+    title: resolveSharedVideoTitle(source),
+  };
+}
+
+function resolveGenericHtml5SharedVideo(
+  source: PageVideoSource,
+): SharedVideo | null {
+  if (!source.hasVideoElement) {
+    return null;
+  }
+  const fallbackVideoRef = parseSharedVideoRef(source.pageUrl);
+  if (!fallbackVideoRef) {
+    return null;
+  }
   return {
     videoId: fallbackVideoRef.videoId,
     url: fallbackVideoRef.normalizedUrl,

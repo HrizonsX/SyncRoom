@@ -19,7 +19,7 @@ export function createTabController(args: {
     message: string,
   ) => void;
   normalizeUrl: (url: string | undefined | null) => string | null;
-  bilibiliVideoUrlPatterns: string[];
+  supportedVideoUrlPatterns: string[];
 }): TabController {
   function rememberSharedSourceTab(
     tabId: number | undefined,
@@ -108,7 +108,7 @@ export function createTabController(args: {
       }
 
       const existingTabs = await chrome.tabs.query({
-        url: args.bilibiliVideoUrlPatterns,
+        url: args.supportedVideoUrlPatterns,
       });
       const matched = existingTabs.find(
         (tab) => args.normalizeUrl(tab.url) === args.normalizeUrl(targetUrl),
@@ -145,7 +145,7 @@ export function createTabController(args: {
     }
 
     const existingTabs = await chrome.tabs.query({
-      url: args.bilibiliVideoUrlPatterns,
+      url: args.supportedVideoUrlPatterns,
     });
     const matched = existingTabs.find(
       (tab) => args.normalizeUrl(tab.url) === args.normalizeUrl(targetUrl),

@@ -139,10 +139,20 @@ export type AdminUiConfig = {
   enabled?: boolean;
 };
 
+export type VoiceConfig = {
+  enabled: boolean;
+  livekitUrl: string | undefined;
+  apiKey: string | undefined;
+  apiSecret: string | undefined;
+  tokenTtlSeconds: number;
+  maxMembers: number;
+};
+
 export type SecurityConfig = {
   allowedOrigins: string[];
   allowMissingOriginInDev: boolean;
   allowAnyFirefoxExtensionOrigin: boolean;
+  allowAnyOriginInDev: boolean;
   trustedProxyAddresses: string[];
   maxConnectionsPerIp: number;
   connectionAttemptsPerMinute: number;

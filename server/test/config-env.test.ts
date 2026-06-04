@@ -11,6 +11,7 @@ import {
   logEffectiveOriginPolicy,
   loadSecurityConfig,
 } from "../src/config/security-config.js";
+import { loadVoiceConfig } from "../src/config/voice-config.js";
 
 test("security config reads overrides and keeps defaults for missing values", () => {
   const config = loadSecurityConfig({
@@ -98,6 +99,44 @@ test("admin ui config parses demo flag", () => {
       apiBaseUrl: "https://admin.example.com",
       enabled: false,
     },
+  );
+});
+
+test("voice config stays disabled by default", () => {
+  assert.deepEqual(loadVoiceConfig({}), {
+    enabled: false,
+    livekitUrl: undefined,
+    apiKey: undefined,
+    apiSecret: undefined,
+    tokenTtlSeconds: 900,
+    maxMembers: 4,
+  });
+});
+
+test("voice config parses LiveKit settings and caps max members", () => {
+  const config = loadVoiceConfig({
+    VOICE_ENABLED: "true",
+    LIVEKIT_URL: " wss://voice.example.com ",
+    LIVEKIT_API_KEY: " livekit-key ",
+    LIVEKIT_API_SECRET: " livekit-secret ",
+    VOICE_TOKEN_TTL_SECONDS: "600",
+    VOICE_MAX_MEMBERS: "8",
+  });
+
+  assert.deepEqual(config, {
+    enabled: true,
+    livekitUrl: "wss://voice.example.com",
+    apiKey: "livekit-key",
+    apiSecret: "livekit-secret",
+    tokenTtlSeconds: 600,
+    maxMembers: 4,
+  });
+});
+
+test("voice config rejects non-WebSocket LiveKit URLs", () => {
+  assert.throws(
+    () => loadVoiceConfig({ LIVEKIT_URL: "https://voice.example.com" }),
+    /LIVEKIT_URL must use ws:\/\/ or wss:\/\//,
   );
 });
 
@@ -228,6 +267,14 @@ test("startup policy allows empty origins when dev override is enabled", () => {
   assert.doesNotThrow(() => assertAllowedOriginsStartupPolicy(config));
 });
 
+test("startup policy allows empty origins when any-origin dev override is enabled", () => {
+  const config = loadSecurityConfig({ ALLOW_ANY_ORIGIN_IN_DEV: "true" });
+  assert.deepEqual(config.allowedOrigins, []);
+  assert.equal(config.allowMissingOriginInDev, false);
+  assert.equal(config.allowAnyOriginInDev, true);
+  assert.doesNotThrow(() => assertAllowedOriginsStartupPolicy(config));
+});
+
 test("logEffectiveOriginPolicy prints final origins and dev override once", () => {
   const entries: string[] = [];
   const log = (message: string): void => {
@@ -239,6 +286,7 @@ test("logEffectiveOriginPolicy prints final origins and dev override once", () =
       allowedOrigins: ["https://a.example", "https://b.example"],
       allowMissingOriginInDev: false,
       allowAnyFirefoxExtensionOrigin: false,
+      allowAnyOriginInDev: false,
     } as ReturnType<typeof loadSecurityConfig>,
     log,
   );
@@ -247,13 +295,14 @@ test("logEffectiveOriginPolicy prints final origins and dev override once", () =
       allowedOrigins: [],
       allowMissingOriginInDev: true,
       allowAnyFirefoxExtensionOrigin: true,
+      allowAnyOriginInDev: true,
     } as ReturnType<typeof loadSecurityConfig>,
     log,
   );
 
   assert.deepEqual(entries, [
-    "[security] ALLOWED_ORIGINS=https://a.example, https://b.example; ALLOW_MISSING_ORIGIN_IN_DEV=false; ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=false",
-    "[security] ALLOWED_ORIGINS=<none>; ALLOW_MISSING_ORIGIN_IN_DEV=true; ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true",
+    "[security] ALLOWED_ORIGINS=https://a.example, https://b.example; ALLOW_MISSING_ORIGIN_IN_DEV=false; ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=false; ALLOW_ANY_ORIGIN_IN_DEV=false",
+    "[security] ALLOWED_ORIGINS=<none>; ALLOW_MISSING_ORIGIN_IN_DEV=true; ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true; ALLOW_ANY_ORIGIN_IN_DEV=true",
   ]);
 });
 
@@ -262,6 +311,14 @@ test("security config parses ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN", () => {
   assert.equal(
     loadSecurityConfig({ ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN: "true" })
       .allowAnyFirefoxExtensionOrigin,
+    true,
+  );
+});
+
+test("security config parses ALLOW_ANY_ORIGIN_IN_DEV", () => {
+  assert.equal(loadSecurityConfig({}).allowAnyOriginInDev, false);
+  assert.equal(
+    loadSecurityConfig({ ALLOW_ANY_ORIGIN_IN_DEV: "true" }).allowAnyOriginInDev,
     true,
   );
 });

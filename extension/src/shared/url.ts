@@ -1,4 +1,4 @@
-import { normalizeBilibiliUrl } from "@bili-syncplay/protocol";
+import { normalizeSharedVideoUrl as normalizeProtocolSharedVideoUrl } from "@bili-syncplay/protocol";
 
 const NORMALIZE_CACHE_CAPACITY = 16;
 const normalizeCache = new Map<string, string | null>();
@@ -16,7 +16,7 @@ export function normalizeSharedVideoUrl(
     normalizeCache.set(url, cached);
     return cached;
   }
-  const result = normalizeBilibiliUrl(url);
+  const result = normalizeProtocolSharedVideoUrl(url);
   if (normalizeCache.size >= NORMALIZE_CACHE_CAPACITY) {
     normalizeCache.delete(normalizeCache.keys().next().value!);
   }

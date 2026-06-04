@@ -20,6 +20,20 @@ test("normalizeSharedVideoUrl reuses bilibili url normalization", () => {
   );
 });
 
+test("normalizeSharedVideoUrl accepts generic html5 page URLs", () => {
+  assert.equal(
+    normalizeSharedVideoUrl("https://example.com/watch?v=abc#comments"),
+    "https://example.com/watch?v=abc",
+  );
+  assert.equal(
+    areSharedVideoUrlsEqual(
+      "https://example.com/watch?v=abc#comments",
+      "https://example.com/watch?v=abc",
+    ),
+    true,
+  );
+});
+
 test("areSharedVideoUrlsEqual compares normalized shared video urls", () => {
   assert.equal(
     areSharedVideoUrlsEqual(

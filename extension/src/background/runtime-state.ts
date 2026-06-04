@@ -7,6 +7,10 @@ import type {
   DebugLogEntry,
   SharedVideoToastPayload,
 } from "../shared/messages";
+import {
+  createInitialVoiceRuntimeState,
+  type VoiceRuntimeState,
+} from "../shared/voice-state";
 
 declare const __BILI_SYNCPLAY_DEFAULT_SERVER_URL__: string | undefined;
 
@@ -18,7 +22,9 @@ export const DEFAULT_SERVER_URL =
     : LOCALHOST_SERVER_URL;
 export const MAX_RECONNECT_ATTEMPTS = 5;
 export const SHARE_TOAST_TTL_MS = 8000;
-export const BILIBILI_VIDEO_URL_PATTERNS = [
+export const SUPPORTED_VIDEO_URL_PATTERNS = [
+  "http://*/*",
+  "https://*/*",
   "https://www.bilibili.com/video/*",
   "https://www.bilibili.com/bangumi/play/*",
   "https://www.bilibili.com/festival/*",
@@ -81,6 +87,7 @@ export interface BackgroundRuntimeState {
   share: ShareState;
   clock: ClockState;
   diagnostics: DiagnosticsState;
+  voice: VoiceRuntimeState;
 }
 
 export function createBackgroundRuntimeState(): BackgroundRuntimeState {
@@ -127,5 +134,6 @@ export function createBackgroundRuntimeState(): BackgroundRuntimeState {
       logs: [],
       lastPopupStateLogKey: null,
     },
+    voice: createInitialVoiceRuntimeState(),
   };
 }

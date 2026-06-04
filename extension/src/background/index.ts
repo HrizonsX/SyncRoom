@@ -15,14 +15,15 @@ import { bootstrapBackground } from "./bootstrap";
 import { createClockController } from "./clock-controller";
 import { createDiagnosticsController } from "./diagnostics-controller";
 import { createMessageController } from "./message-controller";
+import { createMicrophonePermissionController } from "./microphone-permission-controller";
 import { createOutgoingMessageController } from "./outgoing-message-controller";
 import { executeFlushPendingShare } from "./room-manager";
 import { createPopupStateController } from "./popup-state-controller";
 import { createRoomSessionController } from "./room-session-controller";
 import {
-  BILIBILI_VIDEO_URL_PATTERNS,
   MAX_RECONNECT_ATTEMPTS,
   SHARE_TOAST_TTL_MS,
+  SUPPORTED_VIDEO_URL_PATTERNS,
 } from "./runtime-state";
 import { createServerMessageController } from "./server-message-controller";
 import { createServerUrlController } from "./server-url-controller";
@@ -37,6 +38,8 @@ import {
 } from "./storage-manager";
 import { disconnectSocket as executeDisconnectSocket } from "./socket-lifecycle";
 import { createTabController } from "./tab-controller";
+import { createVoiceController } from "./voice-controller";
+import { createExtensionVoiceRuntimeAdapter } from "./voice-media-host";
 import { t } from "../shared/i18n";
 
 const normalizeUrl = normalizeSharedVideoUrl;
@@ -46,6 +49,7 @@ const roomSessionState = stateStore.getState().room;
 const shareState = stateStore.getState().share;
 const clockState = stateStore.getState().clock;
 const diagnosticsState = stateStore.getState().diagnostics;
+const voiceState = stateStore.getState().voice;
 const diagnosticsController = createDiagnosticsController({
   diagnosticsState,
   roomSessionState,
@@ -73,6 +77,7 @@ const runtimeSyncController = createRuntimeSyncController({
   shareState,
   clockState,
   diagnosticsState,
+  voiceState,
   persistBackgroundState,
 });
 outgoingMessageController = createOutgoingMessageController({
@@ -88,13 +93,32 @@ const tabController = createTabController({
   shareState,
   log: (scope, message) => diagnosticsController.log(scope, message),
   normalizeUrl,
-  bilibiliVideoUrlPatterns: BILIBILI_VIDEO_URL_PATTERNS,
+  supportedVideoUrlPatterns: SUPPORTED_VIDEO_URL_PATTERNS,
 });
 const clockController = createClockController({
   connectionState,
   clockState,
   sendToServer,
   log: (scope, message) => diagnosticsController.log(scope, message),
+});
+let voiceController: ReturnType<typeof createVoiceController> | null = null;
+const voiceRuntimeAdapter = createExtensionVoiceRuntimeAdapter({
+  onEvent: (event) => {
+    voiceController?.handleRuntimeEvent(event);
+  },
+  log: backgroundLog,
+});
+voiceController = createVoiceController({
+  connectionState,
+  roomSessionState,
+  voiceState,
+  runtime: voiceRuntimeAdapter,
+  sendToServer,
+  notifyAll,
+  log: backgroundLog,
+});
+const microphonePermissionController = createMicrophonePermissionController({
+  log: backgroundLog,
 });
 const shareController = createShareController({
   connectionState,
@@ -141,6 +165,10 @@ serverMessageController = createServerMessageController({
   },
   handleRoomSessionServerMessage: (message) =>
     roomSessionController.handleServerMessage(message),
+  handleVoiceServerMessage: (message) =>
+    voiceController?.handleServerMessage(message) ?? Promise.resolve(false),
+  syncVoiceLifecycle: (options) =>
+    voiceController?.syncRoomLifecycle(options) ?? Promise.resolve(),
   updateClockOffset,
   notifyAll,
 });
@@ -164,10 +192,13 @@ const socketController = createSocketController({
   buildHealthcheckUrl,
   onOpen: () => undefined,
   onAdminSessionReset: (errorMessage) => {
-    void roomSessionController.clearCurrentRoomContext(
-      "socket closed by server",
-      errorMessage,
-    );
+    void (async () => {
+      await voiceController?.disconnect("socket closed by server");
+      await roomSessionController.clearCurrentRoomContext(
+        "socket closed by server",
+        errorMessage,
+      );
+    })();
   },
   formatAdminSessionResetReason,
   reconnectFailedMessage: () =>
@@ -211,6 +242,8 @@ const messageController = createMessageController({
   tabController,
   clockController,
   socketController,
+  voiceController,
+  microphonePermissionController,
   sendToServer,
   updateServerUrl,
   persistState,
@@ -417,7 +450,7 @@ function doResetRoomLifecycleTransientState(
 async function notifyContentScripts(
   message: BackgroundToContentMessage,
 ): Promise<void> {
-  await notifyContentTabs(message, BILIBILI_VIDEO_URL_PATTERNS);
+  await notifyContentTabs(message, SUPPORTED_VIDEO_URL_PATTERNS);
 }
 
 function notifyAll(): void {

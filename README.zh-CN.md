@@ -2,7 +2,7 @@
 
 [English](./README.md) | [简体中文](./README.zh-CN.md)
 
-Bili-SyncPlay 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的哔哩哔哩同步观影项目。用户可以创建或加入房间，分享当前视频，并在参与者之间同步播放、暂停、跳转和播放速率。
+Bili-SyncPlay 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的网页视频同步观影项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 视频，并在参与者之间同步播放、暂停、跳转和播放速率。
 
 它覆盖了完整的本地使用链路：
 
@@ -88,7 +88,7 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
 
 1. 打开扩展弹窗
 2. 创建房间，或者使用 `roomCode:joinToken` 加入已有房间
-3. 打开受支持的 Bilibili 视频页面
+3. 打开受支持的 Bilibili 视频页面，或带标准 HTML5 `<video>` 的普通网页
 4. 在弹窗中点击 `同步当前页视频`
 5. 其他房间成员会打开同一视频并进入同步模式
 
@@ -104,6 +104,10 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
   - 在扩展弹窗中分享当前页面视频
   - 同步播放、暂停、跳转和播放速率
   - 房间成员自动打开当前共享的视频
+- 可选 LiveKit 语音
+  - 服务端启用 LiveKit 后，房间成员默认可听语音
+  - 麦克风默认静音，只有用户点击开麦按钮后才会请求权限
+  - 启用语音后房间人数上限为 4 人
 - 页面内反馈
   - 成员加入和离开提示
   - 共享视频变更提示
@@ -113,6 +117,14 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
   - 在未共享页面上的手动播放仅在本地生效
 
 ## 支持的页面
+
+通用支持：
+
+- 暴露标准 HTML5 `<video>` 元素的 `http://*/*` 与 `https://*/*` 页面
+- 共享标题会依次从当前分集标题、页面标题元素、`document.title` 中兜底
+- 共享身份由规范化后的页面 URL 生成
+
+Bilibili 专用支持：
 
 - `https://www.bilibili.com/video/*`
 - `https://www.bilibili.com/bangumi/play/*`
@@ -140,6 +152,7 @@ Bili-SyncPlay/
 ## 文档入口
 
 - [文档索引](./docs/README.md)
+- [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)
 - [多节点运维 Runbook](./docs/runbook/multi-node-operations.zh-CN.md)
 - [多节点全局管理面迁移说明](./docs/operations/multi-node-global-admin-migration.zh-CN.md)
 - [隐私权政策](./docs/legal/privacy.zh-CN.md)
@@ -171,6 +184,7 @@ Bili-SyncPlay/
 - 服务器地址输入为空时，会回退到构建时默认值
 - 仅接受 `ws://` 和 `wss://`
 - 本地未打包扩展开发要求 `ALLOWED_ORIGINS=chrome-extension://<extension-id>`（Chrome/Edge）或当前 `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true`（Firefox；见“启动本地服务器”）
+- 语音聊天默认关闭，需要自建 LiveKit 服务；配置方式见 [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)。
 
 ### 打开管理控制面板
 
@@ -497,7 +511,7 @@ Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
 - background service worker 只会转发当前识别为共享标签页的播放更新
 - 切换服务器地址会断开当前 socket；如果扩展仍有活动房间或待创建房间，会使用新地址重新连接
 - 如果持久化的服务器地址非法，扩展会保留该值并阻止自动重连，直到用户修正地址
-- 支持的播放页面依赖 Bilibili 的 DOM 和 URL 模式，因此如果 Bilibili 后续改版，festival 页面和稍后再看页面可能需要兼容性更新
+- Bilibili 专用页面使用 B 站 adapter 识别视频 ID、剧集 URL、festival / 稍后再看元数据；通用页面使用 HTML5 adapter，可能受 DRM、跨域 iframe、或站点隐藏主视频元素影响
 
 ### 状态持久化
 
@@ -542,7 +556,7 @@ npm run build:release
 
 不设置该环境变量时，构建产物仍然使用 `ws://localhost:8787`；设置后，用户在弹窗里清空服务器地址并保存，也会回退到这个构建时注入的地址。
 
-本地开发时，`ALLOWED_ORIGINS` 必须包含当前 `chrome-extension://<extension-id>`，否则服务端会以 `origin_not_allowed` 拒绝 WebSocket 握手。
+本地开发时，`ALLOWED_ORIGINS` 应包含当前 `chrome-extension://<extension-id>`，否则服务端会以 `origin_not_allowed` 拒绝 WebSocket 握手。短期排障时可用 `ALLOW_ANY_ORIGIN_IN_DEV=true` 跳过这一 Origin 闸门。
 
 服务端现在也支持可选的 JSON 配置文件。加载优先级为：
 
@@ -573,6 +587,12 @@ npm run build:release
     "nodeHeartbeatEnabled": true,
     "redisUrl": "redis://127.0.0.1:6379"
   },
+  "voice": {
+    "enabled": true,
+    "livekitUrl": "wss://voice.example.com",
+    "tokenTtlSeconds": 900,
+    "maxMembers": 4
+  },
   "adminUi": {
     "enabled": false
   }
@@ -584,6 +604,11 @@ npm run build:release
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD_HASH`
 - `ADMIN_SESSION_SECRET`
+
+以下 LiveKit 签名密钥也只支持环境变量：
+
+- `LIVEKIT_API_KEY`
+- `LIVEKIT_API_SECRET`
 
 当前服务器实现：
 
@@ -597,6 +622,7 @@ npm run build:release
 - 服务重连或服务端重启后会重新签发 `memberToken`
 - 最后一名成员离开后，房间不会立即删除，而是保留到 `EMPTY_ROOM_TTL_MS` 到期
 - 支持 Origin 白名单、连接限流、消息限流和结构化安全日志
+- 当 `VOICE_ENABLED=true` 且 LiveKit 配置完整时，可签发房间级 LiveKit 语音令牌
 
 ### 多节点部署与全局管理面
 
@@ -805,10 +831,17 @@ node server/dist/global-admin-index.js
 - 如果 `ALLOWED_ORIGINS` 为空，服务器默认拒绝所有显式 `Origin`
 - `ALLOW_MISSING_ORIGIN_IN_DEV`：设为 `true` 时允许缺失 `Origin` 头
 - `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN`：设为 `true` 时接受任意格式正确的 `moz-extension://<uuid>` Origin；Firefox 每个安装随机分配 UUID，公共/共享服务端无法逐一枚举进 `ALLOWED_ORIGINS`。仍会拒绝网页 Origin（网页永远无法呈现 `moz-extension://` Origin），且不替代房间/成员 token 鉴权；默认 `false`
+- `ALLOW_ANY_ORIGIN_IN_DEV`：设为 `true` 时跳过 WebSocket Origin 检查，显式 Origin 和缺失 Origin 都会放行。仅用于本地开发或短期排障；默认 `false`
 - `TRUSTED_PROXY_ADDRESSES`：逗号分隔的受信代理 socket IP 列表；只有来自这些代理的请求才会使用 `X-Forwarded-For`
 - `MAX_CONNECTIONS_PER_IP`：每个 IP 允许的最大并发 WebSocket 连接数
 - `CONNECTION_ATTEMPTS_PER_MINUTE`：每个 IP 每分钟最大握手尝试次数
 - `MAX_MEMBERS_PER_ROOM`：房间成员上限
+- `VOICE_ENABLED`：启用服务端 LiveKit 语音令牌签发
+- `LIVEKIT_URL`：浏览器可访问的 LiveKit WebSocket 地址，生产环境通常为 `wss://voice.example.com`
+- `LIVEKIT_API_KEY`：LiveKit API key，仅通过环境变量提供
+- `LIVEKIT_API_SECRET`：LiveKit API secret，仅通过环境变量提供
+- `VOICE_TOKEN_TTL_SECONDS`：语音令牌有效期，默认 `900`
+- `VOICE_MAX_MEMBERS`：启用语音后的房间人数上限，最大为 `4`
 - `MAX_MESSAGE_BYTES`：WebSocket 消息字节上限
 - `INVALID_MESSAGE_CLOSE_THRESHOLD`：在断开连接前允许的无效消息次数
 - `ROOM_STORE_PROVIDER`：`memory` 或 `redis`
@@ -855,6 +888,11 @@ ROOM_CLEANUP_INTERVAL_MS=60000 \
 MAX_CONNECTIONS_PER_IP=10 \
 CONNECTION_ATTEMPTS_PER_MINUTE=20 \
 MAX_MEMBERS_PER_ROOM=8 \
+VOICE_ENABLED=true \
+LIVEKIT_URL=wss://voice.example.com \
+LIVEKIT_API_KEY=$LIVEKIT_API_KEY \
+LIVEKIT_API_SECRET=$LIVEKIT_API_SECRET \
+VOICE_MAX_MEMBERS=4 \
 MAX_MESSAGE_BYTES=8192 \
 ADMIN_USERNAME=admin \
 ADMIN_PASSWORD_HASH=sha256:<hex-password-hash> \
@@ -877,7 +915,7 @@ node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + 
 
 - 打开 `http://localhost:8787/admin`
 - 使用 `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET`、`ADMIN_ROLE` 配置的账号登录
-- 页面已覆盖登录、概览、房间列表、房间详情、运行事件、审计日志、配置摘要，以及现有管理动作
+- 页面已覆盖登录、概览、房间列表、房间详情、运行事件、小黑屋、审计日志、配置摘要，以及现有管理动作
 
 角色模型：
 
@@ -889,6 +927,8 @@ node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + 
 
 - `踢出成员` 会断开当前成员会话，并临时阻止客户端拿旧 `memberToken` 立即自动重连
 - `断开会话` 只关闭指定 socket；如果客户端仍持有有效房间上下文，后续仍可正常重新加入
+- `加入黑名单` 会把 IP 写入小黑屋，立即断开当前同 IP 在线连接，并在后续 WebSocket 握手阶段拒绝该 IP
+- 小黑屋在内存模式下仅适合本地开发；启用 Redis 相关持久化 provider 后由 Redis 保存并跨节点共享，是否落盘取决于 Redis 自身 AOF / RDB 配置
 
 当前已实现接口：
 
@@ -902,8 +942,11 @@ node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + 
 - `GET /api/admin/config`
 - `GET /api/admin/rooms`
 - `GET /api/admin/rooms/:roomCode`
+- `GET /api/admin/ip-blocks`
 - `GET /api/admin/events`
 - `GET /api/admin/audit-logs`
+- `POST /api/admin/ip-blocks`
+- `DELETE /api/admin/ip-blocks/:ip`
 - `POST /api/admin/rooms/:roomCode/close`
 - `POST /api/admin/rooms/:roomCode/expire`
 - `POST /api/admin/rooms/:roomCode/clear-video`
@@ -1336,7 +1379,7 @@ sudo systemctl restart bili-syncplay-global-admin
 - 最后一名成员离开后，房间不会立刻删除；服务端会写入 `expiresAt`，并在 `EMPTY_ROOM_TTL_MS` 到期后清理。
 - 加入房间需要同时提供 `roomCode` 和 `joinToken`；发送房间消息需要有效的 `memberToken`。
 - `memberToken` 是会话态，不会从持久层恢复；重连或重启后都需要重新加入并重新签发。
-- 握手阶段的 Origin 检查默认拒绝，除非你在开发环境中显式允许缺失 `Origin`。
+- 握手阶段的 Origin 检查默认拒绝，除非你配置了 `ALLOWED_ORIGINS`、在开发环境中显式允许缺失 `Origin`，或临时设置 `ALLOW_ANY_ORIGIN_IN_DEV=true`。
 - 只有当 socket 对端命中 `TRUSTED_PROXY_ADDRESSES` 时才会读取 `X-Forwarded-For`。
 - 健康检查同时提供 `GET /` 与 `GET /healthz`；就绪检查为 `GET /readyz`。
 - 如果你使用云防火墙，请放行入站 `80` 和 `443`，并将 `8787` 仅暴露给 localhost。
@@ -1357,9 +1400,9 @@ sudo systemctl restart bili-syncplay-global-admin
 - `加入码无效。`：邀请串错误、已失效，或来自其他房间。
 - `成员令牌无效。`：当前会话丢失了房间绑定、服务端已经重启，或客户端需要重新加入以获取新 token。
 - `请求过于频繁。`：某个房间操作或同步消息触发了配置的限流。
-- 握手阶段返回 `403`：请求的 `Origin` 不在 `ALLOWED_ORIGINS` 中，或者在 `ALLOW_MISSING_ORIGIN_IN_DEV` 关闭时缺少 `Origin`。
+- 握手阶段返回 `403`：请求的 `Origin` 不在 `ALLOWED_ORIGINS` 中，或者在 `ALLOW_MISSING_ORIGIN_IN_DEV` 关闭时缺少 `Origin`。临时排障时可用 `ALLOW_ANY_ORIGIN_IN_DEV=true` 关闭这一 Origin 闸门。
 - 连接级 IP 限制看起来未生效：检查反向代理的 socket IP 是否已加入 `TRUSTED_PROXY_ADDRESSES`；默认情况下服务器只使用真实 socket 地址。
-- `请先打开一个哔哩哔哩视频页面。`：当前活动标签页 URL 不匹配扩展内容脚本的目标页面。
+- `请先打开一个支持同步的视频页面。`：当前活动标签页不是受支持的 HTTP(S) 页面，或扩展无法访问该页面。
 - `当前页面没有可播放的视频。`：内容脚本已加载，但页面没有暴露可用的视频载荷。
 - `无法访问当前页面。`：Chrome 无法把消息传给内容脚本，通常是因为加载未打包扩展后没有刷新页面，或当前标签页 URL 不受支持。
 
@@ -1390,7 +1433,7 @@ Chrome 侧调试建议：
 - 在 `chrome://extensions` 查看扩展 service worker 日志
 - 从 `chrome://extensions` 复制未打包扩展 ID，并加入 `ALLOWED_ORIGINS`
 - 重新构建 `extension/dist` 后，重新加载未打包扩展
-- 扩展重新加载后，刷新已打开的 Bilibili 标签页，以便重新注入内容脚本
+- 扩展重新加载后，刷新已打开的视频标签页，以便重新注入内容脚本
 
 ### 构建发布包
 

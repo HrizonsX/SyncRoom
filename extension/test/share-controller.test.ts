@@ -145,6 +145,46 @@ test("share controller keeps playback snapshot while switching to another shared
   }
 });
 
+test("share controller builds generic html5 payload without blank title or playback", () => {
+  const dom = installDomStub({
+    href: "https://example.com/watch?v=abc#comments",
+    pathname: "/watch",
+    title: "Example Video - Site",
+    video: {
+      currentTime: 24.5,
+      playbackRate: 1.25,
+      paused: false,
+      readyState: 4,
+    } as HTMLVideoElement,
+  });
+
+  const runtimeState = createContentRuntimeState();
+  runtimeState.intendedPlayState = "playing";
+  const controller = createShareController({
+    runtimeState,
+    festivalSnapshotTtlMs: 1_200,
+    nextSeq: () => 11,
+    getFestivalSnapshot: () => null,
+    refreshFestivalBridge: async () => null,
+    debugLog: () => undefined,
+  });
+
+  try {
+    const payload = controller.getCurrentSharePayload();
+
+    assert.ok(payload);
+    assert.match(payload.video.videoId, /^web:[0-9a-f]{16}$/);
+    assert.equal(payload.video.url, "https://example.com/watch?v=abc");
+    assert.equal(payload.video.title, "Example Video - Site");
+    assert.equal(payload.playback?.url, payload.video.url);
+    assert.equal(payload.playback?.currentTime, 24.5);
+    assert.equal(payload.playback?.playState, "playing");
+    assert.equal(payload.playback?.playbackRate, 1.25);
+  } finally {
+    dom.restore();
+  }
+});
+
 test("share controller resolves bangumi season pages through page snapshot", async () => {
   const dom = installDomStub({
     href: "https://www.bilibili.com/bangumi/play/ss357?from_spmid=666.25.series.0",

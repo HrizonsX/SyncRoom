@@ -1,5 +1,5 @@
 import type { PlaybackPlayState, RoomCode } from "../types/common.js";
-import { parseBilibiliVideoRef } from "../video-ref.js";
+import { parseBilibiliVideoRef, parseSharedVideoRef } from "../video-ref.js";
 
 const PLAYBACK_PLAY_STATES: PlaybackPlayState[] = [
   "playing",
@@ -8,8 +8,7 @@ const PLAYBACK_PLAY_STATES: PlaybackPlayState[] = [
 ];
 const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 const ACTOR_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9:_-]{0,63})$/;
-const VIDEO_ID_PATTERN =
-  /^(?:BV[0-9A-Za-z]+|(?:av|ep|ss)\d+)(?::(?:p[1-9]\d*|[1-9]\d*))?$/;
+const VIDEO_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9:_-]{0,127})$/;
 const TOKEN_MIN_LENGTH = 16;
 const TOKEN_MAX_LENGTH = 128;
 
@@ -75,8 +74,33 @@ export function isBilibiliUrl(value: unknown): value is string {
   return isString(value) && parseBilibiliVideoRef(value) !== null;
 }
 
+export function isSharedVideoUrl(value: unknown): value is string {
+  return isString(value) && parseSharedVideoRef(value) !== null;
+}
+
 export function isVideoId(value: unknown): value is string {
   return isString(value) && VIDEO_ID_PATTERN.test(value);
+}
+
+export function isSharedVideoReference(args: {
+  videoId: unknown;
+  url: unknown;
+}): boolean {
+  if (!isVideoId(args.videoId) || !isString(args.url)) {
+    return false;
+  }
+  const ref = parseSharedVideoRef(args.url);
+  if (ref === null) {
+    return false;
+  }
+  if (ref.videoId === args.videoId) {
+    return true;
+  }
+  if (ref.videoId.startsWith("web:")) {
+    return false;
+  }
+  const baseBilibiliId = ref.videoId.split(":")[0];
+  return baseBilibiliId === args.videoId;
 }
 
 export function isToken(value: unknown): value is string {

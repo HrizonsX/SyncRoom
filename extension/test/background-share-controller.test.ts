@@ -60,6 +60,27 @@ function createControllerHarness() {
   };
 }
 
+function installChromeTabsStub(args: {
+  activeTabUrl: string;
+  response: unknown;
+}) {
+  const originalChrome = globalThis.chrome;
+  Object.assign(globalThis, {
+    chrome: {
+      tabs: {
+        query: async () => [{ id: 321, url: args.activeTabUrl }],
+        sendMessage: async () => args.response,
+      },
+    },
+  });
+
+  return {
+    restore() {
+      Object.assign(globalThis, { chrome: originalChrome });
+    },
+  };
+}
+
 test("background share controller forwards a share without playback when content omits stale snapshot", async () => {
   const selfHarness = installSelfStub();
   const harness = createControllerHarness();
@@ -137,5 +158,34 @@ test("background share controller sends create request with protocolVersion when
     assert.equal(harness.runtimeState.room.pendingCreateRoom, false);
   } finally {
     selfHarness.restore();
+  }
+});
+
+test("background share controller accepts generic html5 active video payloads", async () => {
+  const harness = createControllerHarness();
+  const chromeHarness = installChromeTabsStub({
+    activeTabUrl: "https://example.com/watch?v=abc",
+    response: {
+      ok: true,
+      payload: {
+        video: {
+          videoId: "web:0123456789abcdef",
+          url: "https://example.com/watch?v=abc",
+          title: "Example Video",
+        },
+        playback: null,
+      },
+    },
+  });
+
+  try {
+    const result = await harness.controller.getActiveVideoPayload();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.tabId, 321);
+    assert.equal(result.payload?.video.title, "Example Video");
+    assert.equal(result.error, undefined);
+  } finally {
+    chromeHarness.restore();
   }
 });

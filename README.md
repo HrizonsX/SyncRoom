@@ -1,215 +1,224 @@
-# Bili-SyncPlay
+# SyncRoom
 
-[English](./README.md) | [简体中文](./README.zh-CN.md)
+简体中文 | [English](./README.en.md)
 
-Bili-SyncPlay is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized web video watching. Users can create or join a room, share the current Bilibili or generic HTML5 video, and keep playback, pause, seek, and playback rate in sync across participants.
+SyncRoom 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的网页视频同步房间项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 `<video>` 页面，并在参与者之间同步播放、暂停、跳转和播放速率。当前源码还支持可选的 LiveKit 房间语音、管理后台和 IP 黑名单。
 
-It supports the full local workflow:
+它覆盖了完整的本地使用链路：
 
-- load the unpacked extension in Chrome, Edge, or Firefox 121+
-- run the local sync server
-- create a room and share an invite string
-- keep everyone on the same shared video in sync
+- 在 Chrome / Edge / Firefox 121+ 中加载未打包扩展
+- 启动本地同步服务
+- 创建房间并复制邀请串
+- 让多个成员保持同一共享视频的同步播放
+- 可选启用自建 LiveKit 语音和服务端管理后台
 
-This repository is a monorepo:
+本仓库是一个 monorepo：
 
-- `extension/`: browser extension (Chrome/Edge/Firefox)
-- `server/`: WebSocket room server and admin panel
-- `packages/protocol/`: shared protocol types
+- `extension/`：浏览器扩展（Chrome / Edge / Firefox）
+- `server/`：WebSocket 房间服务与管理后台
+- `packages/protocol/`：共享协议类型
 
-## At a Glance
+说明：扩展展示名已经是 SyncRoom；部分 npm workspace 包名、服务名和历史发布链接仍沿用 `bili-syncplay` / `@bili-syncplay/*`，README 中会保留这些实际标识。
 
-- Invite format: `roomCode:joinToken`
-- Default local server: `ws://localhost:8787`
-- Supported browsers for development: Chrome, Edge, Firefox 121+
-- Recommended production server URL: `wss://<your-domain>`
+## 一眼看懂
 
-## Quick Start
+- 邀请格式：`roomCode:joinToken`
+- 默认本地服务地址：`ws://localhost:8787`
+- 本地开发浏览器：Chrome、Edge、Firefox 121+
+- 生产环境建议地址：`wss://<你的域名>`
+- 当前源码构建出的扩展名称：SyncRoom
 
-If you want to use the published extension directly, install it from one of the published stores:
+## 快速开始
 
-- [Bili-SyncPlay on Chrome Web Store](https://chromewebstore.google.com/detail/bili-syncplay/lbmckljnginagfabglpfdepofoglfdkj)
-- [Bili-SyncPlay on Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/bili-syncplay/cpgcalajpoihfgfeidmnijcdimnjniam)
+如果你想直接使用商店里已经发布的旧版本，可以从以下链接安装。注意：这些商店条目当前仍以旧名 Bili-SyncPlay 展示；如果你需要 SyncRoom 名称、通用 HTML5 视频支持、LiveKit 语音和小黑屋等当前源码能力，请按下方步骤从源码构建。
 
-### 1. Install and build
+- [Chrome 应用商店中的 Bili-SyncPlay 旧发布版本](https://chromewebstore.google.com/detail/bili-syncplay/lbmckljnginagfabglpfdepofoglfdkj)
+- [Microsoft Edge 扩展商店中的 Bili-SyncPlay 旧发布版本](https://microsoftedge.microsoft.com/addons/detail/bili-syncplay/cpgcalajpoihfgfeidmnijcdimnjniam)
+
+### 1. 安装并构建
 
 ```bash
 npm install
 npm run build
 ```
 
-### 2. Load the extension
+### 2. 加载扩展
 
-**Chrome / Edge** (`npm run build` produces `extension/dist`):
+**Chrome / Edge**（`npm run build` 产出 `extension/dist`）：
 
-1. Open `chrome://extensions`
-2. Enable Developer mode
-3. Click `Load unpacked`
-4. Select `extension/dist`
+1. 打开 `chrome://extensions`
+2. 开启开发者模式
+3. 点击 `加载已解压的扩展程序`
+4. 选择 `extension/dist`
 
-**Firefox 121+** (build the Firefox target first):
+**Firefox 121+**（先构建 Firefox 目标）：
 
 ```bash
-npm run build:extension:firefox   # produces extension/dist-firefox
+npm run build:extension:firefox   # 产出 extension/dist-firefox
 ```
 
-1. Open `about:debugging#/runtime/this-firefox`
-2. Click `Load Temporary Add-on…`
-3. Select `extension/dist-firefox/manifest.json`
+1. 打开 `about:debugging#/runtime/this-firefox`
+2. 点击 `临时载入附加组件…`
+3. 选择 `extension/dist-firefox/manifest.json`
 
-The Firefox build emits an event-page background (`background.scripts`, since Firefox does not support MV3 `background.service_worker`) and overrides the extension CSP so a plain `ws://` server is not auto-upgraded to `wss://`. The temporary add-on is removed when Firefox closes; reload it after each restart.
+Firefox 构建产出 event page 形态后台（`background.scripts`，因 Firefox 不支持 MV3 `background.service_worker`），并覆盖扩展 CSP，使明文 `ws://` 服务端不会被强制升级为 `wss://`。临时附加组件在 Firefox 关闭后移除，每次重启需重新载入。
 
-### 3. Start the local server
+### 3. 启动本地服务器
 
-Before connecting the unpacked extension to a local server, allow the current extension origin in `ALLOWED_ORIGINS`.
+在未打包扩展连接本地服务器之前，需要先把当前扩展 Origin 加入 `ALLOWED_ORIGINS`。
 
-PowerShell:
+PowerShell：
 
 ```powershell
 $env:ALLOWED_ORIGINS="chrome-extension://<extension-id>"
 npm run dev:server
 ```
 
-Bash:
+Bash：
 
 ```bash
 ALLOWED_ORIGINS=chrome-extension://<extension-id> \
 npm run dev:server
 ```
 
-**Firefox origin note.** Firefox assigns each install a random `moz-extension://<uuid>` (it changes on reinstall and differs per user), so there is no single value that works for everyone like a fixed Chrome extension ID:
+**Firefox Origin 说明。** Firefox 给每个安装分配随机 `moz-extension://<uuid>`（重装会变、各用户不同），不像 Chrome 固定扩展 ID 那样有一个通用值：
 
-- Self-hosted / few users: read the UUID from `about:debugging` (the extension's Internal UUID / Manifest URL) or from the server's rejected-handshake log, then add that exact `moz-extension://<uuid>` to `ALLOWED_ORIGINS`. You must update it after reinstalling the add-on.
-- Public / shared server: set `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true` to accept any well-formed `moz-extension://<uuid>` without enumerating UUIDs. It still rejects web-page origins and does not replace room/member-token auth (see the environment variable reference below).
+- 自建 / 少数用户：从 `about:debugging`（扩展的 Internal UUID / 清单 URL）或服务端被拒握手日志读到该 UUID，把这个精确的 `moz-extension://<uuid>` 加入 `ALLOWED_ORIGINS`；重装扩展后需更新。
+- 公共 / 共享服务端：设 `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true`，接受任意格式正确的 `moz-extension://<uuid>` 而无需逐一枚举。它仍拒绝网页 Origin，且不替代房间/成员 token 鉴权（见下方环境变量参考）。
 
-Firefox treats the extension background as a secure context, so non-localhost servers must use `wss://`; the Firefox build already overrides the extension CSP so `ws://localhost` is not force-upgraded during local development.
+Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 `wss://`；Firefox 构建已覆盖扩展 CSP，使本地开发时 `ws://localhost` 不被强制升级。
 
-### 4. Use it
+### 4. 开始使用
 
-1. Open the popup
-2. Create a room, or join one with `roomCode:joinToken`
-3. Open a supported Bilibili video page or a generic page with an HTML5 `<video>`
-4. Click `Sync current page video`
-5. Other members will open the same video and enter sync mode
+1. 打开扩展弹窗
+2. 创建房间，或者使用 `roomCode:joinToken` 加入已有房间
+3. 打开受支持的 Bilibili 视频页面，或带标准 HTML5 `<video>` 的普通网页
+4. 在弹窗中点击 `同步当前页视频`
+5. 其他房间成员会打开同一视频并进入同步模式
 
-If a member later browses to a different non-shared video while still in the room, that page stays local and does not affect the room unless they explicitly sync it.
+如果成员在仍处于房间时浏览到其他未共享视频页面，该页面会保持本地模式，除非他们显式再次同步，否则不会影响房间。
 
-## Features
+## 功能
 
-- Room lifecycle
-  - create a room and get an invite string
-  - join a room with `roomCode:joinToken`
-  - copy and share invites directly from the popup
-- Playback sync
-  - share the current page video from the popup
-  - sync play, pause, seek, and playback rate
-  - automatically open the currently shared video for room members
-- Optional LiveKit voice chat
-  - room members can hear voice by default when LiveKit is enabled
-  - microphones stay muted until the user clicks the mic button
-  - voice-enabled rooms are capped at 4 members
-- In-page feedback
-  - member join and leave toasts
-  - shared video change toasts
-  - play, pause, seek, and rate-change toasts
-- Safe local browsing while still in a room
-  - non-shared pages do not broadcast playback back to the room
-  - manual playback on a non-shared page stays local
+- 房间与邀请
+  - 创建房间并获取邀请串
+  - 使用 `roomCode:joinToken` 加入房间
+  - 直接在弹窗中复制并分享邀请串
+- 视频同步
+  - 在扩展弹窗中分享当前页面视频
+  - 同步播放、暂停、跳转和播放速率
+  - 房间成员自动打开当前共享的视频
+  - 支持 Bilibili 专用页面，也支持暴露标准 HTML5 `<video>` 的普通网页
+- 可选 LiveKit 语音
+  - 服务端启用 LiveKit 后，房间成员默认可听语音
+  - 麦克风默认静音，只有用户点击开麦按钮后才会请求权限
+  - 启用语音后房间人数上限为 4 人
+- 管理后台
+  - 查看概览、房间列表、房间详情、运行事件、审计日志和配置摘要
+  - 支持关闭房间、清空共享视频、踢出成员、断开会话等管理动作
+  - “小黑屋”支持手工添加/删除 IP，也支持在房间成员行中把成员 IP 加入黑名单
+- 页面内反馈
+  - 成员加入和离开提示
+  - 共享视频变更提示
+  - 播放、暂停、跳转、倍速变化提示
+- 房间内的本地浏览隔离
+  - 未共享页面不会把播放状态广播回房间
+  - 在未共享页面上的手动播放仅在本地生效
 
-## Supported Pages
+## 支持的页面
 
-Generic support:
+通用支持：
 
-- `http://*/*` and `https://*/*` pages that expose a standard HTML5 `<video>` element
-- the shared title falls back through the current part title, page heading, and `document.title`
-- the shared identity is generated from the normalized page URL
+- 暴露标准 HTML5 `<video>` 元素的 `http://*/*` 与 `https://*/*` 页面
+- 共享标题会依次从当前分集标题、页面标题元素、`document.title` 中兜底
+- 共享身份由规范化后的页面 URL 生成
 
-Bilibili-specific support:
+Bilibili 专用支持：
 
 - `https://www.bilibili.com/video/*`
 - `https://www.bilibili.com/bangumi/play/*`
 - `https://www.bilibili.com/festival/*`
-- `https://www.bilibili.com/list/watchlater*` when the page URL carries `bvid`
-- `https://www.bilibili.com/medialist/play/watchlater*` when the page URL carries `bvid`
+- `https://www.bilibili.com/list/watchlater*`，且页面 URL 中带有 `bvid`
+- `https://www.bilibili.com/medialist/play/watchlater*`，且页面 URL 中带有 `bvid`
 
-Video variants:
+视频变体识别：
 
-- multi-part videos via `?p=`
-- festival pages via `bvid + cid`
+- 多 P 视频通过 `?p=` 识别
+- festival 页面通过 `bvid + cid` 识别
 
-## Project Structure
+## 项目结构
 
 ```text
-Bili-SyncPlay/
-  extension/            Browser extension (Chrome/Edge/Firefox)
-  server/               WebSocket room server
-  packages/protocol/    Shared protocol types
-  scripts/              Release packaging scripts
-  docs/                 Operations, migration, and policy docs
-  .github/workflows/    GitHub Actions workflows
+SyncRoom/
+  extension/            浏览器扩展（Chrome/Edge/Firefox）
+  server/               WebSocket 房间服务器
+  packages/protocol/    共享协议类型
+  scripts/              发布打包脚本
+  docs/                 运维、迁移和政策文档
+  .github/workflows/    GitHub Actions 工作流
 ```
 
-## Documentation
+## 文档入口
 
-- [Documentation index](./docs/README.md)
-- [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md)
-- [Multi-node operations runbook](./docs/runbook/multi-node-operations.zh-CN.md)
-- [Multi-node global admin migration](./docs/operations/multi-node-global-admin-migration.md)
-- [Privacy policy](./docs/legal/privacy.md)
+- [文档索引](./docs/README.md)
+- [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)
+- [多节点运维 Runbook](./docs/runbook/multi-node-operations.zh-CN.md)
+- [多节点全局管理面迁移说明](./docs/operations/multi-node-global-admin-migration.zh-CN.md)
+- [隐私权政策](./docs/legal/privacy.zh-CN.md)
 
-## Requirements
+## 环境要求
 
-### Version matrix
+### 版本矩阵
 
-| Dependency    | Minimum                    | Recommended    | Notes                                                                                             |
-| ------------- | -------------------------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| Node.js       | 18                         | 22             | see `.nvmrc`; Node 20 and 22 are both supported                                                   |
-| npm           | 8                          | 10             | ship with the corresponding Node.js version                                                       |
-| Chrome / Edge | current stable             | current stable | required to load the unpacked extension                                                           |
-| Firefox       | 121                        | current stable | optional; uses the Firefox build (`dist-firefox`, event-page background)                          |
-| Redis         | 6.0                        | 7+             | optional for single-node; **required** for multi-node deployments and persistence across restarts |
-| Reverse proxy | any with WebSocket support | Nginx 1.18+    | required in production for TLS termination and `wss://`                                           |
+| 依赖          | 最低版本                  | 推荐版本    | 说明                                                       |
+| ------------- | ------------------------- | ----------- | ---------------------------------------------------------- |
+| Node.js       | 18                        | 22          | 参见 `.nvmrc`；Node 20 和 22 均受支持                      |
+| npm           | 8                         | 10          | 随对应 Node.js 版本附带                                    |
+| Chrome / Edge | 当前稳定版                | 当前稳定版  | 用于加载未打包扩展                                         |
+| Firefox       | 121                       | 当前稳定版  | 可选；使用 Firefox 构建（`dist-firefox`，event page 后台） |
+| Redis         | 6.0                       | 7+          | 单机模式可选；**多节点部署和重启后持久化必须使用**         |
+| 反向代理      | 任意支持 WebSocket 的代理 | Nginx 1.18+ | 生产环境中用于 TLS 终止和 `wss://`                         |
 
-### Non-goals
+### 非目标
 
-- **No guaranteed multi-node consistency without Redis.** When `ROOM_STORE_PROVIDER=memory`, each server instance keeps its own room state. Members connected to different nodes will see different rooms.
-- **No built-in load balancer.** Multi-node deployments depend on an external edge layer (Nginx, HAProxy, cloud SLB/ALB) for WebSocket connection distribution. The server does not implement L4/L7 balancing.
-- **No browser session restoration after restart.** Room membership (`roomCode`, `joinToken`, `memberToken`) lives in `chrome.storage.session` and is cleared when the browser closes. Users must rejoin after a browser restart.
-- **No multi-user accounts or authentication for end users.** Room access is controlled by `roomCode:joinToken` invite strings only. There is no user registration or login system for viewers.
-- **No mobile browser or Safari support.** The extension is Manifest V3 for Chrome/Edge (service-worker background) and Firefox 121+ (event-page background); Safari and mobile browsers are out of scope.
+- **无 Redis 时不做多节点一致性保证。** 当 `ROOM_STORE_PROVIDER=memory` 时，每个服务实例各自维护房间状态。连接到不同节点的成员会看到不同的房间。
+- **不内置负载均衡。** 多节点部署依赖外部入口层（Nginx、HAProxy、云 SLB/ALB）分发 WebSocket 连接，服务端本身不实现 L4/L7 负载均衡。
+- **不恢复浏览器会话。** 房间成员状态（`roomCode`、`joinToken`、`memberToken`）存储在 `chrome.storage.session`，浏览器关闭后即清除。用户需在下次打开浏览器后重新加入房间。
+- **不提供终端用户账号系统。** 房间访问仅通过 `roomCode:joinToken` 邀请串控制，没有面向观众的注册或登录机制。
+- **不支持移动端浏览器或 Safari。** 扩展为 Manifest V3：Chrome/Edge（service worker 后台）与 Firefox 121+（event page 后台）；Safari 与移动端浏览器不在范围内。
 
-## Local Defaults
+## 本地默认值
 
-- Default server URL: `ws://localhost:8787`
-- Empty server URL input falls back to the build-time default
-- Only `ws://` and `wss://` are accepted
-- Local unpacked extension development requires `ALLOWED_ORIGINS=chrome-extension://<extension-id>` (Chrome/Edge) or the current `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true` (Firefox; see "Start the local server")
-- Voice chat is disabled by default and requires a self-hosted LiveKit server. See [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md).
+- 默认服务器地址：`ws://localhost:8787`
+- 服务器地址输入为空时，会回退到构建时默认值
+- 仅接受 `ws://` 和 `wss://`
+- 本地未打包扩展开发要求 `ALLOWED_ORIGINS=chrome-extension://<extension-id>`（Chrome/Edge）或当前 `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true`（Firefox；见“启动本地服务器”）
+- 语音聊天默认关闭，需要自建 LiveKit 服务；配置方式见 [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)。
 
-### Open the Admin Control Panel
+### 打开管理控制面板
 
-To use the management UI locally, start the server with admin auth configured and then open:
+如果你要在本地使用后台页面，需要先带上管理认证配置启动服务端，然后访问：
 
 ```text
 http://localhost:8787/admin
 ```
 
-This is the single-process local development mode, where the admin UI and WebSocket service share the same `npm run dev:server` process.
+这对应的是单进程本地开发模式，也就是管理面和 WebSocket 服务共用同一个 `npm run dev:server` 进程。
 
-If you run a dedicated global admin process instead, the entrypoint is usually one of these:
+如果你使用的是独立 Global Admin 进程，则入口通常会变成下面两种之一：
 
 ```text
 http://localhost:8788/admin
 https://admin.example.com/admin
 ```
 
-In practice:
+其中：
 
-- `http://localhost:8787/admin`: single-process development or non-separated admin mode
-- `http://localhost:8788/admin`: local direct access to `server/dist/global-admin-index.js`
-- `https://admin.example.com/admin`: production admin URL behind a reverse proxy
+- `http://localhost:8787/admin`：单进程开发或未拆分管理面的场景
+- `http://localhost:8788/admin`：本机直接启动 `server/dist/global-admin-index.js`
+- `https://admin.example.com/admin`：生产环境经反向代理后的统一管理面地址
 
-PowerShell example:
+PowerShell 示例：
 
 ```powershell
 $env:ADMIN_USERNAME="admin"
@@ -219,18 +228,18 @@ $env:ADMIN_ROLE="admin"
 npm run dev:server
 ```
 
-To enable the built-in admin demo data in a non-production environment, opt in explicitly:
+如果你只是在本地或非生产环境下预览后台演示数据，需要显式开启：
 
 ```powershell
 $env:ADMIN_UI_DEMO_ENABLED="true"
 npm run dev:server
 ```
 
-When this flag is not enabled, `?demo=1` is ignored by the admin UI.
+未开启这个变量时，后台页面上的 `?demo=1` 会被忽略。
 
-Generate a `sha256:<hex>` password hash locally:
+本地生成 `sha256:<hex>` 密码哈希：
 
-PowerShell:
+PowerShell：
 
 ```powershell
 $password = "secret-123"
@@ -241,35 +250,35 @@ $hash = [System.BitConverter]::ToString(
 "sha256:$hash"
 ```
 
-Node.js:
+Node.js：
 
 ```bash
 node -e "const { createHash } = require('node:crypto'); const password = 'secret-123'; console.log('sha256:' + createHash('sha256').update(password).digest('hex'));"
 ```
 
-After login, the current UI includes:
+当前后台页面已经覆盖：
 
-- overview
-- room list and room detail
-- runtime events
-- audit logs
-- config summary
-- existing admin actions such as close room, expire room, clear shared video, kick member, and disconnect session
-- kicked members are temporarily blocked from immediately rejoining with their previous `memberToken`
+- 概览
+- 房间列表和房间详情
+- 运行事件
+- 审计日志
+- 配置摘要
+- 关房、过期、清空共享视频、踢人、断开会话等现有管理动作
+- 被踢成员会被临时阻止使用旧 `memberToken` 立即自动重连
 
-## Developer Reference
+## 开发参考
 
-### Local Development
+### 本地开发
 
-Install dependencies:
+安装依赖：
 
 ```bash
 npm install
 ```
 
-Before running repository checks locally, make sure dependencies have been installed with `npm install`. In CI, use `npm ci` for a clean lockfile-based install before running the same checks.
+在本地运行仓库级检查前，请先执行 `npm install` 安装依赖；CI 中则统一使用 `npm ci` 基于锁文件做干净安装，然后再执行同一套检查。
 
-Recommended root workspace commands:
+推荐直接使用根工作区命令：
 
 ```bash
 npm run lint
@@ -279,51 +288,51 @@ npm run build
 npm test
 ```
 
-Useful command matrix:
+常用命令说明：
 
-- `npm run lint`: run repository-wide ESLint checks
-- `npm run lint:fix`: apply safe ESLint fixes
-- `npm run format`: rewrite files with Prettier
-- `npm run format:check`: verify formatting without rewriting
-- `npm run typecheck`: run TypeScript semantic checks across protocol, server, and extension source code
-- `npm run build`: build `protocol`, `server`, and `extension` in dependency order
-- `npm test`: run audit gate tests plus repository-wide protocol, server, and extension tests
-- `npm run audit`: run the dependency audit gate, failing on unallowlisted `high` or `critical` vulnerabilities
-- `npm run test:audit-gate`: run unit tests for the dependency audit gate
-- `npm run test:server:redis`: run the explicit Redis regression entry point for server persistence
+- `npm run lint`：执行全仓 ESLint 检查
+- `npm run lint:fix`：执行可安全应用的 ESLint 自动修复
+- `npm run format`：用 Prettier 重写格式
+- `npm run format:check`：只检查格式，不改文件
+- `npm run typecheck`：执行 protocol、server、extension 源码的 TypeScript 语义检查
+- `npm run build`：按依赖顺序构建 `protocol`、`server`、`extension`
+- `npm test`：执行 audit gate 测试，以及 protocol、server、extension 的全仓测试
+- `npm run audit`：执行依赖审计门禁；未进入白名单的 `high` 或 `critical` 漏洞会导致失败
+- `npm run test:audit-gate`：执行依赖审计门禁的单元测试
+- `npm run test:server:redis`：显式执行 server 的 Redis 持久化回归测试
 
-Development constraints:
+开发约定：
 
-- Keep entry files thin and keep shared rules in a single source of truth.
-- Install dependencies with `npm install` before running local checks; use `npm ci` in CI before the same verification flow.
-- Run `npm run lint`, `npm run format:check`, `npm run typecheck`, `npm run build`, and `npm test` before committing changes.
-- See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full contribution and refactoring constraints.
+- 保持入口文件轻量化，并且让共享规则维持单一来源。
+- 本地检查前先执行 `npm install` 安装依赖；CI 中统一先执行 `npm ci`，再跑同一套校验流程。
+- 提交前执行 `npm run lint`、`npm run format:check`、`npm run typecheck`、`npm run build`、`npm test`。
+- 完整贡献约束见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
-### Dependency Audit Gate
+### 依赖审计门禁
 
-CI runs `npm run audit` after `npm ci`. The gate executes `npm audit --json --audit-level=high` and fails when any `high` or `critical` vulnerability is not covered by an active entry in [`audit-allowlist.json`](./audit-allowlist.json).
+CI 会在 `npm ci` 后执行 `npm run audit`。该门禁会运行 `npm audit --json --audit-level=high`，只要发现未被 [`audit-allowlist.json`](./audit-allowlist.json) 中有效条目覆盖的 `high` 或 `critical` 漏洞，就会失败。
 
-When a high-severity audit finding appears:
+当出现 high 级别审计结果时：
 
-1. Prefer updating or replacing the vulnerable dependency and commit the resulting lockfile change.
-2. If a fix is not available yet and the risk has been reviewed, add a short-term allowlist entry using the ID printed by the audit gate:
+1. 优先升级或替换存在漏洞的依赖，并提交对应 lockfile 变更。
+2. 如果暂时没有可用修复且风险已经评估，可以使用 audit gate 输出的 ID 添加短期白名单条目：
 
 ```json
 {
   "id": "npm:<package>:<advisory-source>",
   "expires": "YYYY-MM-DD",
-  "reason": "Why this is accepted temporarily and how it will be removed"
+  "reason": "为什么可以短期接受，以及后续如何移除"
 }
 ```
 
-3. Keep the expiry date short. Expired, malformed, or missing-expiry entries fail the gate automatically.
-4. Remove the allowlist entry in the same change that fixes or removes the vulnerable dependency.
+3. 过期时间应尽量短。过期、格式错误或缺少过期时间的条目都会自动让门禁失败。
+4. 修复或移除漏洞依赖时，应在同一变更中删除对应白名单条目。
 
-### Benchmark Baselines
+### 基准压测
 
-The repository now includes reproducible benchmark entry points under `bench/` for the main high-load scenarios discussed in issue `#67`.
+仓库现在在 `bench/` 下提供了可复现的基准脚本，对应 issue `#67` 里要求的三类高负载场景。
 
-Commands:
+命令：
 
 ```bash
 npm run bench:single-room
@@ -332,9 +341,9 @@ npm run bench:reconnect-storm
 npm run bench:ci-light
 ```
 
-Each script prints standardized JSON to stdout and can also write to a file with `--output <path>`.
+每个脚本都会把标准化 JSON 打到 stdout，也可以用 `--output <path>` 落盘。
 
-Examples:
+示例：
 
 ```bash
 npm run bench:single-room -- --output .tmp/bench-single.json
@@ -342,26 +351,26 @@ npm run bench:redis-broadcast -- --duration-seconds 30 --sample-watchers 12
 npm run bench:reconnect-storm -- --members 500 --output .tmp/bench-reconnect.json
 ```
 
-Scenario defaults:
+默认场景：
 
-- `bench:single-room`: one node, one room, 100 members, `playback:update` at 10 Hz for 60 seconds
-- `bench:redis-broadcast`: two room nodes bridged through Redis, same load as above, owner pinned to node A and followers pinned to node B
-- `bench:reconnect-storm`: one room with 500 members, then simultaneous reconnects using the previous `memberToken`
-- `bench:ci-light`: CI-focused smoke baseline covering a small single-node playback run plus a small reconnect storm run
+- `bench:single-room`：单节点、单房间、100 成员，`playback:update` 以 10 Hz 连续发送 60 秒
+- `bench:redis-broadcast`：两台 room node 通过 Redis 互联，负载与上面一致，owner 固定在节点 A，其余成员固定在节点 B
+- `bench:reconnect-storm`：同一房间 500 成员先断线，再同时带旧 `memberToken` 回连
+- `bench:ci-light`：面向 CI 的轻量烟雾基线，覆盖一个小规模单节点广播场景和一个小规模重连风暴场景
 
-CI baseline behavior:
+CI 基线行为：
 
-- `bench:ci-light` reads `bench/ci-light-baseline.json`, runs the lightweight scenarios, and writes `results.json`, `comparison.json`, and `summary.md`.
-- The CI job fails only on obvious regressions: error rate above the configured limit or `P95` latency above the configured baseline multiplier.
-- `.github/workflows/ci.yml` uploads the benchmark output as an artifact so PRs keep the raw numbers for inspection.
+- `bench:ci-light` 会读取 `bench/ci-light-baseline.json`，运行轻量场景，并输出 `results.json`、`comparison.json` 和 `summary.md`。
+- CI 只在“明显退化”时失败：错误率超过配置上限，或 `P95` 延迟超过基线倍数阈值。
+- `.github/workflows/ci.yml` 会把这些结果作为 artifact 上传，方便在 PR 里回看原始数据。
 
-Redis behavior:
+Redis 行为：
 
-- `bench:redis-broadcast` uses `REDIS_URL` when provided.
-- If `REDIS_URL` is absent and `redis-server` is available in `PATH`, the script starts an ephemeral local Redis instance automatically.
-- The generated JSON is stable and diff-friendly: config, throughput, latency percentiles (`P50` / `P95` / `P99`), and error rate are always emitted in the same shape.
+- `bench:redis-broadcast` 在设置了 `REDIS_URL` 时会直接复用该实例。
+- 如果没有设置 `REDIS_URL`，且 `PATH` 中存在 `redis-server`，脚本会自动拉起一个临时本地 Redis。
+- 结果 JSON 结构固定、便于 diff：配置、吞吐、延迟百分位（`P50` / `P95` / `P99`）和错误率都会按同一 schema 输出。
 
-Result shape:
+结果结构：
 
 ```json
 {
@@ -380,39 +389,39 @@ Result shape:
 }
 ```
 
-Notes:
+说明：
 
-- Broadcast latency is sampled from a configurable subset of watcher sockets so the load generator does not serialize on every client ack.
-- Reconnect latency measures the full path from socket open to the first post-join `room:state`.
+- 广播延迟默认只从可配置数量的 watcher socket 采样，避免压测器自己在每次广播上串行等待全量客户端确认。
+- 重连延迟统计的是从 socket 打开到回房后收到第一条 `room:state` 的完整耗时。
 
-Build everything:
+构建全部内容：
 
 ```bash
 npm run build
 ```
 
-Build the extension with a fixed Chrome extension ID:
+使用固定的 Chrome 扩展 ID 构建扩展：
 
 ```powershell
 $env:BILI_SYNCPLAY_EXTENSION_KEY="<chrome-web-store-public-key>"
 npm run build -w @bili-syncplay/extension
 ```
 
-If `BILI_SYNCPLAY_EXTENSION_KEY` is set, the build writes it to `extension/dist/manifest.json` as `manifest.key`. Use the same public key as the Chrome Web Store item so locally loaded builds keep the same extension ID as the published one.
+如果设置了 `BILI_SYNCPLAY_EXTENSION_KEY`，构建会把它写入 `extension/dist/manifest.json` 的 `manifest.key`。这里应使用与你在 Chrome Web Store 发布项对应的同一个公钥，这样本地加载的扩展才能和已发布版本保持相同的扩展 ID。
 
-Run the automated test suites:
+运行自动化测试：
 
 ```bash
 npm test
 ```
 
-Current test coverage in this repository includes:
+当前仓库中的测试覆盖包括：
 
-- protocol client message validation
-- server WebSocket validation, auth, origin filtering, and rate-limit checks
-- background room-state race handling
+- protocol 客户端消息校验
+- server WebSocket 校验、认证、Origin 过滤和限流检查
+- background 房间状态竞态处理
 
-Workspace-level test commands are also available:
+也可以使用 workspace 级测试命令：
 
 ```bash
 npm run test -w @bili-syncplay/protocol
@@ -421,55 +430,55 @@ npm run test:redis -w @bili-syncplay/server
 npm run test -w @bili-syncplay/extension
 ```
 
-Redis integration test notes:
+Redis 集成测试说明：
 
-- `npm run test -w @bili-syncplay/server` keeps Redis-specific tests optional and may skip them when `REDIS_URL` is not configured
-- `npm run test:redis -w @bili-syncplay/server` is the explicit Redis regression entry point
-- `npm run test:server:redis` runs the same Redis regression from the workspace root
-- `REDIS_URL` is required for those explicit Redis test commands and they fail fast when it is missing
+- `npm run test -w @bili-syncplay/server` 会保留 Redis 专项测试为可选项；未配置 `REDIS_URL` 时可能跳过
+- `npm run test:redis -w @bili-syncplay/server` 是显式的 Redis 回归测试入口
+- 在仓库根目录也可以运行 `npm run test:server:redis`
+- 这些显式 Redis 测试命令要求设置 `REDIS_URL`，缺失时会直接失败
 
-### Code Organization
+### 代码组织约定
 
-The repository now follows a "thin entrypoint + named modules" structure.
+仓库现在遵循“薄入口 + 具名模块”的组织方式。
 
 - `extension/src/background`
-  - `index.ts` is assembly only
-  - runtime state lives in `state-store.ts`
-  - socket, room session, popup state, diagnostics, and tab coordination live in dedicated controllers
+  - `index.ts` 只负责装配
+  - 运行态统一收敛在 `state-store.ts`
+  - socket、room session、popup state、diagnostics、tab 协调分别由独立 controller 承载
 - `extension/src/content`
-  - `index.ts` is assembly only
-  - runtime state lives in `content-store.ts`
-  - playback sync, room-state hydration, navigation, playback binding, and sharing logic live in dedicated controllers
+  - `index.ts` 只负责装配
+  - 运行态统一收敛在 `content-store.ts`
+  - 播放同步、room-state hydration、导航、视频绑定、分享识别由独立 controller 承载
 - `extension/src/popup`
-  - `index.ts` is assembly only
-  - local UI state lives in `popup-store.ts`
-  - template, refs, render, actions, and background port sync live in separate modules
+  - `index.ts` 只负责装配
+  - 本地 UI 状态统一收敛在 `popup-store.ts`
+  - template、refs、render、actions、background port 同步各自独立
 - `extension/src/shared`
-  - shared extension helpers such as normalized video URL handling must live here instead of being redefined in feature entrypoints
+  - 扩展端共享 helper 必须沉淀在这里，例如共享视频 URL 归一化，不要回到各入口文件各写一份
 - `packages/protocol/src`
-  - protocol types live under `types/*`
-  - guards live under `guards/*`
-  - `index.ts` is the compatibility export surface
+  - 协议类型位于 `types/*`
+  - 类型守卫位于 `guards/*`
+  - `index.ts` 保持兼容导出面
 - `server/src`
-  - `app.ts` is runtime assembly only
-  - env parsing lives under `config/*`
-  - bootstrap glue lives under `bootstrap/*`
-  - admin route dispatch lives under `admin/routes/*`
+  - `app.ts` 只负责运行时装配
+  - 环境变量解析位于 `config/*`
+  - bootstrap 拼装位于 `bootstrap/*`
+  - admin 路由分发位于 `admin/routes/*`
 
-Current regression coverage is intentionally aligned with those boundaries and now includes store/controller/helper coverage for the refactored modules, not only end-to-end behavior checks.
+当前回归测试已经开始按这些边界补齐，不再只覆盖“功能能不能跑通”，也覆盖重构后 store/controller/helper 的关键行为。
 
-### Contribution Constraints
+### 贡献约束
 
-When making follow-up changes, keep the current structure stable:
+后续继续改仓库时，默认遵守以下约束：
 
-- prefer adding behavior to an existing named module over growing `index.ts`
-- keep entry files focused on initialization, dependency wiring, and listener registration
-- keep shared rules in one place; do not reintroduce local `normalizeUrl()` wrappers or duplicate parser logic
-- if a change introduces new state, put it behind the relevant store instead of another top-level mutable variable
-- if a change mixes state, IO, and business decisions in one file, split it before it becomes the new largest file in that area
-- add or update targeted tests when changing a store, controller, helper, protocol guard, or server config/router boundary
+- 优先把新行为放进已有具名模块，而不是继续拉长 `index.ts`
+- 入口文件只保留初始化、依赖装配和监听注册
+- 共享规则只能有一个可信来源；不要重新引入本地 `normalizeUrl()` 包装或重复 parser
+- 新增状态优先进入对应 store，不再随手增加新的顶层可变变量
+- 如果一个文件同时开始混入状态、IO 和业务决策，应在它再次膨胀前拆分
+- 修改 store、controller、helper、protocol guard、server config/router 边界时，必须同步补或改对应测试
 
-Recommended pre-commit checklist:
+建议提交前自检：
 
 ```bash
 npm run lint
@@ -479,94 +488,94 @@ npm run build
 npm test
 ```
 
-Start the local server:
+启动本地服务器：
 
 ```bash
 npm run dev:server
 ```
 
-Default server URL:
+默认服务器地址：
 
 ```text
 ws://localhost:8787
 ```
 
-Development notes:
+开发说明：
 
-- `@bili-syncplay/server` depends on the built output of `@bili-syncplay/protocol`
-- for a clean local setup, prefer `npm run build` instead of building `server` alone
-- the extension does not keep a permanent socket by default; it connects when a room already exists in session state or when the user creates / joins a room
-- reconnecting into an existing room now requires the stored `joinToken`; stale `memberToken` values are discarded on disconnect
-- if you change protocol types or message validation, rebuild both `packages/protocol` and `server`
-- the local server rejects extension connections unless `ALLOWED_ORIGINS` includes the current `chrome-extension://<extension-id>`
-- you can find the unpacked extension ID on `chrome://extensions`
+- `@bili-syncplay/server` 依赖 `@bili-syncplay/protocol` 的构建产物
+- 对于全新本地环境，优先使用 `npm run build`，而不是单独构建 `server`
+- 扩展默认不会永久保持 socket 连接；只有在会话状态中已存在房间，或用户创建 / 加入房间时才会建立连接
+- 重新进入已有房间现在需要保存的 `joinToken`；断开连接后，旧的 `memberToken` 会被丢弃
+- 如果你修改了协议类型或消息校验，需要重新构建 `packages/protocol` 和 `server`
+- 本地服务器默认会拒绝扩展连接，除非 `ALLOWED_ORIGINS` 包含当前 `chrome-extension://<extension-id>`
+- 你可以在 `chrome://extensions` 中查看未打包扩展的 ID
 
-The extension version shown by Chrome comes from `extension/dist/manifest.json`.
-During build, that manifest version is generated automatically from the root `package.json`.
+Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
+构建过程中，该 manifest 版本会根据根目录 `package.json` 自动生成。
 
-### Runtime Behavior
+### 运行时行为
 
-- if the user clicks `Sync current page video` before joining a room, the extension prompts to create a room first
-- if the room is already sharing a different video, the popup asks for confirmation before replacing it
-- the background service worker only forwards playback updates from the currently recognized shared tab
-- switching the server URL disconnects the current socket and reconnects using the new address if the extension still has an active room or pending room creation
-- invalid persisted server URLs remain visible in extension state and block automatic reconnect until corrected
-- Bilibili-specific pages use the Bilibili adapter for video IDs, episode URLs, and festival/watch-later metadata; generic pages use the HTML5 adapter and may be limited by DRM, cross-origin iframes, or sites that hide the main video element
+- 如果用户在加入房间前点击 `Sync current page video`，扩展会先提示创建房间
+- 如果房间当前已经共享了另一个视频，弹窗会在替换前请求确认
+- background service worker 只会转发当前识别为共享标签页的播放更新
+- 切换服务器地址会断开当前 socket；如果扩展仍有活动房间或待创建房间，会使用新地址重新连接
+- 如果持久化的服务器地址非法，扩展会保留该值并阻止自动重连，直到用户修正地址
+- Bilibili 专用页面使用 B 站 adapter 识别视频 ID、剧集 URL、festival / 稍后再看元数据；通用页面使用 HTML5 adapter，可能受 DRM、跨域 iframe、或站点隐藏主视频元素影响
 
-### State Persistence
+### 状态持久化
 
-The extension intentionally splits persistent state by lifetime:
+扩展有意按生命周期拆分持久化状态：
 
 - `chrome.storage.session`: `roomCode`, `joinToken`, `memberToken`, `memberId`, `roomState`
 - `chrome.storage.local`: `displayName`, `serverUrl`
 
-Practical consequences:
+实际影响：
 
-- browser restart does not restore the previous room automatically
-- the custom server URL survives browser restart
-- room session state and profile preferences are persisted independently, so a room-state write cannot leave `serverUrl` or `displayName` half-updated
-- the popup can reconnect into the current room only while the browser session still holds both `roomCode` and `joinToken`
-- `memberToken` is intentionally cleared on disconnect and re-issued after a successful rejoin
-- if the persisted server URL becomes invalid, the extension keeps that value visible and stops auto reconnect until the URL is fixed
-- closing the browser does not restore the previous room automatically on the next launch
+- 浏览器重启后不会自动恢复之前的房间
+- 自定义服务器地址会在浏览器重启后保留
+- 房间会话态与用户偏好会分别持久化，房间状态写入失败不会把 `serverUrl` 或 `displayName` 留在半更新状态
+- 只有在浏览器会话中仍保留 `roomCode` 和 `joinToken` 时，弹窗才能重新进入当前房间
+- `memberToken` 会在断开连接时被有意清除，并在重新加入成功后重新签发
+- 如果持久化的服务器地址非法，扩展会保留原始值并停止自动重连，直到地址被修正
+- 关闭浏览器后，下次启动不会自动恢复之前的房间
 
-### Server Deployment
+### 服务器部署
 
-Recommended setup:
+推荐环境：
 
-- Node.js 22 (see `.nvmrc`)
+- Node.js 22（见 `.nvmrc`）
 - Redis
-- Nginx reverse proxy
-- `wss://` server URL for production
+- Nginx 反向代理
+- 生产环境使用 `wss://` 服务器地址
 
-The extension supports changing the server URL from the popup, so you can switch from local development to a deployed server such as:
+扩展支持在弹窗中切换服务器地址，因此你可以从本地开发切换到已部署的服务器，例如：
 
 ```text
 wss://sync.example.com
 ```
 
-Only `ws://` and `wss://` server URLs are accepted. Empty input falls back to the build's embedded default. When `BILI_SYNCPLAY_DEFAULT_SERVER_URL` is unset, that default remains `ws://localhost:8787`.
+扩展的服务器地址只接受 `ws://` 和 `wss://`；空输入会回退到当前构建内置的默认值。未设置 `BILI_SYNCPLAY_DEFAULT_SERVER_URL` 时，该默认值是 `ws://localhost:8787`。
 
-If you want the Chrome Web Store build to ship with a public server URL while keeping the repository default at `ws://localhost:8787`, set `BILI_SYNCPLAY_DEFAULT_SERVER_URL` when building the extension. For example in PowerShell:
+如果你希望 Chrome 应用商店提交包内置公共服务器地址、而 GitHub 源码继续保持 `ws://localhost:8787`，构建扩展时设置环境变量 `BILI_SYNCPLAY_DEFAULT_SERVER_URL` 即可，例如在 PowerShell 中：
 
 ```powershell
 $env:BILI_SYNCPLAY_DEFAULT_SERVER_URL="wss://sync.example.com"
 npm run build:release
 ```
 
-When the environment variable is unset, the build output still uses `ws://localhost:8787`. When it is set, clearing the server URL in the popup and saving also falls back to that injected value.
+不设置该环境变量时，构建产物仍然使用 `ws://localhost:8787`；设置后，用户在弹窗里清空服务器地址并保存，也会回退到这个构建时注入的地址。
 
-For local unpacked-extension development, `ALLOWED_ORIGINS` should include the current `chrome-extension://<extension-id>` or the server will reject the WebSocket handshake with `origin_not_allowed`. For short-lived diagnostics, `ALLOW_ANY_ORIGIN_IN_DEV=true` skips this Origin gate.
+本地开发时，`ALLOWED_ORIGINS` 应包含当前 `chrome-extension://<extension-id>`，否则服务端会以 `origin_not_allowed` 拒绝 WebSocket 握手。短期排障时可用 `ALLOW_ANY_ORIGIN_IN_DEV=true` 跳过这一 Origin 闸门。
 
-The server now also supports an optional JSON config file. Resolution order is:
+服务端现在也支持可选的 JSON 配置文件。加载优先级为：
 
-- built-in defaults
-- `server.config.json` in the current working directory, or the path from `BILI_SYNCPLAY_CONFIG`
-- environment variables
+- 内置默认值
+- 当前工作目录下的 `server.config.json`，或 `BILI_SYNCPLAY_CONFIG` 指定的文件
+- 环境变量
 
-This keeps the existing env-only startup flow fully compatible while allowing production deployments to move shared non-secret settings into a file.
+这样可以在保持现有纯环境变量启动方式完全兼容的前提下，把生产环境里稳定的非敏感配置收敛到文件中。
 
-Example `server.config.json`:
+`server.config.json` 示例：
 
 ```json
 {
@@ -599,62 +608,62 @@ Example `server.config.json`:
 }
 ```
 
-Sensitive admin secrets remain env-only:
+以下管理后台敏感字段仍然只支持环境变量：
 
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD_HASH`
 - `ADMIN_SESSION_SECRET`
 
-LiveKit signing secrets are also env-only:
+以下 LiveKit 签名密钥也只支持环境变量：
 
 - `LIVEKIT_API_KEY`
 - `LIVEKIT_API_SECRET`
 
-The current server implementation:
+当前服务器实现：
 
-- listens on `PORT` or `server.config.json#port`, defaulting to `8787`
-- serves WebSocket traffic and a simple health check on the same port
-- returns `{"ok":true,"service":"bili-syncplay-server"}` on `GET /`
-- exposes the admin control panel and APIs on the same port: `/admin`, `/healthz`, `/readyz`, `/api/admin/*`
-- supports `memory` and `redis` room storage providers
-- persists room base state when `ROOM_STORE_PROVIDER=redis`
-- requires `roomCode + joinToken` for room join and `memberToken` for room messages
-- reissues `memberToken` after reconnect or server restart
-- keeps empty rooms until `EMPTY_ROOM_TTL_MS` expires instead of deleting them immediately
-- supports origin allowlists, connection throttling, message throttling, and structured security logs
-- optionally issues room-scoped LiveKit voice tokens when `VOICE_ENABLED=true` and LiveKit config is complete
+- 监听 `PORT` 或 `server.config.json` 中的 `port`，默认值为 `8787`
+- 在同一个端口上同时提供 WebSocket 流量和简单健康检查
+- 对 `GET /` 返回 `{"ok":true,"service":"bili-syncplay-server"}`
+- 在同一个端口上暴露管理控制面板和后台接口：`/admin`、`/healthz`、`/readyz`、`/api/admin/*`
+- 支持 `memory` 和 `redis` 两种房间存储实现
+- 当 `ROOM_STORE_PROVIDER=redis` 时会持久化房间基础状态
+- 房间加入需要 `roomCode + joinToken`，房间消息需要 `memberToken`
+- 服务重连或服务端重启后会重新签发 `memberToken`
+- 最后一名成员离开后，房间不会立即删除，而是保留到 `EMPTY_ROOM_TTL_MS` 到期
+- 支持 Origin 白名单、连接限流、消息限流和结构化安全日志
+- 当 `VOICE_ENABLED=true` 且 LiveKit 配置完整时，可签发房间级 LiveKit 语音令牌
 
-### Multi-Node Deployment and Global Admin
+### 多节点部署与全局管理面
 
-The server now supports a full multi-node topology with shared admin sessions, shared event and audit streams, shared runtime indexes, cross-node room-state fanout, cross-node admin commands, and a dedicated global admin entrypoint.
+现在服务端已经支持完整多节点拓扑，包括共享管理员会话、共享事件与审计流、共享运行时索引、跨节点房间状态广播、跨节点管理命令，以及独立的全局管理入口。
 
-#### Core model
+#### 核心结论
 
-- end users connect to a single public URL such as `wss://sync.example.com`
-- the edge layer handles TLS termination, reverse proxying, and connection distribution
-- room nodes carry WebSocket traffic and health probes
-- the global admin process serves `/admin` and `/api/admin/*`
-- Redis backs shared persistence, runtime indexes, buses, and admin sessions
+- 普通用户始终连接单一公共地址，例如 `wss://sync.example.com`
+- 入口层负责 TLS 终止、反向代理和连接分发
+- Room Node 负责承载 WebSocket 长连接和健康检查
+- Global Admin 负责 `/admin` 与 `/api/admin/*`
+- Redis 负责共享持久化、运行时索引、事件总线和命令总线
 
-Recommended production topology:
+推荐生产拓扑：
 
-- edge entrypoint: `Nginx`, `HAProxy`, `SLB/ALB`, or another reverse proxy / load balancer for TLS termination and WebSocket fan-in
-- `room-node-a`: WebSocket room traffic plus health probes
-- `room-node-b`: WebSocket room traffic plus health probes
-- `global-admin`: `/admin` and `/api/admin/*`
-- `redis`: shared persistence, runtime index, event bus, and command bus backend
+- 统一入口层：`Nginx`、`HAProxy`、`SLB/ALB` 等，负责 TLS 终止和 WebSocket 反向代理
+- `room-node-a`：承载 WebSocket 房间流量和探活
+- `room-node-b`：承载 WebSocket 房间流量和探活
+- `global-admin`：承载 `/admin` 与 `/api/admin/*`
+- `redis`：共享持久化、运行时索引、事件总线和命令总线
 
-The server does not implement L4/L7 load balancing inside the application process. Multi-node deployments require an external entrypoint layer that accepts user connections on a single public URL and forwards them to room nodes. End users should connect to one public address such as `wss://sync.example.com`, not pick node addresses manually.
+服务端不会在应用进程内实现 L4/L7 负载均衡；多节点部署需要依赖外部入口层，把用户连接统一接入后再转发到各个 Room Node。普通用户应始终连接单一公共地址，例如 `wss://sync.example.com`，而不是手动选择节点地址。
 
-> Note
-> If you are only doing local development or one-node deployment, you can stay on the single-node setup. The rest of this section is mainly for production multi-node rollout.
+> 提示
+> 如果你只是本地开发或单机部署，可以继续使用单节点模式。下面这部分主要面向生产多节点部署。
 
-For day-2 operations such as scaling, Redis incidents, admin credential rotation, and alert triage, see the
-[multi-node operations runbook](./docs/runbook/multi-node-operations.zh-CN.md).
+日常扩缩容、Redis 故障、管理员口令轮换和常见告警处理见
+[多节点运维 Runbook](./docs/runbook/multi-node-operations.zh-CN.md)。
 
-#### Minimum required shared settings
+#### 最小必配项
 
-Recommended provider settings for a full multi-node rollout:
+完整多节点上线建议统一开启以下 provider：
 
 - `ROOM_STORE_PROVIDER=redis`
 - `ADMIN_SESSION_STORE_PROVIDER=redis`
@@ -665,10 +674,10 @@ Recommended provider settings for a full multi-node rollout:
 - `ADMIN_COMMAND_BUS_PROVIDER=redis`
 - `NODE_HEARTBEAT_ENABLED=true`
 
-Room node example:
+Room Node 示例：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json \
+BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -678,10 +687,10 @@ GLOBAL_ADMIN_ENABLED=false \
 node server/dist/index.js
 ```
 
-Dedicated global admin example:
+独立 Global Admin 示例：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json \
+BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -691,22 +700,22 @@ GLOBAL_ADMIN_ENABLED=true \
 node server/dist/global-admin-index.js
 ```
 
-If the admin UI should talk to a separate API origin, set `GLOBAL_ADMIN_API_BASE_URL=https://admin.example.com`.
+如果管理 UI 需要请求一个独立 API 域名，可设置 `GLOBAL_ADMIN_API_BASE_URL=https://admin.example.com`。
 
-#### Node role configuration matrix
+#### 节点角色配置矩阵
 
-| Role           | Typical process                     | External responsibility                                                           | Must be unique                                     | Must stay aligned                                                         | Recommended value / note               |
-| -------------- | ----------------------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------- |
-| `room-node`    | `server/dist/index.js`              | WebSocket, `/`, `/healthz`, `/readyz`                                             | `INSTANCE_ID`, bind address / port                 | `REDIS_URL`, shared `*_PROVIDER` values, security and rate-limit settings | `GLOBAL_ADMIN_ENABLED=false`           |
-| `global-admin` | `server/dist/global-admin-index.js` | `/admin`, `/api/admin/*`                                                          | `INSTANCE_ID`, `GLOBAL_ADMIN_PORT`                 | `REDIS_URL`, admin auth settings, shared provider settings                | `GLOBAL_ADMIN_ENABLED=true`            |
-| `edge`         | `nginx` / `haproxy` / cloud LB      | TLS termination, single public entrypoint, reverse proxy, connection distribution | public hostname, certificate, upstream definitions | backend node list                                                         | end users connect only to the edge URL |
-| `redis`        | `redis-server`                      | shared persistence, runtime indexes, buses                                        | instance address, password, ACL                    | every node must point to the same Redis                                   | production should keep it private      |
+| 角色           | 典型进程                            | 对外职责                               | 必须唯一                           | 必须保持一致                                    | 推荐值 / 说明                |
+| -------------- | ----------------------------------- | -------------------------------------- | ---------------------------------- | ----------------------------------------------- | ---------------------------- |
+| `room-node`    | `server/dist/index.js`              | WebSocket、`/`、`/healthz`、`/readyz`  | `INSTANCE_ID`、监听地址/端口       | `REDIS_URL`、各类 `*_PROVIDER`、安全与限流参数  | `GLOBAL_ADMIN_ENABLED=false` |
+| `global-admin` | `server/dist/global-admin-index.js` | `/admin`、`/api/admin/*`               | `INSTANCE_ID`、`GLOBAL_ADMIN_PORT` | `REDIS_URL`、管理员认证参数、共享 provider 配置 | `GLOBAL_ADMIN_ENABLED=true`  |
+| `edge`         | `nginx` / `haproxy` / 云 LB         | TLS 终止、统一入口、反向代理、连接分发 | 对外域名、证书、upstream 定义      | 指向的后端节点列表                              | 用户只连接统一入口地址       |
+| `redis`        | `redis-server`                      | 共享持久化、运行时索引、总线           | 实例地址、密码、ACL                | 所有节点都要指向同一个 Redis                    | 生产建议仅内网开放           |
 
-#### Which settings must match and which must differ
+#### 哪些配置必须一致，哪些必须不同
 
-##### Shared across nodes
+##### 所有节点保持一致
 
-Settings that should stay aligned across every room node and the global admin process:
+所有 Room Node 与 Global Admin 都应保持一致的配置：
 
 - `REDIS_URL`
 - `ROOM_STORE_PROVIDER=redis`
@@ -717,44 +726,44 @@ Settings that should stay aligned across every room node and the global admin pr
 - `ROOM_EVENT_BUS_PROVIDER=redis`
 - `ADMIN_COMMAND_BUS_PROVIDER=redis`
 - `NODE_HEARTBEAT_ENABLED=true`
-- correctness-sensitive room, security, and rate-limit settings such as `MAX_MEMBERS_PER_ROOM`, `MAX_MESSAGE_BYTES`, and `ALLOWED_ORIGINS`
-- admin auth settings such as `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, and `ADMIN_SESSION_SECRET`
+- 与业务正确性相关的限流、安全和房间容量参数，例如 `MAX_MEMBERS_PER_ROOM`、`MAX_MESSAGE_BYTES`、`ALLOWED_ORIGINS`
+- 管理员认证配置，例如 `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET`
 
-##### Unique per node
+##### 每个节点保持唯一
 
-Settings that must differ per process or by role:
+每个节点必须不同或按角色区分的配置：
 
-- `INSTANCE_ID`: every process must use a unique value such as `room-node-a`, `room-node-b`, or `global-admin`
-- `PORT`: used by each room node
-- `GLOBAL_ADMIN_PORT`: used only by `global-admin`
-- `GLOBAL_ADMIN_ENABLED`: `false` on room nodes, `true` on the dedicated admin process
-- bind addresses, firewall rules, systemd unit names, and log paths
+- `INSTANCE_ID`：每个进程都必须唯一，例如 `room-node-a`、`room-node-b`、`global-admin`
+- `PORT`：Room Node 自己监听的 HTTP/WebSocket 端口
+- `GLOBAL_ADMIN_PORT`：仅 `global-admin` 使用
+- `GLOBAL_ADMIN_ENABLED`：Room Node 设为 `false`，独立管理面设为 `true`
+- 监听地址、防火墙规则、systemd 服务名、日志路径
 
-#### Two-server deployment example
+#### 两机部署样例
 
-If you currently have only two machines, a practical rollout looks like this:
+如果当前只有两台服务器，推荐先按下面的方式部署：
 
-- server 1: `Nginx + Redis + room-node-a + global-admin`
-- server 2: `room-node-b`
+- 服务器 1：`Nginx + Redis + room-node-a + global-admin`
+- 服务器 2：`room-node-b`
 
-##### Port layout
+##### 端口规划
 
-Suggested port layout:
+建议端口规划：
 
-| Machine  | Role           | Suggested bind                      | Publicly exposed | Notes                    |
-| -------- | -------------- | ----------------------------------- | ---------------- | ------------------------ |
-| server 1 | `nginx`        | `80/443`                            | yes              | single public entrypoint |
-| server 1 | `room-node-a`  | `127.0.0.1:8787` or private IP      | no               | proxied by the edge      |
-| server 1 | `global-admin` | `127.0.0.1:8788` or private IP      | no               | proxied by the edge      |
-| server 1 | `redis`        | `127.0.0.1:6379` or private IP      | no               | allow only node access   |
-| server 2 | `room-node-b`  | private IP such as `10.0.0.12:8787` | no               | proxied by server 1 edge |
+| 机器     | 角色           | 建议监听                    | 是否公网开放 | 说明                    |
+| -------- | -------------- | --------------------------- | ------------ | ----------------------- |
+| 服务器 1 | `nginx`        | `80/443`                    | 是           | 用户统一入口            |
+| 服务器 1 | `room-node-a`  | `127.0.0.1:8787` 或内网地址 | 否           | 由入口层反代            |
+| 服务器 1 | `global-admin` | `127.0.0.1:8788` 或内网地址 | 否           | 由入口层反代            |
+| 服务器 1 | `redis`        | `127.0.0.1:6379` 或内网地址 | 否           | 只允许节点访问          |
+| 服务器 2 | `room-node-b`  | `10.0.0.12:8787` 等内网地址 | 否           | 由服务器 1 的入口层反代 |
 
-##### Environment examples
+##### 环境变量示意
 
-Example room node environment on server 1:
+服务器 1 的 Room Node 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json \
+BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -770,10 +779,10 @@ GLOBAL_ADMIN_ENABLED=false \
 node server/dist/index.js
 ```
 
-Example room node environment on server 2:
+服务器 2 的 Room Node 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json \
+BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-b \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -789,10 +798,10 @@ GLOBAL_ADMIN_ENABLED=false \
 node server/dist/index.js
 ```
 
-Example global admin environment on server 1:
+服务器 1 的 Global Admin 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json \
+BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -808,64 +817,64 @@ GLOBAL_ADMIN_ENABLED=true \
 node server/dist/global-admin-index.js
 ```
 
-##### Weighting advice
+##### 权重建议
 
-If the edge machine also carries `room-node-a`, `global-admin`, and `redis`, it will usually absorb more network and CPU pressure than the other nodes. In that case, prefer `least_conn` at the edge and consider giving the remote room node a higher weight rather than splitting long-lived WebSocket traffic 1:1.
+如果入口机同时承载 `room-node-a`、`global-admin` 和 `redis`，它通常会比其他节点承担更多网络和 CPU 压力。此时建议在入口层给远端 Room Node 更高权重，或者至少使用 `least_conn`，不要按 1:1 平均分配长连接。
 
-Redis key families used by the multi-node control plane:
+多节点控制面当前使用的 Redis 键族：
 
-- `bsp:room:*`, `bsp:room-index`, `bsp:room-expiry`: persisted room base state
-- `bsp:runtime:*`: shared sessions, room members, blocked member tokens, and node heartbeats
-- `bsp:admin:session:*`: shared admin bearer sessions
-- `bsp:events`: runtime event stream
-- `bsp:audit-logs`: admin audit stream
-- `bsp:room-events`: room event bus channel
-- `bsp:admin-command:*`, `bsp:admin-command-result:*`: admin command channels
+- `bsp:room:*`、`bsp:room-index`、`bsp:room-expiry`：房间基础持久化
+- `bsp:runtime:*`：共享 session、房间成员、被踢 token 与节点心跳
+- `bsp:admin:session:*`：共享管理员 Bearer 会话
+- `bsp:events`：运行事件流
+- `bsp:audit-logs`：管理审计流
+- `bsp:room-events`：房间事件总线频道
+- `bsp:admin-command:*`、`bsp:admin-command-result:*`：管理命令频道
 
-### Security Environment Variables
+### 安全相关环境变量
 
-The server accepts the following environment variables. Safe defaults are built in, but production should set them explicitly:
+服务器支持以下环境变量。虽然内置了安全默认值，但生产环境应显式设置：
 
-- `BILI_SYNCPLAY_CONFIG`: optional path to a JSON config file; when unset, the server looks for `server.config.json` in the current working directory
-- `ALLOWED_ORIGINS`: comma-separated WebSocket `Origin` allowlist
-- if `ALLOWED_ORIGINS` is empty, the server rejects all explicit `Origin` values by default
-- `ALLOW_MISSING_ORIGIN_IN_DEV`: allow missing `Origin` headers when set to `true`
-- `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN`: when `true`, accept any well-formed `moz-extension://<uuid>` origin; Firefox assigns a random per-install UUID that a public/shared server cannot enumerate in `ALLOWED_ORIGINS`. Still rejects web-page origins (a page can never present a `moz-extension://` origin) and does not replace room/member-token auth; default `false`
-- `ALLOW_ANY_ORIGIN_IN_DEV`: when `true`, skip WebSocket Origin checks for both explicit and missing Origin values. Use only for local development or short-lived diagnostics; default `false`
-- `TRUSTED_PROXY_ADDRESSES`: comma-separated proxy socket IP allowlist; only requests arriving from these proxies can use `X-Forwarded-For`
-- `MAX_CONNECTIONS_PER_IP`: max concurrent WebSocket connections per IP
-- `CONNECTION_ATTEMPTS_PER_MINUTE`: max handshake attempts per IP per minute
-- `MAX_MEMBERS_PER_ROOM`: room member cap
-- `VOICE_ENABLED`: enable server-side LiveKit voice token issuance
-- `LIVEKIT_URL`: browser-reachable LiveKit WebSocket URL, normally `wss://voice.example.com` in production
-- `LIVEKIT_API_KEY`: LiveKit API key, env-only
-- `LIVEKIT_API_SECRET`: LiveKit API secret, env-only
-- `VOICE_TOKEN_TTL_SECONDS`: voice token lifetime, default `900`
-- `VOICE_MAX_MEMBERS`: voice-enabled room cap, capped to `4`
-- `MAX_MESSAGE_BYTES`: WebSocket message size cap in bytes
-- `INVALID_MESSAGE_CLOSE_THRESHOLD`: number of invalid messages before disconnect
-- `ROOM_STORE_PROVIDER`: `memory` or `redis`
-- `EMPTY_ROOM_TTL_MS`: how long an empty room is retained before deletion
-- `ROOM_CLEANUP_INTERVAL_MS`: how often the server deletes expired rooms
-- `REDIS_URL`: Redis connection URL when `ROOM_STORE_PROVIDER=redis`
-- `ADMIN_USERNAME`: admin login username
-- `ADMIN_PASSWORD_HASH`: admin password hash, currently supports `sha256:<hex>` or `scrypt:<salt>:<base64url>`
-- `ADMIN_SESSION_SECRET`: secret used to bind bearer tokens to server-side sessions
-- `ADMIN_SESSION_TTL_MS`: admin session lifetime in milliseconds
-- `ADMIN_ROLE`: admin role, one of `viewer`, `operator`, `admin`
-- `ADMIN_UI_DEMO_ENABLED`: enables the built-in admin UI demo mode for local / non-production preview; defaults to `false`
-- `ADMIN_SESSION_STORE_PROVIDER`: `memory` or `redis`
-- `ADMIN_EVENT_STORE_PROVIDER`: `memory` or `redis`
-- `ADMIN_AUDIT_STORE_PROVIDER`: `memory` or `redis`
-- `RUNTIME_STORE_PROVIDER`: `memory` or `redis`
-- `ROOM_EVENT_BUS_PROVIDER`: `none`, `memory`, or `redis`
-- `ADMIN_COMMAND_BUS_PROVIDER`: `none`, `memory`, or `redis`
-- `GLOBAL_ADMIN_ENABLED`: when `false`, a room node keeps `/`, `/healthz`, `/readyz`, but disables `/admin` and `/api/admin/*`
-- `GLOBAL_ADMIN_API_BASE_URL`: optional admin UI API base URL override
-- `GLOBAL_ADMIN_PORT`: HTTP port for `server/dist/global-admin-index.js`
-- `NODE_HEARTBEAT_ENABLED`: enables node heartbeat reporting
-- `NODE_HEARTBEAT_INTERVAL_MS`: heartbeat interval in milliseconds
-- `NODE_HEARTBEAT_TTL_MS`: heartbeat TTL in milliseconds
+- `BILI_SYNCPLAY_CONFIG`：可选的 JSON 配置文件路径；未设置时会优先查找当前工作目录下的 `server.config.json`
+- `ALLOWED_ORIGINS`：逗号分隔的 WebSocket `Origin` 白名单
+- 如果 `ALLOWED_ORIGINS` 为空，服务器默认拒绝所有显式 `Origin`
+- `ALLOW_MISSING_ORIGIN_IN_DEV`：设为 `true` 时允许缺失 `Origin` 头
+- `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN`：设为 `true` 时接受任意格式正确的 `moz-extension://<uuid>` Origin；Firefox 每个安装随机分配 UUID，公共/共享服务端无法逐一枚举进 `ALLOWED_ORIGINS`。仍会拒绝网页 Origin（网页永远无法呈现 `moz-extension://` Origin），且不替代房间/成员 token 鉴权；默认 `false`
+- `ALLOW_ANY_ORIGIN_IN_DEV`：设为 `true` 时跳过 WebSocket Origin 检查，显式 Origin 和缺失 Origin 都会放行。仅用于本地开发或短期排障；默认 `false`
+- `TRUSTED_PROXY_ADDRESSES`：逗号分隔的受信代理 socket IP 列表；只有来自这些代理的请求才会使用 `X-Forwarded-For`
+- `MAX_CONNECTIONS_PER_IP`：每个 IP 允许的最大并发 WebSocket 连接数
+- `CONNECTION_ATTEMPTS_PER_MINUTE`：每个 IP 每分钟最大握手尝试次数
+- `MAX_MEMBERS_PER_ROOM`：房间成员上限
+- `VOICE_ENABLED`：启用服务端 LiveKit 语音令牌签发
+- `LIVEKIT_URL`：浏览器可访问的 LiveKit WebSocket 地址，生产环境通常为 `wss://voice.example.com`
+- `LIVEKIT_API_KEY`：LiveKit API key，仅通过环境变量提供
+- `LIVEKIT_API_SECRET`：LiveKit API secret，仅通过环境变量提供
+- `VOICE_TOKEN_TTL_SECONDS`：语音令牌有效期，默认 `900`
+- `VOICE_MAX_MEMBERS`：启用语音后的房间人数上限，最大为 `4`
+- `MAX_MESSAGE_BYTES`：WebSocket 消息字节上限
+- `INVALID_MESSAGE_CLOSE_THRESHOLD`：在断开连接前允许的无效消息次数
+- `ROOM_STORE_PROVIDER`：`memory` 或 `redis`
+- `EMPTY_ROOM_TTL_MS`：空房保留时长，超时后删除
+- `ROOM_CLEANUP_INTERVAL_MS`：服务端扫描并清理过期房间的周期
+- `REDIS_URL`：当 `ROOM_STORE_PROVIDER=redis` 时使用的 Redis 连接地址
+- `ADMIN_USERNAME`：管理后台登录用户名
+- `ADMIN_PASSWORD_HASH`：管理后台密码哈希，当前支持 `sha256:<hex>` 或 `scrypt:<salt>:<base64url>`
+- `ADMIN_SESSION_SECRET`：用于绑定后台 Bearer Token 与服务端会话的 secret
+- `ADMIN_SESSION_TTL_MS`：后台会话有效期，单位毫秒
+- `ADMIN_ROLE`：后台角色，可选 `viewer`、`operator`、`admin`
+- `ADMIN_UI_DEMO_ENABLED`：是否开启后台内置 demo 模式，适用于本地 / 非生产预览，默认 `false`
+- `ADMIN_SESSION_STORE_PROVIDER`：`memory` 或 `redis`
+- `ADMIN_EVENT_STORE_PROVIDER`：`memory` 或 `redis`
+- `ADMIN_AUDIT_STORE_PROVIDER`：`memory` 或 `redis`
+- `RUNTIME_STORE_PROVIDER`：`memory` 或 `redis`
+- `ROOM_EVENT_BUS_PROVIDER`：`none`、`memory` 或 `redis`
+- `ADMIN_COMMAND_BUS_PROVIDER`：`none`、`memory` 或 `redis`
+- `GLOBAL_ADMIN_ENABLED`：设为 `false` 时，Room Node 保留 `/`、`/healthz`、`/readyz`，但关闭 `/admin` 与 `/api/admin/*`
+- `GLOBAL_ADMIN_API_BASE_URL`：可选的管理 UI API 基址覆盖项
+- `GLOBAL_ADMIN_PORT`：`server/dist/global-admin-index.js` 使用的 HTTP 端口
+- `NODE_HEARTBEAT_ENABLED`：是否开启节点心跳
+- `NODE_HEARTBEAT_INTERVAL_MS`：节点心跳间隔，单位毫秒
+- `NODE_HEARTBEAT_TTL_MS`：节点心跳 TTL，单位毫秒
 - `RATE_LIMIT_ROOM_CREATE_PER_MINUTE`
 - `RATE_LIMIT_ROOM_JOIN_PER_MINUTE`
 - `RATE_LIMIT_VIDEO_SHARE_PER_10_SECONDS`
@@ -875,7 +884,7 @@ The server accepts the following environment variables. Safe defaults are built 
 - `RATE_LIMIT_SYNC_PING_PER_SECOND`
 - `RATE_LIMIT_SYNC_PING_BURST`
 
-Example:
+示例：
 
 ```bash
 PORT=8787 \
@@ -901,36 +910,36 @@ ADMIN_SESSION_TTL_MS=43200000 \
 node server/dist/index.js
 ```
 
-Quick admin hash example:
+快速生成后台密码哈希：
 
 ```bash
 node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + createHash('sha256').update('secret-123').digest('hex'));"
 ```
 
-### Admin API
+### 管理后台 API
 
-The server now includes a P0 admin backend on the same HTTP port.
+服务端现在已经内置 P0 管理后台，只读接口与主服务复用同一个 HTTP 端口。
 
-Admin control panel:
+管理控制面板入口：
 
-- open `http://localhost:8787/admin`
-- authenticate with the account configured by `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, and `ADMIN_ROLE`
-- the UI covers login, overview, rooms, room detail, events, IP blacklist, audit logs, config summary, and the existing admin actions
+- 打开 `http://localhost:8787/admin`
+- 使用 `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET`、`ADMIN_ROLE` 配置的账号登录
+- 页面已覆盖登录、概览、房间列表、房间详情、运行事件、小黑屋、审计日志、配置摘要，以及现有管理动作
 
-Role model:
+角色模型：
 
-- `viewer`: read-only access to overview, rooms, events, audit logs, and config
-- `operator`: viewer permissions plus room/session actions
-- `admin`: currently equivalent to operator, with headroom for future governance features
+- `viewer`：只读访问概览、房间、事件、审计日志、配置摘要
+- `operator`：在 `viewer` 基础上可执行房间和会话管理动作
+- `admin`：当前能力与 `operator` 基本一致，为后续更高权限治理能力预留扩展位
 
-Action behavior notes:
+动作语义说明：
 
-- `kick member` disconnects the current member session and temporarily blocks immediate auto rejoin attempts that reuse the old `memberToken`
-- `disconnect session` only closes the specified socket; if the client still holds valid room context, it may join again normally
-- `add to blacklist` stores the IP, immediately disconnects current sessions from the same IP, and rejects future WebSocket upgrades from that IP
-- the IP blacklist is process-local in memory mode; when Redis persistence providers are enabled, Redis stores and shares it across nodes, while disk durability depends on Redis AOF / RDB settings
+- `踢出成员` 会断开当前成员会话，并临时阻止客户端拿旧 `memberToken` 立即自动重连
+- `断开会话` 只关闭指定 socket；如果客户端仍持有有效房间上下文，后续仍可正常重新加入
+- `加入黑名单` 会把 IP 写入小黑屋，立即断开当前同 IP 在线连接，并在后续 WebSocket 握手阶段拒绝该 IP
+- 小黑屋在内存模式下仅适合本地开发；启用 Redis 相关持久化 provider 后由 Redis 保存并跨节点共享，是否落盘取决于 Redis 自身 AOF / RDB 配置
 
-Implemented endpoints:
+当前已实现接口：
 
 - `GET /metrics`
 - `GET /healthz`
@@ -953,116 +962,116 @@ Implemented endpoints:
 - `POST /api/admin/rooms/:roomCode/members/:memberId/kick`
 - `POST /api/admin/sessions/:sessionId/disconnect`
 
-Authentication model:
+鉴权方式：
 
-- management APIs use `Authorization: Bearer <token>`
-- login returns a server-issued session token
-- `ADMIN_ROLE` controls the single configured admin account role: `viewer`, `operator`, or `admin`
-- `INSTANCE_ID` controls the current server instance identifier, used by overview, room detail, and audit logs
-- write actions require `operator` or higher
-- if admin environment variables are not configured, admin auth endpoints return unavailable / unauthorized responses
+- 管理接口使用 `Authorization: Bearer <token>`
+- 登录成功后返回服务端签发的 session token
+- `ADMIN_ROLE` 用于控制当前唯一后台账号的角色，可选 `viewer`、`operator`、`admin`
+- `INSTANCE_ID` 用于标识当前服务实例，并会出现在 overview、room detail 和 audit log 中
+- 写操作要求 `operator` 及以上权限
+- 如果未配置管理后台环境变量，管理认证接口会返回 unavailable / unauthorized
 
-### 1. Prepare the server
+### 1. 准备服务器
 
-Example environment:
+示例环境：
 
 - Ubuntu 24.04 LTS
-- domain: `sync.example.com`
-- app directory: `/opt/bili-syncplay`
-- service user: `bili-syncplay`
-- internal port: `8787`
+- 域名：`sync.example.com`
+- 应用目录：`/opt/syncroom`
+- 服务用户：`syncroom`
+- 内部端口：`8787`
 
-Install Node.js 22, Redis, and Nginx first, then clone the repository:
+先安装 Node.js 22（见 `.nvmrc`）、Redis 和 Nginx，然后克隆仓库：
 
 ```bash
-sudo mkdir -p /opt/bili-syncplay
-sudo chown "$USER":"$USER" /opt/bili-syncplay
-git clone https://github.com/<your-org>/Bili-SyncPlay.git /opt/bili-syncplay
-cd /opt/bili-syncplay
+sudo mkdir -p /opt/syncroom
+sudo chown "$USER":"$USER" /opt/syncroom
+git clone https://github.com/HrizonsX/SyncRoom.git /opt/syncroom
+cd /opt/syncroom
 npm install
 npm run build
 ```
 
-Why `npm run build` is recommended for first deployment:
+为什么首轮部署推荐使用 `npm run build`：
 
-- it builds `packages/protocol`, which is required by the server at runtime
-- it avoids partial workspace builds that leave `server` pointing at missing protocol artifacts
+- 它会构建 `packages/protocol`，而这是服务器运行时所必需的
+- 它可以避免只构建部分 workspace，导致 `server` 指向缺失的 protocol 产物
 
-If you only want to build the server package:
+如果你只想构建服务器包：
 
 ```bash
 npm run build -w @bili-syncplay/server
 ```
 
-Use that command only when `packages/protocol` is already built and unchanged.
+仅当 `packages/protocol` 已经构建且未变化时再使用这个命令。
 
-### 2. Run the Node.js server
+### 2. 运行 Node.js 服务器
 
-The production entry file is:
+生产环境入口文件为：
 
 ```text
 server/dist/index.js
 ```
 
-You can start it manually first to verify the build:
+你可以先手动启动它以验证构建结果：
 
 ```bash
-cd /opt/bili-syncplay
+cd /opt/syncroom
 PORT=8787 ROOM_STORE_PROVIDER=memory node server/dist/index.js
 ```
 
-If you plan to use Redis-backed room persistence, verify Redis connectivity first:
+如果你准备使用 Redis 持久化房间状态，建议先验证 Redis 连通性：
 
 ```bash
 redis-cli -u redis://127.0.0.1:6379 ping
 ```
 
-Expected response:
+预期响应：
 
 ```text
 PONG
 ```
 
-Expected startup log:
+当前服务端启动日志仍沿用历史服务名，预期类似：
 
 ```text
 Bili-SyncPlay server listening on http://localhost:8787
 ```
 
-Verify the local health check in another shell:
+在另一个 shell 中验证本地健康检查：
 
 ```bash
 curl http://127.0.0.1:8787/
 ```
 
-Expected response:
+预期响应：
 
 ```json
 { "ok": true, "service": "bili-syncplay-server" }
 ```
 
-### 3. Create systemd services
+### 3. 创建 systemd 服务
 
-Create a dedicated user:
+创建独立用户：
 
 ```bash
-sudo useradd --system --home /opt/bili-syncplay --shell /usr/sbin/nologin bili-syncplay
-sudo chown -R bili-syncplay:bili-syncplay /opt/bili-syncplay
+sudo useradd --system --home /opt/syncroom --shell /usr/sbin/nologin syncroom
+sudo chown -R syncroom:syncroom /opt/syncroom
 ```
 
-Create `/etc/systemd/system/bili-syncplay-room-node-a.service`:
+创建 `/etc/systemd/system/syncroom-room-node-a.service`：
 
 ```ini
 [Unit]
-Description=Bili-SyncPlay room node A
+Description=SyncRoom room node A
 After=network.target
 
 [Service]
 Type=simple
-User=bili-syncplay
-Group=bili-syncplay
-WorkingDirectory=/opt/bili-syncplay
-Environment=BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json
+User=syncroom
+Group=syncroom
+WorkingDirectory=/opt/syncroom
+Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
 Environment=PORT=8787
 Environment=INSTANCE_ID=room-node-a
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1078,7 +1087,7 @@ Environment=GLOBAL_ADMIN_ENABLED=false
 Environment=ADMIN_USERNAME=admin
 Environment=ADMIN_PASSWORD_HASH=sha256:<hex-password-hash>
 Environment=ADMIN_SESSION_SECRET=<random-secret>
-ExecStart=/usr/bin/node /opt/bili-syncplay/server/dist/index.js
+ExecStart=/usr/bin/node /opt/syncroom/server/dist/index.js
 Restart=always
 RestartSec=3
 
@@ -1086,19 +1095,19 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-Create `/etc/systemd/system/bili-syncplay-global-admin.service`:
+创建 `/etc/systemd/system/syncroom-global-admin.service`：
 
 ```ini
 [Unit]
-Description=Bili-SyncPlay global admin
+Description=SyncRoom global admin
 After=network.target
 
 [Service]
 Type=simple
-User=bili-syncplay
-Group=bili-syncplay
-WorkingDirectory=/opt/bili-syncplay
-Environment=BILI_SYNCPLAY_CONFIG=/etc/bili-syncplay/server.config.json
+User=syncroom
+Group=syncroom
+WorkingDirectory=/opt/syncroom
+Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
 Environment=GLOBAL_ADMIN_PORT=8788
 Environment=INSTANCE_ID=global-admin
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1114,7 +1123,7 @@ Environment=GLOBAL_ADMIN_ENABLED=true
 Environment=ADMIN_USERNAME=admin
 Environment=ADMIN_PASSWORD_HASH=sha256:<hex-password-hash>
 Environment=ADMIN_SESSION_SECRET=<random-secret>
-ExecStart=/usr/bin/node /opt/bili-syncplay/server/dist/global-admin-index.js
+ExecStart=/usr/bin/node /opt/syncroom/server/dist/global-admin-index.js
 Restart=always
 RestartSec=3
 
@@ -1122,7 +1131,7 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-Create `/etc/bili-syncplay/server.config.json` for shared non-secret settings:
+把公共的非敏感配置写入 `/etc/syncroom/server.config.json`：
 
 ```json
 {
@@ -1146,33 +1155,33 @@ Create `/etc/bili-syncplay/server.config.json` for shared non-secret settings:
 }
 ```
 
-Enable and start them:
+启用并启动它们：
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now bili-syncplay-room-node-a
-sudo systemctl enable --now bili-syncplay-global-admin
-sudo systemctl status bili-syncplay-room-node-a
-sudo systemctl status bili-syncplay-global-admin
+sudo systemctl enable --now syncroom-room-node-a
+sudo systemctl enable --now syncroom-global-admin
+sudo systemctl status syncroom-room-node-a
+sudo systemctl status syncroom-global-admin
 ```
 
-View logs:
+查看日志：
 
 ```bash
-sudo journalctl -u bili-syncplay-room-node-a -f
-sudo journalctl -u bili-syncplay-global-admin -f
+sudo journalctl -u syncroom-room-node-a -f
+sudo journalctl -u syncroom-global-admin -f
 ```
 
-### 4. Put Nginx in front of the WebSocket server
+### 4. 在 WebSocket 服务器前配置 Nginx
 
-The following section starts with a single-node example, then shows a multi-node upstream example. Use the single-node example for local development or one-node production. Use the multi-node example once you enable the full shared Redis-backed topology.
+下面先给出单机部署示例，再给出多节点 upstream 示例。单机示例适合本地或单节点生产；如果你已经启用完整多节点拓扑，应优先使用多节点示例。
 
-> Recommendation
-> WebSocket traffic is long-lived. For multi-node entrypoints, prefer `least_conn` first and plain round-robin second. Keep sticky only as an operational fallback during rollout, not as a correctness requirement.
+> 建议
+> WebSocket 是长连接场景。多节点入口优先考虑 `least_conn`，其次再考虑默认轮询；只有在上线初期需要运维兜底时再额外保留 sticky。
 
-#### Single-node example
+#### 单机 / 单节点示例
 
-Create `/etc/nginx/sites-available/bili-syncplay.conf`:
+创建 `/etc/nginx/sites-available/syncroom.conf`：
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -1220,11 +1229,11 @@ server {
 }
 ```
 
-Keep the stricter request-rate limit on the default WebSocket entrypoint, but do not reuse it for `/admin` and `/api/admin/*`. The admin UI issues several parallel requests on load and during actions, and the server already enforces its own auth and room-level rate limits.
+建议把更严格的请求频率限制保留在默认的 WebSocket 入口上，不要直接复用到 `/admin` 和 `/api/admin/*`。管理后台在首屏加载和执行操作时会并发请求多个接口，而服务端本身已经对认证和房间相关操作做了限流控制。
 
-#### Multi-node upstream example
+#### 多节点 upstream 示例
 
-If the entrypoint machine should distribute WebSocket connections across multiple room nodes, switch to an upstream configuration. The example below uses `least_conn`, which is usually a better fit than plain round-robin for long-lived WebSocket connections:
+如果入口机需要把 WebSocket 连接分发到多个 Room Node，可改成 upstream。下面示例使用 `least_conn`，对长连接场景通常比默认轮询更稳妥：
 
 ```nginx
 map $http_upgrade $connection_upgrade {
@@ -1282,197 +1291,197 @@ server {
 }
 ```
 
-In this topology:
+在这个拓扑里：
 
-- end users connect only to `wss://sync.example.com`
-- the edge entrypoint chooses a room node for each new WebSocket connection
-- once established, a WebSocket connection stays on the selected node
-- the recommended production setup still keeps `/admin` and `/api/admin/*` on a dedicated `global-admin` process
-- when all Redis-backed sharing is enabled, room-state correctness no longer depends on sticky routing, though keeping a sticky fallback during initial rollout can still be useful operationally
+- 普通用户只连接 `wss://sync.example.com`
+- 入口层负责把新建 WebSocket 连接分发到某个 Room Node
+- 现有长连接一旦建立，就固定驻留在被选中的节点上
+- 全局管理面建议继续收敛到独立的 `global-admin` 进程
+- 当所有 Redis 共享能力都已开启时，正确性上不再依赖 sticky 路由；但上线初期仍可保留 sticky 作为运维兜底开关
 
-Enable the site and validate config:
+启用站点并校验配置：
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/bili-syncplay.conf /etc/nginx/sites-enabled/bili-syncplay.conf
+sudo ln -s /etc/nginx/sites-available/syncroom.conf /etc/nginx/sites-enabled/syncroom.conf
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### 5. Enable TLS
+### 5. 启用 TLS
 
-WebSocket service for the extension should use `wss://` in production. A common setup is Certbot with Nginx:
+生产环境中的扩展 WebSocket 服务应使用 `wss://`。常见做法是将 Certbot 与 Nginx 配合使用：
 
 ```bash
 sudo certbot --nginx -d sync.example.com
 ```
 
-After the certificate is issued, verify:
+证书签发后，验证：
 
 ```bash
 curl https://sync.example.com/
 ```
 
-The extension should then use:
+此时扩展应使用：
 
 ```text
 wss://sync.example.com
 ```
 
-### 6. Update the extension server URL
+### 6. 更新扩展服务器地址
 
-The extension supports switching server address from the popup, so for production you can point clients at:
+扩展支持在弹窗中切换服务器地址，因此在生产环境中你可以将客户端指向：
 
 ```text
 wss://sync.example.com
 ```
 
-For local testing, switch back to:
+本地测试时，切回：
 
 ```text
 ws://localhost:8787
 ```
 
-Room invites are now shared as `roomCode:joinToken`. The popup copy action copies that invite string, and the join field accepts the same format.
+房间邀请现在以 `roomCode:joinToken` 的形式分享。弹窗复制操作会复制这个邀请串，加入输入框也接受同样格式。
 
-### 7. Deploy updates
+### 7. 部署更新
 
-When you update the server code, pull and rebuild from the application directory first:
+当你更新服务器代码时，先在应用目录里拉取并重新构建：
 
 ```bash
-cd /opt/bili-syncplay
+cd /opt/syncroom
 git pull
 npm install
 npm run build
 ```
 
-If you know only `server/` changed and `packages/protocol` is unchanged, you can rebuild only the server package:
+如果你确认只有 `server/` 发生变化，且 `packages/protocol` 没有变化，也可以只构建服务端：
 
 ```bash
 npm run build -w @bili-syncplay/server
 ```
 
-Single-node / single-process restart flow:
+单机 / 单进程部署重启方式：
 
 ```bash
-sudo systemctl restart bili-syncplay
+sudo systemctl restart syncroom
 ```
 
-Multi-node restart flow:
+多节点部署重启方式：
 
 ```bash
-sudo systemctl restart bili-syncplay-room-node-a
-sudo systemctl restart bili-syncplay-room-node-b
-sudo systemctl restart bili-syncplay-global-admin
+sudo systemctl restart syncroom-room-node-a
+sudo systemctl restart syncroom-room-node-b
+sudo systemctl restart syncroom-global-admin
 ```
 
-If you run multiple room nodes, prefer a rolling restart instead of restarting everything at once:
+如果有多台 Room Node，建议滚动重启，而不是一次性全部重启：
 
-1. restart one room node
-2. verify `GET /readyz`, logs, and the global admin overview recover cleanly
-3. continue with the next room node
-4. restart `global-admin` last
+1. 先重启一个 Room Node
+2. 观察 `GET /readyz`、日志和全局管理面是否恢复正常
+3. 再继续重启下一个 Room Node
+4. 最后重启 `global-admin`
 
-### 8. Operational notes
+### 8. 运维说明
 
-- With `ROOM_STORE_PROVIDER=memory`, restarting the process still clears all rooms.
-- With `ROOM_STORE_PROVIDER=redis`, room base state survives restart until it expires or is deleted.
-- Rooms are not deleted immediately when the last member leaves; the server writes `expiresAt` and retains the room until `EMPTY_ROOM_TTL_MS` elapses.
-- Room join requires both `roomCode` and `joinToken`; room messages require a valid `memberToken`.
-- `memberToken` is session-bound, never restored from persistence, and is re-issued after reconnect or restart.
-- Handshake origin checks are deny-by-default unless you configure `ALLOWED_ORIGINS`, explicitly allow missing `Origin` in development, or temporarily set `ALLOW_ANY_ORIGIN_IN_DEV=true`.
-- `X-Forwarded-For` is ignored unless the socket peer matches `TRUSTED_PROXY_ADDRESSES`.
-- Health checks are available on both `GET /` and `GET /healthz`; readiness is `GET /readyz`.
-- If you use a cloud firewall, allow inbound `80` and `443`, but keep `8787` private to localhost.
-- If you do not want Nginx, you can expose Node directly, but browsers and extensions should still connect over `wss://` with a valid TLS certificate.
-- With the Redis-backed providers enabled, persisted room base state, admin sessions, runtime indexes, room-state fanout, and admin command routing are shared across server instances.
-- A dedicated global admin process is the recommended production entrypoint for `/admin` and `/api/admin/*`.
-- Room nodes can keep `GLOBAL_ADMIN_ENABLED=false` so they expose only WebSocket traffic plus `/`, `/healthz`, and `/readyz`.
-- When all Redis-backed providers are enabled, multi-instance deployment no longer depends on sticky routing for room-state correctness.
+- 当 `ROOM_STORE_PROVIDER=memory` 时，进程重启后房间仍会全部丢失。
+- 当 `ROOM_STORE_PROVIDER=redis` 时，房间基础状态会在重启后保留，直到过期或被删除。
+- 最后一名成员离开后，房间不会立刻删除；服务端会写入 `expiresAt`，并在 `EMPTY_ROOM_TTL_MS` 到期后清理。
+- 加入房间需要同时提供 `roomCode` 和 `joinToken`；发送房间消息需要有效的 `memberToken`。
+- `memberToken` 是会话态，不会从持久层恢复；重连或重启后都需要重新加入并重新签发。
+- 握手阶段的 Origin 检查默认拒绝，除非你配置了 `ALLOWED_ORIGINS`、在开发环境中显式允许缺失 `Origin`，或临时设置 `ALLOW_ANY_ORIGIN_IN_DEV=true`。
+- 只有当 socket 对端命中 `TRUSTED_PROXY_ADDRESSES` 时才会读取 `X-Forwarded-For`。
+- 健康检查同时提供 `GET /` 与 `GET /healthz`；就绪检查为 `GET /readyz`。
+- 如果你使用云防火墙，请放行入站 `80` 和 `443`，并将 `8787` 仅暴露给 localhost。
+- 如果你不想使用 Nginx，也可以直接暴露 Node 服务，但浏览器和扩展仍应通过带有效 TLS 证书的 `wss://` 连接。
+- 当 Redis 相关 provider 全部开启后，房间基础状态、管理员会话、运行时索引、房间状态广播与管理命令路由都可在多个服务实例之间共享。
+- 生产环境推荐把 `/admin` 与 `/api/admin/*` 收敛到独立 Global Admin 进程。
+- Room Node 可以设置 `GLOBAL_ADMIN_ENABLED=false`，只保留 WebSocket 流量与 `/`、`/healthz`、`/readyz`。
+- 当所有 Redis 共享能力都已开启时，多实例部署不再依赖 sticky 路由来保证房间状态正确性。
 
-### Troubleshooting
+### 故障排查
 
-Common developer-facing failure cases:
+常见的开发侧失败场景：
 
-- `Cannot connect to sync server.`: the extension could not reach the configured server URL, or the HTTP health probe derived from that URL failed.
-- repeated server logs with `origin_not_allowed`: `ALLOWED_ORIGINS` does not include the current `chrome-extension://<extension-id>`
-- `Room not found.`: the requested room code does not exist on the current server instance.
-- `Room not found.` after a restart can also mean the room expired during the empty-room retention window.
-- `Join token is invalid.`: the invite string is wrong, stale, or from another room.
-- `Member token is invalid.`: the current session lost its room binding, the server restarted, or the client must rejoin to obtain a fresh token.
-- `Too many requests.`: a room action or sync message hit the configured rate limit.
-- handshake rejected with `403`: the request `Origin` is not in `ALLOWED_ORIGINS`, or `Origin` is missing while `ALLOW_MISSING_ORIGIN_IN_DEV` is disabled. For temporary diagnostics, `ALLOW_ANY_ORIGIN_IN_DEV=true` disables this Origin gate.
-- connection-level IP limits appear ineffective: verify whether the reverse proxy socket IP is included in `TRUSTED_PROXY_ADDRESSES`; by default the server uses the real socket address only.
-- `Open a supported video page first.`: the active tab URL is not a supported HTTP(S) page, or the extension cannot access the page.
-- `Current page does not have a playable video.`: the content script loaded, but the page did not expose a usable video payload.
-- `Cannot access the current page.`: Chrome could not deliver the message to the content script, often because the page was not reloaded after loading the unpacked extension or the tab is on an unsupported URL.
+- `无法连接到同步服务器。`：扩展无法访问配置的服务器地址，或由该地址推导出的 HTTP 健康检查失败。
+- 服务端日志反复出现 `origin_not_allowed`：`ALLOWED_ORIGINS` 没有包含当前 `chrome-extension://<extension-id>`
+- `房间不存在。`：请求的房间号在当前服务器实例上不存在。
+- 服务重启后如果看到 `房间不存在。`，也可能表示该房间已经超过空房保留期并被清理。
+- `加入码无效。`：邀请串错误、已失效，或来自其他房间。
+- `成员令牌无效。`：当前会话丢失了房间绑定、服务端已经重启，或客户端需要重新加入以获取新 token。
+- `请求过于频繁。`：某个房间操作或同步消息触发了配置的限流。
+- 握手阶段返回 `403`：请求的 `Origin` 不在 `ALLOWED_ORIGINS` 中，或者在 `ALLOW_MISSING_ORIGIN_IN_DEV` 关闭时缺少 `Origin`。临时排障时可用 `ALLOW_ANY_ORIGIN_IN_DEV=true` 关闭这一 Origin 闸门。
+- 连接级 IP 限制看起来未生效：检查反向代理的 socket IP 是否已加入 `TRUSTED_PROXY_ADDRESSES`；默认情况下服务器只使用真实 socket 地址。
+- `请先打开一个支持同步的视频页面。`：当前活动标签页不是受支持的 HTTP(S) 页面，或扩展无法访问该页面。
+- `当前页面没有可播放的视频。`：内容脚本已加载，但页面没有暴露可用的视频载荷。
+- `无法访问当前页面。`：Chrome 无法把消息传给内容脚本，通常是因为加载未打包扩展后没有刷新页面，或当前标签页 URL 不受支持。
 
-Useful checks:
+常用检查：
 
 ```bash
-# Server health check
+# 服务器健康检查
 curl http://127.0.0.1:8787/
 
-# Server tests
+# 服务器测试
 npm run test -w @bili-syncplay/server
 
-# Redis integration regression
+# Redis 集成回归
 REDIS_URL=redis://127.0.0.1:6379 npm run test:redis -w @bili-syncplay/server
 
-# Full multi-node regression
+# 完整多节点回归
 REDIS_URL=redis://127.0.0.1:6379 npx tsx --test server/test/multi-node-*.test.ts
 
-# Protocol tests
+# 协议测试
 npm run test -w @bili-syncplay/protocol
 
-# Extension tests
+# 扩展测试
 npm run test -w @bili-syncplay/extension
 ```
 
-Chrome-side debugging tips:
+Chrome 侧调试建议：
 
-- check the extension service worker logs from `chrome://extensions`
-- copy the unpacked extension ID from `chrome://extensions` and use it in `ALLOWED_ORIGINS`
-- reload the unpacked extension after rebuilding `extension/dist`
-- reload open video tabs after the extension is reloaded so content scripts are injected again
+- 在 `chrome://extensions` 查看扩展 service worker 日志
+- 从 `chrome://extensions` 复制未打包扩展 ID，并加入 `ALLOWED_ORIGINS`
+- 重新构建 `extension/dist` 后，重新加载未打包扩展
+- 扩展重新加载后，刷新已打开的视频标签页，以便重新注入内容脚本
 
-### Build a Release Package
+### 构建发布包
 
-Update the workspace version first:
+先更新 workspace 版本：
 
 ```bash
 npm run release:version -- 0.9.0
 ```
 
-This command updates:
+该命令会更新：
 
-- the root `package.json`
+- 根目录 `package.json`
 - `packages/protocol/package.json`
 - `server/package.json`
 - `extension/package.json`
 - `package-lock.json`
 
-Build the extension release zip:
+构建扩展发布 zip：
 
 ```bash
 npm run build:release
 ```
 
-Output:
+输出：
 
 ```text
 release/bili-syncplay-extension-v<version>.zip
 ```
 
-### Automated GitHub Release
+### 自动化 GitHub Release
 
-The repository already includes a GitHub Actions workflow that:
+仓库已经包含一个 GitHub Actions 工作流，用于：
 
-- triggers on `v*` tags
-- builds the extension
-- creates a GitHub Release
-- uploads the zip asset
+- 在 `v*` 标签上触发
+- 构建扩展
+- 创建 GitHub Release
+- 上传 zip 产物
 
-Example:
+示例：
 
 ```bash
 npm run release:version -- 0.9.0
@@ -1483,4 +1492,4 @@ git push origin v0.9.0
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](./LICENSE).
+本项目基于 GNU General Public License v3.0 授权。详见 [LICENSE](./LICENSE)。

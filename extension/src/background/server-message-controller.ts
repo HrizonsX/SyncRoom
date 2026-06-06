@@ -34,7 +34,7 @@ export function createServerMessageController(args: {
     }
 
     if (message.type === "error" && message.payload.code === "rate_limited") {
-      args.syncRequestController?.markRateLimited();
+      args.syncRequestController?.markRateLimited(message.payload.retryAfterMs);
     }
 
     const handledByVoice =

@@ -8,6 +8,9 @@ import { setLocaleForTests } from "../src/shared/i18n";
 function createControllerHarness(options?: {
   bootstrapRoomStateTimeoutMs?: number;
   persistState?: (callCount: number) => Promise<void> | void;
+  connect?: (
+    state: ReturnType<typeof createBackgroundRuntimeState>,
+  ) => Promise<void> | void;
 }) {
   const runtimeState = createBackgroundRuntimeState();
   const sendToServerCalls: Array<unknown> = [];
@@ -41,6 +44,10 @@ function createControllerHarness(options?: {
     },
     connect: async () => {
       connectCalls += 1;
+      if (options?.connect) {
+        await options.connect(runtimeState);
+        return;
+      }
       runtimeState.connection.connected = true;
     },
     disconnectSocket: () => {
@@ -117,6 +124,21 @@ test("room session controller sends create request with protocolVersion", async 
       protocolVersion: 3,
     },
   });
+});
+
+test("room session controller marks create pending before connecting", async () => {
+  const harness = createControllerHarness({
+    connect(state) {
+      assert.equal(state.room.pendingCreateRoom, true);
+      state.connection.connected = false;
+    },
+  });
+
+  await harness.controller.requestCreateRoom();
+
+  assert.equal(harness.connectCalls, 1);
+  assert.equal(harness.runtimeState.room.pendingCreateRoom, true);
+  assert.deepEqual(harness.sendToServerCalls, []);
 });
 
 test("room session controller clears pending join on unsupported_protocol_version error", async () => {

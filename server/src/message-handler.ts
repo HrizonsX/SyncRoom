@@ -406,6 +406,15 @@ export function createMessageHandler(options: {
     });
   }
 
+  function getFixedWindowRetryAfterMs(args: {
+    windowStart: number;
+    windowMs: number;
+    currentTime: number;
+  }): number {
+    const elapsedMs = Math.max(0, args.currentTime - args.windowStart);
+    return Math.max(1, Math.ceil(args.windowMs - elapsedMs));
+  }
+
   async function measureMessageHandling(
     messageType: MonitoredMessageType,
     handler: () => Promise<void>,
@@ -733,8 +742,16 @@ export function createMessageHandler(options: {
               currentTime,
             )
           ) {
+            const retryAfterMs = getFixedWindowRetryAfterMs({
+              windowStart: session.rateLimitState.syncRequest.windowStart,
+              windowMs: WINDOW_10_SECONDS_MS,
+              currentTime,
+            });
             handleRateLimitedMessage(session, message.type);
-            sendError(socket, "rate_limited", RATE_LIMITED_MESSAGE);
+            sendError(socket, "rate_limited", RATE_LIMITED_MESSAGE, {
+              messageType: message.type,
+              retryAfterMs,
+            });
             return;
           }
 

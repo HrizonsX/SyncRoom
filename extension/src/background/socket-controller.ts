@@ -45,6 +45,7 @@ export function createSocketController(args: {
   onAdminSessionReset: (reason: string) => void;
   formatAdminSessionResetReason: (reason: string) => string;
   reconnectFailedMessage: () => string;
+  persistState?: () => Promise<void> | void;
 }): SocketController {
   async function connect(): Promise<void> {
     if (
@@ -129,8 +130,9 @@ export function createSocketController(args: {
               reason: payload.data.reason,
               extensionOrigin,
             });
-            scheduleReconnect();
-            args.notifyAll();
+            if (scheduleReconnect()) {
+              args.notifyAll();
+            }
             return;
           }
         }
@@ -159,8 +161,9 @@ export function createSocketController(args: {
           serverUrl: serverUrlResult.normalizedUrl,
           extensionOrigin,
         });
-        scheduleReconnect();
-        args.notifyAll();
+        if (scheduleReconnect()) {
+          args.notifyAll();
+        }
         return;
       }
     }
@@ -238,8 +241,9 @@ export function createSocketController(args: {
         );
         return;
       }
-      scheduleReconnect();
-      args.notifyAll();
+      if (scheduleReconnect()) {
+        args.notifyAll();
+      }
     });
 
     args.connectionState.socket.addEventListener("error", () => {
@@ -256,17 +260,20 @@ export function createSocketController(args: {
         extensionOrigin,
         readyState: args.connectionState.socket?.readyState ?? -1,
       });
-      args.notifyAll();
+      if (scheduleReconnect()) {
+        args.notifyAll();
+      }
     });
   }
 
-  function scheduleReconnect(): void {
+  function scheduleReconnect(): boolean {
     if (
       !shouldScheduleReconnect({
         connected: args.connectionState.connected,
         reconnectTimer: args.connectionState.reconnectTimer,
         roomCode: args.roomSessionState.roomCode,
         pendingCreateRoom: args.roomSessionState.pendingCreateRoom,
+        pendingJoinRoomCode: args.roomSessionState.pendingJoinRoomCode,
         reconnectAttempt: args.connectionState.reconnectAttempt,
         maxReconnectAttempts: args.maxReconnectAttempts,
       })
@@ -278,8 +285,10 @@ export function createSocketController(args: {
           "background",
           `Reconnect exhausted after ${args.maxReconnectAttempts} attempts`,
         );
+        clearPendingRoomEntryAfterReconnectExhausted();
+        args.notifyAll();
       }
-      return;
+      return false;
     }
 
     args.connectionState.reconnectAttempt += 1;
@@ -293,6 +302,7 @@ export function createSocketController(args: {
       args.connectionState.reconnectTimer = null;
       void connect();
     }, retryDelayMs);
+    return true;
   }
 
   function clearReconnectTimer(): void {
@@ -313,6 +323,31 @@ export function createSocketController(args: {
   function resetReconnectState(): void {
     clearReconnectTimer();
     args.connectionState.reconnectAttempt = 0;
+  }
+
+  function clearPendingRoomEntryAfterReconnectExhausted(): void {
+    if (
+      !args.roomSessionState.pendingCreateRoom &&
+      !args.roomSessionState.pendingJoinRoomCode &&
+      !args.roomSessionState.pendingJoinToken &&
+      !args.roomSessionState.pendingJoinRequestSent
+    ) {
+      return;
+    }
+
+    args.roomSessionState.pendingCreateRoom = false;
+    args.roomSessionState.pendingJoinRoomCode = null;
+    args.roomSessionState.pendingJoinToken = null;
+    args.roomSessionState.pendingJoinRequestSent = false;
+    args.log("background", "Cleared pending room entry after reconnect failed");
+    void Promise.resolve(args.persistState?.()).catch((error) => {
+      args.log(
+        "background",
+        `Failed to persist pending room cleanup: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
   }
 
   return {

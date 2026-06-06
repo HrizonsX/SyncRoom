@@ -204,6 +204,7 @@ const socketController = createSocketController({
     })();
   },
   formatAdminSessionResetReason,
+  persistState,
   reconnectFailedMessage: () =>
     t("popupErrorReconnectFailed", {
       attempts: MAX_RECONNECT_ATTEMPTS,

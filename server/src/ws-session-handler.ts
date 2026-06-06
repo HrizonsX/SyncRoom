@@ -6,6 +6,7 @@ import {
   isClientMessage,
   type ClientMessage,
   type ErrorCode,
+  type ErrorMessage,
   type ServerMessage,
 } from "@bili-syncplay/protocol";
 import { createSessionRateLimitState } from "./rate-limit.js";
@@ -42,8 +43,9 @@ export function sendError(
   socket: WebSocket,
   code: ErrorCode,
   message: string,
+  details: Pick<ErrorMessage["payload"], "messageType" | "retryAfterMs"> = {},
 ): void {
-  send(socket, { type: "error", payload: { code, message } });
+  send(socket, { type: "error", payload: { code, message, ...details } });
 }
 
 export function rejectUpgrade(

@@ -15,7 +15,7 @@ function createRoomState(roomCode = "ROOM01"): RoomState {
 function createControllerHarness() {
   const calls = {
     receivedRoomState: [] as string[],
-    rateLimited: 0,
+    rateLimited: [] as Array<number | undefined>,
     handledMessages: [] as ServerMessage[],
     consumedRoomStates: [] as RoomState[],
     logs: [] as string[],
@@ -43,8 +43,8 @@ function createControllerHarness() {
       markRoomStateReceived(roomCode: string) {
         calls.receivedRoomState.push(roomCode);
       },
-      markRateLimited() {
-        calls.rateLimited += 1;
+      markRateLimited(retryAfterMs?: number) {
+        calls.rateLimited.push(retryAfterMs);
         return true;
       },
     },
@@ -73,11 +73,13 @@ test("server message controller marks recent sync request as rate limited", asyn
     payload: {
       code: "rate_limited",
       message: "Too many requests.",
+      messageType: "sync:request",
+      retryAfterMs: 7_500,
     },
   };
 
   await harness.controller.handleServerMessage(message);
 
-  assert.equal(harness.calls.rateLimited, 1);
+  assert.deepEqual(harness.calls.rateLimited, [7_500]);
   assert.deepEqual(harness.calls.handledMessages, [message]);
 });

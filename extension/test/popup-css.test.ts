@@ -28,6 +28,13 @@ test("room heading icon is sized and aligned with the section label", () => {
   assert.match(ruleBody(".room-heading-icon svg"), /width:\s*14px/);
 });
 
+test("retry loading dots render as inline ellipsis text", () => {
+  assert.doesNotMatch(ruleBody(".status-retry-dots"), /inline-block/);
+  assert.doesNotMatch(ruleBody(".status-retry-dots"), /vertical-align/);
+  assert.match(ruleBody(".status-retry-dots"), /white-space:\s*nowrap/);
+  assert.match(ruleBody(".status-retry-dot"), /animation:\s*retryDotPulse/);
+});
+
 function ruleBody(selector: string): string {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`).exec(

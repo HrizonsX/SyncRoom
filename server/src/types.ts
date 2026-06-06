@@ -2,6 +2,7 @@ import type { IncomingMessage } from "node:http";
 import type { WebSocket } from "ws";
 import type {
   ErrorCode,
+  ErrorMessage,
   PlaybackState,
   RoomState,
   ServerMessage,
@@ -191,6 +192,7 @@ export type SendError = (
   socket: WebSocket,
   code: ErrorCode,
   message: string,
+  details?: Pick<ErrorMessage["payload"], "messageType" | "retryAfterMs">,
 ) => void;
 
 declare module "node:http" {

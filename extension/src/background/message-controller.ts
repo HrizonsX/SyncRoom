@@ -14,6 +14,10 @@ import type {
   RoomState,
   SharedVideo,
 } from "@bili-syncplay/protocol";
+import {
+  createSyncRequestController,
+  type SyncRequestController,
+} from "./sync-request-controller";
 
 type RuntimeMessage =
   | PopupToBackgroundMessage
@@ -85,6 +89,7 @@ export function createMessageController(args: {
   socketController: {
     connect(): Promise<void>;
   };
+  syncRequestController?: SyncRequestController;
   sendToServer: (message: unknown) => void;
   updateServerUrl: (serverUrl: string) => Promise<void>;
   persistState: () => Promise<void>;
@@ -243,22 +248,35 @@ export function createMessageController(args: {
         }
         sendResponse({ ok: true });
         return;
-      case "content:get-room-state":
-        if (args.roomSessionState.roomCode && !args.connectionState.connected) {
+      case "content:get-room-state": {
+        const roomCode = args.roomSessionState.roomCode;
+        const memberToken = args.roomSessionState.memberToken;
+        const hasCachedRoomState = hasCurrentCachedRoomState();
+        if (
+          roomCode &&
+          !args.connectionState.connected &&
+          !hasCachedRoomState
+        ) {
           void args.socketController.connect();
         }
         if (
-          args.connectionState.connected &&
-          args.roomSessionState.roomCode &&
-          args.roomSessionState.memberToken
+          roomCode &&
+          memberToken &&
+          syncRequestController.shouldRequestRoomState({
+            connected: args.connectionState.connected,
+            roomCode,
+            memberToken,
+            hasCachedRoomState,
+          })
         ) {
           args.sendToServer({
             type: "sync:request",
-            payload: { memberToken: args.roomSessionState.memberToken },
+            payload: { memberToken },
           });
+          syncRequestController.markRoomStateRequested(roomCode);
         }
         sendResponse(
-          args.roomSessionState.roomState
+          hasCachedRoomState
             ? {
                 ok: true,
                 roomState: args.clockController.compensateRoomState(
@@ -274,6 +292,7 @@ export function createMessageController(args: {
               },
         );
         return;
+      }
       case "content:debug-log":
         args.diagnosticsController.log(
           "content",
@@ -284,6 +303,17 @@ export function createMessageController(args: {
       default:
         sendResponse({ ok: false });
     }
+  }
+
+  const syncRequestController =
+    args.syncRequestController ?? createSyncRequestController();
+
+  function hasCurrentCachedRoomState(): boolean {
+    return (
+      args.roomSessionState.roomState !== null &&
+      args.roomSessionState.roomState.roomCode ===
+        args.roomSessionState.roomCode
+    );
   }
 
   async function ensureMicrophonePermission(): Promise<MicrophonePermissionResult> {

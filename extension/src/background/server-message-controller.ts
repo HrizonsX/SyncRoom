@@ -1,4 +1,5 @@
 import type { RoomState, ServerMessage } from "@bili-syncplay/protocol";
+import type { SyncRequestController } from "./sync-request-controller";
 
 export interface ServerMessageController {
   handleServerMessage(message: ServerMessage): Promise<void>;
@@ -11,6 +12,10 @@ export function createServerMessageController(args: {
   handleRoomSessionServerMessage: (message: ServerMessage) => Promise<void>;
   handleVoiceServerMessage?: (message: ServerMessage) => Promise<boolean>;
   syncVoiceLifecycle?: (options?: { forceRefresh?: boolean }) => Promise<void>;
+  syncRequestController?: Pick<
+    SyncRequestController,
+    "markRoomStateReceived" | "markRateLimited"
+  >;
   updateClockOffset: (
     clientSendTime: number,
     serverReceiveTime: number,
@@ -20,9 +25,16 @@ export function createServerMessageController(args: {
 }): ServerMessageController {
   async function handleServerMessage(message: ServerMessage): Promise<void> {
     if (message.type === "room:state") {
+      args.syncRequestController?.markRoomStateReceived(
+        message.payload.roomCode,
+      );
       args.consumeRoomState(message.payload);
     } else if (args.shouldLogIncomingMessage(message.type)) {
       args.log(`<- ${message.type}`);
+    }
+
+    if (message.type === "error" && message.payload.code === "rate_limited") {
+      args.syncRequestController?.markRateLimited(message.payload.retryAfterMs);
     }
 
     const handledByVoice =

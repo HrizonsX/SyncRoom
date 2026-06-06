@@ -20,8 +20,8 @@ import { isPlaybackSyncIntent } from "../types/domain.js";
 import {
   isActorId,
   isFiniteNumber,
-  isOptionalString,
   isOptionalPositiveInteger,
+  isOptionalString,
   isPlaybackPlayState,
   isRecord,
   isRoomCode,
@@ -36,6 +36,18 @@ const URL_MAX_LENGTH = 512;
 const LIVEKIT_TOKEN_MIN_LENGTH = 16;
 const LIVEKIT_TOKEN_MAX_LENGTH = 4096;
 const LIVEKIT_ROOM_NAME_MAX_LENGTH = 128;
+const CLIENT_MESSAGE_TYPES = new Set([
+  "room:create",
+  "room:join",
+  "profile:update",
+  "room:leave",
+  "video:share",
+  "playback:update",
+  "sync:request",
+  "sync:ping",
+  "voice:access",
+  "voice:state",
+]);
 
 function isBoundedString(value: unknown, maxLength: number): value is string {
   return isString(value) && value.length <= maxLength;
@@ -174,7 +186,11 @@ export function isErrorMessage(value: unknown): value is ErrorMessage {
     value.type === "error" &&
     isRecord(value.payload) &&
     isBoundedString(value.payload.code, 32) &&
-    isBoundedString(value.payload.message, TITLE_MAX_LENGTH)
+    isBoundedString(value.payload.message, TITLE_MAX_LENGTH) &&
+    (value.payload.messageType === undefined ||
+      (isString(value.payload.messageType) &&
+        CLIENT_MESSAGE_TYPES.has(value.payload.messageType))) &&
+    isOptionalPositiveInteger(value.payload.retryAfterMs)
   );
 }
 

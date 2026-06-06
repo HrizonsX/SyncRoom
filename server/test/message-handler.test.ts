@@ -98,6 +98,90 @@ test("message handler rejects detached sessions before processing", async () => 
   );
 });
 
+test("message handler includes retry hints when sync request is rate limited", async () => {
+  const config = {
+    ...CONFIG,
+    rateLimits: {
+      ...CONFIG.rateLimits,
+      syncRequestPer10Seconds: 1,
+    },
+  };
+  const sent: string[] = [];
+  const errors: unknown[][] = [];
+  let now = 0;
+  const session = createSession("syncer", {
+    roomCode: "ROOM01",
+    memberId: "member-1",
+    memberToken: "member-token-1",
+    rateLimitState: createSessionRateLimitState(config, now),
+  });
+
+  const handler = createMessageHandler({
+    config,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        return { room: null };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession() {
+        return {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "Alice" }],
+        };
+      },
+    },
+    logEvent() {},
+    send(_socket, message) {
+      sent.push(message.type);
+    },
+    sendError(...args) {
+      errors.push(args);
+    },
+    async publishRoomEvent() {},
+    instanceId: "node-a",
+    now: () => now,
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "sync:request",
+    payload: { memberToken: "member-token-1" },
+  });
+  now = 2_500;
+  await handler.handleClientMessage(session, {
+    type: "sync:request",
+    payload: { memberToken: "member-token-1" },
+  });
+
+  assert.deepEqual(sent, ["room:state"]);
+  assert.deepEqual(errors, [
+    [
+      session.socket,
+      "rate_limited",
+      "Too many requests.",
+      {
+        messageType: "sync:request",
+        retryAfterMs: 7_500,
+      },
+    ],
+  ]);
+});
+
 test("message handler creates a room and sends bootstrap state to the creator", async () => {
   const sent: Array<{ type: string; roomCode?: string }> = [];
   const published: string[] = [];

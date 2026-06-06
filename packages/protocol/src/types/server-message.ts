@@ -1,4 +1,5 @@
 import type { ErrorCode, RoomCode } from "./common.js";
+import type { ClientMessage } from "./client-message.js";
 import type { RoomMember, RoomState } from "./domain.js";
 
 export interface RoomCreatedMessage {
@@ -48,6 +49,8 @@ export interface ErrorMessage {
   payload: {
     code: ErrorCode;
     message: string;
+    messageType?: ClientMessage["type"];
+    retryAfterMs?: number;
   };
 }
 

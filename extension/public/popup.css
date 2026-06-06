@@ -447,6 +447,37 @@ button.secondary.success-button .button-icon-check {
   display: none;
 }
 
+.status-retry-dots {
+  white-space: nowrap;
+}
+
+.status-retry-dot {
+  animation: retryDotPulse 1.2s ease-in-out infinite;
+}
+
+.status-retry-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.status-retry-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes retryDotPulse {
+  0% {
+    opacity: 0.35;
+  }
+
+  35%,
+  80% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.35;
+  }
+}
+
 .video-card {
   width: 100%;
   min-width: 0;

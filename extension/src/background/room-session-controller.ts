@@ -611,6 +611,7 @@ export function createRoomSessionController(args: {
     );
     args.shareState.lastOpenedSharedUrl = null;
     await args.persistState();
+    args.roomSessionState.pendingCreateRoom = true;
     await args.connect();
     if (args.connectionState.connected) {
       args.roomSessionState.pendingCreateRoom = false;
@@ -623,7 +624,6 @@ export function createRoomSessionController(args: {
       });
       return;
     }
-    args.roomSessionState.pendingCreateRoom = true;
   }
 
   async function requestJoinRoom(

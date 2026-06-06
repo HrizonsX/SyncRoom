@@ -45,10 +45,7 @@ class FakeElement {
   }
 
   get textContent(): string {
-    if (this.children.length > 0) {
-      return this.children.map((child) => child.textContent).join("");
-    }
-    return this.ownText;
+    return `${this.ownText}${this.children.map((child) => child.textContent).join("")}`;
   }
 
   append(...nodes: FakeElement[]): void {
@@ -62,6 +59,10 @@ class FakeElement {
 
   setAttribute(name: string, value: string): void {
     (this as unknown as Record<string, string>)[name] = value;
+  }
+
+  getAttribute(name: string): string | undefined {
+    return (this as unknown as Record<string, string>)[name];
   }
 }
 
@@ -283,6 +284,250 @@ test("renderPopup debug log distinguishes background pending state from local UI
     assert.deepEqual(popupLogs, [
       "Render room=none connected=false backgroundPendingJoin=none uiPendingAction=true lastKnownPendingJoin=ROOM01 lastKnownRoom=none",
     ]);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup shows retry progress after the connection error", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+  const roomCodeInput = refs.roomCodeInput as unknown as {
+    value: string;
+    disabled: boolean;
+  };
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: false,
+        serverUrl: "ws://localhost:8787",
+        error: "无法连接到同步服务器。",
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: null,
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: "ROOM01",
+        retryInMs: 4_000,
+        retryAttempt: 2,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "ROOM01:join-token-1",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: "ROOM01",
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(
+      refs.message.textContent,
+      "无法连接到同步服务器。重试（2/5）...",
+    );
+    const retryDots = (refs.message as unknown as FakeElement).children[0];
+    assert.equal(retryDots.className, "status-retry-dots");
+    assert.equal(retryDots.getAttribute("aria-hidden"), "true");
+    assert.equal(retryDots.children.length, 3);
+    assert.deepEqual(
+      retryDots.children.map((child) => child.textContent),
+      [".", ".", "."],
+    );
+    assert.equal(refs.joinRoomButton.textContent, "加入");
+    assert.equal(refs.createRoomButton.textContent, "创建");
+    assert.equal(refs.joinRoomButton.disabled, true);
+    assert.equal(roomCodeInput.disabled, true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup shows retry progress for the final scheduled retry", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: false,
+        serverUrl: "ws://localhost:8787",
+        error: "无法连接到同步服务器。",
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: null,
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: "ROOM01",
+        retryInMs: 1_000,
+        retryAttempt: 5,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "ROOM01:join-token-1",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: "ROOM01",
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(
+      refs.message.textContent,
+      "无法连接到同步服务器。重试（5/5）...",
+    );
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup keeps retry progress visible during an active retry attempt", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: false,
+        serverUrl: "ws://localhost:8787",
+        error: "无法连接到同步服务器。",
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: null,
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: "ROOM01",
+        retryInMs: null,
+        retryAttempt: 3,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "ROOM01:join-token-1",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: "ROOM01",
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(
+      refs.message.textContent,
+      "无法连接到同步服务器。重试（3/5）...",
+    );
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup shows the final reconnect failure without retry progress", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+  const roomCodeInput = refs.roomCodeInput as unknown as {
+    value: string;
+    disabled: boolean;
+  };
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: false,
+        serverUrl: "ws://localhost:8787",
+        error: "重试 5 次后仍无法连接到同步服务器。",
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: null,
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 5,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "ROOM01:join-token-1",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(
+      refs.message.textContent,
+      "重试 5 次后仍无法连接到同步服务器。",
+    );
+    assert.equal((refs.message as unknown as FakeElement).children.length, 0);
+    assert.equal(refs.joinRoomButton.textContent, "加入");
+    assert.equal(refs.joinRoomButton.disabled, false);
+    assert.equal(roomCodeInput.disabled, false);
   } finally {
     setLocaleForTests(null);
     Object.assign(globalThis, { document: originalDocument });

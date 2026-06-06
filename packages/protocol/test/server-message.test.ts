@@ -427,6 +427,48 @@ test("rejects error when payload shape is invalid", () => {
   );
 });
 
+test("accepts rate limited error metadata", () => {
+  assert.equal(
+    isServerMessage({
+      type: "error",
+      payload: {
+        code: "rate_limited",
+        message: "Too many requests.",
+        messageType: "sync:request",
+        retryAfterMs: 7_500,
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects error when retryAfterMs is invalid", () => {
+  assert.equal(
+    isServerMessage({
+      type: "error",
+      payload: {
+        code: "rate_limited",
+        message: "Too many requests.",
+        messageType: "sync:request",
+        retryAfterMs: -1,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isServerMessage({
+      type: "error",
+      payload: {
+        code: "rate_limited",
+        message: "Too many requests.",
+        messageType: "sync:request",
+        retryAfterMs: 1.5,
+      },
+    }),
+    false,
+  );
+});
+
 test("accepts a valid sync:pong message", () => {
   assert.equal(
     isServerMessage({

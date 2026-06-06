@@ -29,6 +29,7 @@ import { createServerMessageController } from "./server-message-controller";
 import { createServerUrlController } from "./server-url-controller";
 import { createShareController } from "./share-controller";
 import { createSocketController } from "./socket-controller";
+import { createSyncRequestController } from "./sync-request-controller";
 import { createBackgroundStateStore } from "./state-store";
 import { createRuntimeSyncController } from "./runtime-sync-controller";
 import {
@@ -64,6 +65,7 @@ const backgroundLog = (message: string) =>
   diagnosticsController.log("background", message);
 const serverLog = (message: string) =>
   diagnosticsController.log("server", message);
+const syncRequestController = createSyncRequestController();
 let outgoingMessageController: ReturnType<
   typeof createOutgoingMessageController
 > | null = null;
@@ -169,6 +171,7 @@ serverMessageController = createServerMessageController({
     voiceController?.handleServerMessage(message) ?? Promise.resolve(false),
   syncVoiceLifecycle: (options) =>
     voiceController?.syncRoomLifecycle(options) ?? Promise.resolve(),
+  syncRequestController,
   updateClockOffset,
   notifyAll,
 });
@@ -201,6 +204,7 @@ const socketController = createSocketController({
     })();
   },
   formatAdminSessionResetReason,
+  persistState,
   reconnectFailedMessage: () =>
     t("popupErrorReconnectFailed", {
       attempts: MAX_RECONNECT_ATTEMPTS,
@@ -244,6 +248,7 @@ const messageController = createMessageController({
   socketController,
   voiceController,
   microphonePermissionController,
+  syncRequestController,
   sendToServer,
   updateServerUrl,
   persistState,

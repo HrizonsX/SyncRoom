@@ -91,9 +91,29 @@ export function renderPopup(args: {
     args.state.clockOffsetMs,
     args.state.rttMs,
   );
-  const visibleMessage = args.localStatusMessage ?? args.state.error;
-  args.refs.message.textContent = visibleMessage ?? "";
+  const retryProgress = formatRetryProgress({
+    retryAttempt: args.state.retryAttempt,
+    retryAttemptMax: args.state.retryAttemptMax,
+  });
+  const retryActive = shouldShowRoomEntryRetryProgress({
+    pendingCreateRoom:
+      args.state.pendingCreateRoom || args.lastKnownPendingCreateRoom,
+    pendingJoinRoomCode:
+      args.state.pendingJoinRoomCode ?? args.lastKnownPendingJoinRoomCode,
+    retryProgress,
+  });
+  const visibleRetryProgress =
+    retryActive && !args.localStatusMessage ? retryProgress : "";
+  const visibleMessage =
+    args.localStatusMessage ??
+    args.state.error ??
+    (visibleRetryProgress ? t("connectionServerUnreachable") : null);
+  renderStatusMessage(args.refs.message, visibleMessage, visibleRetryProgress);
   args.refs.message.hidden = !visibleMessage;
+  renderRoomActionLabels({
+    createRoomButton: args.refs.createRoomButton,
+    joinRoomButton: args.refs.joinRoomButton,
+  });
 
   if (!roomCodeFocused) {
     if (args.state.roomCode) {
@@ -180,6 +200,63 @@ export function renderPopup(args: {
   }
 
   lastPendingRenderLogKey = null;
+}
+
+function renderRoomActionLabels(args: {
+  createRoomButton: HTMLButtonElement;
+  joinRoomButton: HTMLButtonElement;
+}): void {
+  args.createRoomButton.textContent = t("actionCreate");
+  args.joinRoomButton.textContent = t("actionJoin");
+}
+
+function renderStatusMessage(
+  container: HTMLElement,
+  message: string | null,
+  retryProgress: string,
+): void {
+  if (!message) {
+    container.replaceChildren();
+    return;
+  }
+  container.textContent = retryProgress
+    ? `${message}${t("retryProgressSuffix", { progress: retryProgress })}`
+    : message;
+  if (retryProgress) {
+    const dots = document.createElement("span");
+    dots.className = "status-retry-dots";
+    dots.setAttribute("aria-hidden", "true");
+    for (let index = 0; index < 3; index += 1) {
+      const dot = document.createElement("span");
+      dot.className = "status-retry-dot";
+      dot.textContent = ".";
+      dots.append(dot);
+    }
+    container.append(dots);
+  }
+}
+
+function shouldShowRoomEntryRetryProgress(args: {
+  pendingCreateRoom: boolean;
+  pendingJoinRoomCode: string | null;
+  retryProgress: string;
+}): boolean {
+  return (
+    Boolean(args.retryProgress) &&
+    (args.pendingCreateRoom || Boolean(args.pendingJoinRoomCode))
+  );
+}
+
+function formatRetryProgress(args: {
+  retryAttempt: number;
+  retryAttemptMax: number;
+}): string {
+  if (args.retryAttempt <= 0 || args.retryAttemptMax <= 0) {
+    return "";
+  }
+  return /^en\b/i.test(getUiLanguage())
+    ? `(${args.retryAttempt}/${args.retryAttemptMax})`
+    : `（${args.retryAttempt}/${args.retryAttemptMax}）`;
 }
 
 function formatVideoMeta(url: string | null): string {

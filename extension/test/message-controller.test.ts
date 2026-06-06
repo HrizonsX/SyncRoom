@@ -433,3 +433,54 @@ test("message controller forwards content playback updates only for the active s
 
   assert.deepEqual(inactiveHarness.calls.sendToServer, []);
 });
+
+test("message controller returns cached room state without requesting a server refresh", async () => {
+  const harness = createControllerHarness();
+  let response: unknown;
+
+  await harness.controller.handleRuntimeMessage(
+    { type: "content:get-room-state" },
+    {},
+    (nextResponse) => {
+      response = nextResponse;
+    },
+  );
+
+  assert.deepEqual(harness.calls.sendToServer, []);
+  assert.deepEqual(response, {
+    ok: true,
+    roomState: harness.roomSessionState.roomState,
+    memberId: "member-1",
+    roomCode: "ROOM01",
+  });
+});
+
+test("message controller coalesces room state refresh requests while waiting for room state", async () => {
+  const harness = createControllerHarness({
+    roomSessionState: {
+      roomCode: "ROOM01",
+      memberToken: "member-token-1",
+      memberId: "member-1",
+      displayName: "Alice",
+      roomState: null,
+    },
+  });
+
+  await harness.controller.handleRuntimeMessage(
+    { type: "content:get-room-state" },
+    {},
+    () => undefined,
+  );
+  await harness.controller.handleRuntimeMessage(
+    { type: "content:get-room-state" },
+    {},
+    () => undefined,
+  );
+
+  assert.deepEqual(harness.calls.sendToServer, [
+    {
+      type: "sync:request",
+      payload: { memberToken: "member-token-1" },
+    },
+  ]);
+});

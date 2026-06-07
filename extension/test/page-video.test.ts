@@ -159,6 +159,18 @@ test("falls back through title sources in order", () => {
   );
 });
 
+test("ignores movie membership edition labels when a page heading is available", () => {
+  assert.equal(
+    resolveSharedVideoTitle({
+      currentPartTitle: "中文版 会员",
+      headingTitle: "末日逃生2：迁移",
+      documentTitle:
+        "末日逃生2：迁移中文版-电影-高清正版在线观看-bilibili-哔哩哔哩",
+    }),
+    "末日逃生2：迁移",
+  );
+});
+
 test("builds festival share URL with bvid and cid", () => {
   assert.equal(
     buildFestivalShareUrl(

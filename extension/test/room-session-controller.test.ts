@@ -230,26 +230,28 @@ test("room session controller resolves failed join attempts and clears stale roo
   harness.runtimeState.room.joinToken = "join-token-2";
   harness.runtimeState.room.memberToken = "member-token-2";
   harness.runtimeState.room.memberId = "member-2";
+  setLocaleForTests("zh-CN");
 
-  const resultPromise = harness.controller.waitForJoinAttemptResult(50);
-  await harness.controller.handleServerMessage({
-    type: "error",
-    payload: {
-      code: "room_not_found",
-      message: "The room was not found.",
-    },
-  } satisfies ServerMessage);
+  try {
+    const resultPromise = harness.controller.waitForJoinAttemptResult(50);
+    await harness.controller.handleServerMessage({
+      type: "error",
+      payload: {
+        code: "room_not_found",
+        message: "The room was not found.",
+      },
+    } satisfies ServerMessage);
 
-  assert.equal(await resultPromise, "failed");
+    assert.equal(await resultPromise, "failed");
+  } finally {
+    setLocaleForTests(null);
+  }
   assert.equal(harness.runtimeState.room.pendingJoinRoomCode, null);
   assert.equal(harness.runtimeState.room.pendingJoinToken, null);
   assert.equal(harness.runtimeState.room.pendingJoinRequestSent, false);
   assert.equal(harness.runtimeState.room.roomCode, null);
   assert.equal(harness.runtimeState.room.memberToken, null);
-  assert.equal(
-    harness.runtimeState.connection.lastError,
-    "The room was not found.",
-  );
+  assert.equal(harness.runtimeState.connection.lastError, "房间不存在。");
   assert.equal(harness.persistReasons.length, 1);
   assert.equal(harness.notifyAllCalls, 1);
 });

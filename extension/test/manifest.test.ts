@@ -20,3 +20,39 @@ test("manifest injects content script into generic http and https video pages", 
     ),
   );
 });
+
+test("manifest locale descriptions use the SyncRoom tagline", async () => {
+  const zhMessages = JSON.parse(
+    await readFile(
+      new URL("../public/_locales/zh_CN/messages.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { extensionDescription?: { message?: string } };
+  const enMessages = JSON.parse(
+    await readFile(
+      new URL("../public/_locales/en/messages.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { extensionDescription?: { message?: string } };
+
+  assert.equal(zhMessages.extensionDescription?.message, "同频观影，好友同声");
+  assert.equal(
+    enMessages.extensionDescription?.message,
+    "Watch together, speak in sync.",
+  );
+});
+
+test("manifest icons exist with expected png dimensions", async () => {
+  for (const [fileName, size] of [
+    ["icon-16.png", 16],
+    ["icon-48.png", 48],
+    ["icon-128.png", 128],
+  ] as const) {
+    const png = await readFile(
+      new URL(`../public/${fileName}`, import.meta.url),
+    );
+    assert.equal(png.toString("ascii", 1, 4), "PNG");
+    assert.equal(png.readUInt32BE(16), size);
+    assert.equal(png.readUInt32BE(20), size);
+  }
+});

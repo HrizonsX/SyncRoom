@@ -142,7 +142,15 @@ export function bindPopupActions(args: {
     void handleShareCurrentVideo();
   });
 
-  refs.voiceMicButton.addEventListener("click", async () => {
+  refs.advancedDetails.addEventListener("toggle", () => {
+    syncAdvancedStateLabel(refs);
+  });
+
+  refs.memberList.addEventListener("click", async (event) => {
+    const micButton = findVoiceMicToggleButton(event.target);
+    if (!micButton || micButton.disabled) {
+      return;
+    }
     const state = args.getPopupState() ?? (await args.queryState());
     if (isVoiceRetryStatus(state.voice.status)) {
       const nextState = await sendPopupAction({ type: "popup:voice-retry" });
@@ -263,9 +271,12 @@ export function bindPopupActions(args: {
 
     const currentVideo = activeVideo.payload.video;
     if (!state.roomCode) {
-      const shouldCreateRoom = window.confirm(
-        t("confirmCreateRoomBeforeShare"),
-      );
+      const shouldCreateRoom = await showPopupConfirm(refs, {
+        title: t("confirmCreateRoomTitle"),
+        description: t("confirmCreateRoomBeforeShare"),
+        confirmLabel: t("confirmCreateAndShare"),
+        cancelLabel: t("confirmDialogCancel"),
+      });
       if (!shouldCreateRoom) {
         return;
       }
@@ -276,12 +287,15 @@ export function bindPopupActions(args: {
         currentVideo.url,
       )
     ) {
-      const shouldReplace = window.confirm(
-        t("confirmReplaceSharedVideo", {
+      const shouldReplace = await showPopupConfirm(refs, {
+        title: t("confirmReplaceVideoTitle"),
+        description: t("confirmReplaceSharedVideo", {
           currentTitle: state.roomState.sharedVideo.title,
           nextTitle: currentVideo.title,
         }),
-      );
+        confirmLabel: t("confirmReplaceVideo"),
+        cancelLabel: t("confirmDialogCancel"),
+      });
       if (!shouldReplace) {
         return;
       }
@@ -366,10 +380,78 @@ export function bindPopupActions(args: {
   }
 }
 
+function syncAdvancedStateLabel(refs: PopupRefs): void {
+  const label = refs.advancedDetails.open
+    ? t("actionExpanded")
+    : t("actionExpand");
+  refs.advancedState.classList.toggle("is-open", refs.advancedDetails.open);
+  refs.advancedState.setAttribute("aria-label", label);
+  refs.advancedState.title = label;
+}
+
+function showPopupConfirm(
+  refs: PopupRefs,
+  options: {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    cancelLabel: string;
+  },
+): Promise<boolean> {
+  refs.confirmTitle.textContent = options.title;
+  refs.confirmDescription.textContent = options.description;
+  refs.confirmConfirmButton.textContent = options.confirmLabel;
+  refs.confirmCancelButton.textContent = options.cancelLabel;
+  refs.confirmDialog.hidden = false;
+  refs.confirmConfirmButton.focus?.();
+
+  return new Promise((resolve) => {
+    const finish = (confirmed: boolean): void => {
+      refs.confirmDialog.hidden = true;
+      refs.confirmConfirmButton.removeEventListener("click", onConfirm);
+      refs.confirmCancelButton.removeEventListener("click", onCancel);
+      refs.confirmDialog.removeEventListener("click", onOverlayClick);
+      globalThis.document?.removeEventListener("keydown", onKeyDown);
+      resolve(confirmed);
+    };
+    const onConfirm = (): void => finish(true);
+    const onCancel = (): void => finish(false);
+    const onOverlayClick = (event: MouseEvent): void => {
+      if (event.target === refs.confirmDialog) {
+        finish(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        finish(false);
+      }
+    };
+
+    refs.confirmConfirmButton.addEventListener("click", onConfirm);
+    refs.confirmCancelButton.addEventListener("click", onCancel);
+    refs.confirmDialog.addEventListener("click", onOverlayClick);
+    globalThis.document?.addEventListener("keydown", onKeyDown);
+  });
+}
+
 function isVoiceRetryStatus(
   status: BackgroundPopupState["voice"]["status"],
 ): boolean {
   return status === "failed" || status === "unavailable";
+}
+
+function findVoiceMicToggleButton(
+  target: EventTarget | null,
+): HTMLButtonElement | null {
+  const candidate = (
+    target as {
+      closest?: (selector: string) => Element | null;
+    } | null
+  )?.closest?.("[data-voice-mic-toggle]");
+  if (!candidate) {
+    return null;
+  }
+  return candidate as HTMLButtonElement;
 }
 
 const copyResetTimers = new Map<

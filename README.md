@@ -2,38 +2,35 @@
 
 简体中文 | [English](./README.en.md)
 
-SyncRoom 是一个“浏览器扩展（Chrome / Edge / Firefox）+ WebSocket 服务端”的网页视频同步房间项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 `<video>` 页面，并在参与者之间同步播放、暂停、跳转和播放速率。当前源码还支持可选的 LiveKit 房间语音、管理后台和 IP 黑名单。
+> 同频观影，好友同声。
 
-它覆盖了完整的本地使用链路：
+SyncRoom 是一个“浏览器扩展 + WebSocket 服务端”的网页视频同步房间项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 `<video>` 页面，并在房间成员之间同步播放、暂停、跳转和播放速率。当前源码还支持可选的 LiveKit 房间语音、管理后台和 IP 小黑屋。
 
-- 在 Chrome / Edge / Firefox 121+ 中加载未打包扩展
-- 启动本地同步服务
-- 创建房间并复制邀请串
-- 让多个成员保持同一共享视频的同步播放
-- 可选启用自建 LiveKit 语音和服务端管理后台
+## ✨ 功能概览
 
-本仓库是一个 monorepo：
+| 能力          | 当前实现                                                                 |
+| ------------- | ------------------------------------------------------------------------ |
+| 🎬 视频同步   | B 站专用适配 + 通用 HTML5 `<video>` 页面，同步播放、暂停、跳转和播放速率 |
+| 🧩 浏览器扩展 | 支持 Chrome、Edge，以及 Firefox 121+ 的 event page 构建                  |
+| 🏠 房间邀请   | 创建房间后复制 `roomCode:joinToken` 邀请串，成员可直接加入               |
+| 🎙️ 小队语音   | 可选接入自建 LiveKit；成员默认可听，麦克风默认关闭，开麦时才请求权限     |
+| 🛡️ 管理后台   | 支持概览、房间详情、运行事件、审计日志、配置摘要和小黑屋                 |
+| 🌐 多节点部署 | 可通过 Redis 共享房间状态、运行时索引、事件流、审计流和管理命令          |
 
-- `extension/`：浏览器扩展（Chrome / Edge / Firefox）
-- `server/`：WebSocket 房间服务与管理后台
-- `packages/protocol/`：共享协议类型
+## 🧭 一眼看懂
 
-说明：扩展展示名已经是 SyncRoom；部分 npm workspace 包名、服务名和历史发布链接仍沿用 `bili-syncplay` / `@bili-syncplay/*`，README 中会保留这些实际标识。
+| 项目             | 说明                                   |
+| ---------------- | -------------------------------------- |
+| 邀请格式         | `roomCode:joinToken`                   |
+| 默认本地服务地址 | `ws://localhost:8787`                  |
+| 生产环境建议地址 | `wss://<你的域名>`                     |
+| 扩展展示名       | SyncRoom                               |
+| 主要目录         | `extension/`、`server/`、`packages/`   |
+| 历史兼容标识     | 部分包名、环境变量、指标名仍保留旧前缀 |
 
-## 一眼看懂
+> 历史兼容说明：当前项目名和扩展展示名是 SyncRoom。为了避免破坏已有脚本、包导入、监控和部署配置，部分 npm workspace 包名、环境变量、release 文件名、Prometheus 指标名和健康检查字段仍保留 `bili-syncplay` / `@bili-syncplay/*` 等历史标识。
 
-- 邀请格式：`roomCode:joinToken`
-- 默认本地服务地址：`ws://localhost:8787`
-- 本地开发浏览器：Chrome、Edge、Firefox 121+
-- 生产环境建议地址：`wss://<你的域名>`
-- 当前源码构建出的扩展名称：SyncRoom
-
-## 快速开始
-
-如果你想直接使用商店里已经发布的旧版本，可以从以下链接安装。注意：这些商店条目当前仍以旧名 Bili-SyncPlay 展示；如果你需要 SyncRoom 名称、通用 HTML5 视频支持、LiveKit 语音和小黑屋等当前源码能力，请按下方步骤从源码构建。
-
-- [Chrome 应用商店中的 Bili-SyncPlay 旧发布版本](https://chromewebstore.google.com/detail/bili-syncplay/lbmckljnginagfabglpfdepofoglfdkj)
-- [Microsoft Edge 扩展商店中的 Bili-SyncPlay 旧发布版本](https://microsoftedge.microsoft.com/addons/detail/bili-syncplay/cpgcalajpoihfgfeidmnijcdimnjniam)
+## 🚀 快速开始
 
 ### 1. 安装并构建
 
@@ -93,12 +90,12 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
 1. 打开扩展弹窗
 2. 创建房间，或者使用 `roomCode:joinToken` 加入已有房间
 3. 打开受支持的 Bilibili 视频页面，或带标准 HTML5 `<video>` 的普通网页
-4. 在弹窗中点击 `同步当前页视频`
+4. 在弹窗中点击 `同步当前视频`
 5. 其他房间成员会打开同一视频并进入同步模式
 
 如果成员在仍处于房间时浏览到其他未共享视频页面，该页面会保持本地模式，除非他们显式再次同步，否则不会影响房间。
 
-## 功能
+## 🧱 功能明细
 
 - 房间与邀请
   - 创建房间并获取邀请串
@@ -125,7 +122,7 @@ Firefox 把扩展后台视为安全上下文，非 localhost 服务端必须用 
   - 未共享页面不会把播放状态广播回房间
   - 在未共享页面上的手动播放仅在本地生效
 
-## 支持的页面
+## 📺 支持的页面
 
 通用支持：
 
@@ -146,7 +143,7 @@ Bilibili 专用支持：
 - 多 P 视频通过 `?p=` 识别
 - festival 页面通过 `bvid + cid` 识别
 
-## 项目结构
+## 📁 项目结构
 
 ```text
 SyncRoom/
@@ -158,7 +155,7 @@ SyncRoom/
   .github/workflows/    GitHub Actions 工作流
 ```
 
-## 文档入口
+## 📚 文档入口
 
 - [文档索引](./docs/README.md)
 - [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)
@@ -166,7 +163,7 @@ SyncRoom/
 - [多节点全局管理面迁移说明](./docs/operations/multi-node-global-admin-migration.zh-CN.md)
 - [隐私权政策](./docs/legal/privacy.zh-CN.md)
 
-## 环境要求
+## ⚙️ 环境要求
 
 ### 版本矩阵
 
@@ -187,7 +184,7 @@ SyncRoom/
 - **不提供终端用户账号系统。** 房间访问仅通过 `roomCode:joinToken` 邀请串控制，没有面向观众的注册或登录机制。
 - **不支持移动端浏览器或 Safari。** 扩展为 Manifest V3：Chrome/Edge（service worker 后台）与 Firefox 121+（event page 后台）；Safari 与移动端浏览器不在范围内。
 
-## 本地默认值
+## 🔧 本地默认值
 
 - 默认服务器地址：`ws://localhost:8787`
 - 服务器地址输入为空时，会回退到构建时默认值
@@ -195,7 +192,7 @@ SyncRoom/
 - 本地未打包扩展开发要求 `ALLOWED_ORIGINS=chrome-extension://<extension-id>`（Chrome/Edge）或当前 `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true`（Firefox；见“启动本地服务器”）
 - 语音聊天默认关闭，需要自建 LiveKit 服务；配置方式见 [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)。
 
-### 打开管理控制面板
+### 🛡️ 打开管理控制面板
 
 如果你要在本地使用后台页面，需要先带上管理认证配置启动服务端，然后访问：
 
@@ -263,10 +260,11 @@ node -e "const { createHash } = require('node:crypto'); const password = 'secret
 - 运行事件
 - 审计日志
 - 配置摘要
-- 关房、过期、清空共享视频、踢人、断开会话等现有管理动作
+- 小黑屋：手工添加/删除 IP，并可从房间成员行直接加入黑名单
+- 关房、过期、清空共享视频、踢人、断开会话等管理动作
 - 被踢成员会被临时阻止使用旧 `memberToken` 立即自动重连
 
-## 开发参考
+## 🧰 开发参考
 
 ### 本地开发
 
@@ -515,7 +513,7 @@ Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
 
 ### 运行时行为
 
-- 如果用户在加入房间前点击 `Sync current page video`，扩展会先提示创建房间
+- 如果用户在加入房间前点击 `同步当前视频` / `Sync current video`，扩展会先提示创建房间
 - 如果房间当前已经共享了另一个视频，弹窗会在替换前请求确认
 - background service worker 只会转发当前识别为共享标签页的播放更新
 - 切换服务器地址会断开当前 socket；如果扩展仍有活动房间或待创建房间，会使用新地址重新连接
@@ -539,7 +537,7 @@ Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
 - 如果持久化的服务器地址非法，扩展会保留原始值并停止自动重连，直到地址被修正
 - 关闭浏览器后，下次启动不会自动恢复之前的房间
 
-### 服务器部署
+### 🚢 服务器部署
 
 推荐环境：
 
@@ -633,7 +631,7 @@ npm run build:release
 - 支持 Origin 白名单、连接限流、消息限流和结构化安全日志
 - 当 `VOICE_ENABLED=true` 且 LiveKit 配置完整时，可签发房间级 LiveKit 语音令牌
 
-### 多节点部署与全局管理面
+### 🌐 多节点部署与全局管理面
 
 现在服务端已经支持完整多节点拓扑，包括共享管理员会话、共享事件与审计流、共享运行时索引、跨节点房间状态广播、跨节点管理命令，以及独立的全局管理入口。
 
@@ -831,7 +829,7 @@ node server/dist/global-admin-index.js
 - `bsp:room-events`：房间事件总线频道
 - `bsp:admin-command:*`、`bsp:admin-command-result:*`：管理命令频道
 
-### 安全相关环境变量
+### 🔐 安全相关环境变量
 
 服务器支持以下环境变量。虽然内置了安全默认值，但生产环境应显式设置：
 
@@ -916,7 +914,7 @@ node server/dist/index.js
 node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + createHash('sha256').update('secret-123').digest('hex'));"
 ```
 
-### 管理后台 API
+### 🧾 管理后台 API
 
 服务端现在已经内置 P0 管理后台，只读接口与主服务复用同一个 HTTP 端口。
 
@@ -1030,12 +1028,6 @@ redis-cli -u redis://127.0.0.1:6379 ping
 
 ```text
 PONG
-```
-
-当前服务端启动日志仍沿用历史服务名，预期类似：
-
-```text
-Bili-SyncPlay server listening on http://localhost:8787
 ```
 
 在另一个 shell 中验证本地健康检查：
@@ -1472,6 +1464,8 @@ npm run build:release
 release/bili-syncplay-extension-v<version>.zip
 ```
 
+> 该文件名是发布脚本中的历史兼容产物名；发布包内的扩展展示名仍为 SyncRoom。
+
 ### 自动化 GitHub Release
 
 仓库已经包含一个 GitHub Actions 工作流，用于：
@@ -1490,6 +1484,6 @@ git tag v0.9.0
 git push origin v0.9.0
 ```
 
-## License
+## 📄 License
 
 本项目基于 GNU General Public License v3.0 授权。详见 [LICENSE](./LICENSE)。

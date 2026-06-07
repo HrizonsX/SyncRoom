@@ -1,3 +1,5 @@
+import { isMembershipEditionLabel } from "./title-utils";
+
 export interface PageVideoCandidate {
   id?: string | number;
   ep_id?: string | number;
@@ -56,6 +58,7 @@ export function readFestivalVideoDetailFromSources(args: {
   activeCid?: string | null;
   activeEpId?: string | null;
   activeTitle?: string | null;
+  mediaTitle?: string | null;
 }): {
   epId?: string | number;
   bvid?: string;
@@ -69,7 +72,11 @@ export function readFestivalVideoDetailFromSources(args: {
     activeCid = null,
     activeEpId = null,
     activeTitle = null,
+    mediaTitle = null,
   } = args;
+  const fallbackMediaTitle =
+    normalizeTitle(mediaTitle) ??
+    normalizeTitle(initialState?.videoInfo?.title);
 
   const episodes = [
     ...(Array.isArray(initialState?.sectionEpisodes)
@@ -148,29 +155,47 @@ export function readFestivalVideoDetailFromSources(args: {
     return null;
   }
 
+  const matchedTitle = getCandidateTitle(matched);
+  const playInfoTitle = getPlayInfoTitle(playInfo);
+  const preferMediaTitle =
+    fallbackMediaTitle !== undefined &&
+    [matchedTitle, activeTitle, playInfoTitle].some(
+      (title) => typeof title === "string" && isMembershipEditionLabel(title),
+    );
+
   return {
     epId,
     bvid: matched.bvid,
     cid,
     title:
-      (typeof matched === "object" &&
-      matched !== null &&
-      "title" in matched &&
-      typeof matched.title === "string"
-        ? matched.title
-        : undefined) ||
-      (typeof matched === "object" &&
-      matched !== null &&
-      "long_title" in matched &&
-      typeof matched.long_title === "string"
-        ? matched.long_title
-        : undefined) ||
+      (preferMediaTitle ? fallbackMediaTitle : undefined) ||
+      matchedTitle ||
       activeTitle ||
-      getPlayInfoTitle(playInfo) ||
+      playInfoTitle ||
       initialState?.epInfo?.title ||
       initialState?.epInfo?.long_title ||
-      initialState?.videoInfo?.title,
+      fallbackMediaTitle,
   };
+}
+
+function getCandidateTitle(
+  candidate: PageVideoCandidate | PlayerInput | null,
+): string | undefined {
+  if (typeof candidate !== "object" || candidate === null) {
+    return undefined;
+  }
+  if ("title" in candidate && typeof candidate.title === "string") {
+    return candidate.title;
+  }
+  if ("long_title" in candidate && typeof candidate.long_title === "string") {
+    return candidate.long_title;
+  }
+  return undefined;
+}
+
+function normalizeTitle(title: string | null | undefined): string | undefined {
+  const normalized = title?.trim();
+  return normalized ? normalized : undefined;
 }
 
 function readPlayInfoCandidate(

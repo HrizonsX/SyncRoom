@@ -4,6 +4,7 @@ import {
   type PlaybackState,
   type SharedVideo,
 } from "@bili-syncplay/protocol";
+import { isMembershipEditionLabel } from "./title-utils";
 
 export interface PageVideoSource {
   pageUrl: string;
@@ -92,9 +93,17 @@ export function resolveSharedVideoTitle(
     "documentTitle" | "headingTitle" | "currentPartTitle"
   >,
 ): string {
+  if (
+    source.currentPartTitle &&
+    source.headingTitle &&
+    !isMembershipEditionLabel(source.currentPartTitle)
+  ) {
+    return source.currentPartTitle;
+  }
+
   return (
-    source.currentPartTitle ||
     source.headingTitle ||
+    source.currentPartTitle ||
     source.documentTitle.split("_")[0]?.trim() ||
     source.documentTitle.trim()
   );

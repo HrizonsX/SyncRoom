@@ -36,6 +36,7 @@ class FakeElement {
   value = "";
   className = "";
   title = "";
+  scrollTop = 0;
   children: FakeElement[] = [];
   classList = new FakeClassList();
 
@@ -55,6 +56,7 @@ class FakeElement {
   replaceChildren(...nodes: FakeElement[]): void {
     this.ownText = "";
     this.children = nodes;
+    this.scrollTop = 0;
   }
 
   setAttribute(name: string, value: string): void {
@@ -73,9 +75,12 @@ function createElement() {
 const fakeDocument = {
   activeElement: null,
   createElement: () => new FakeElement(),
+  createElementNS: () => new FakeElement(),
 };
 
 function createPopupRefs(): PopupRefs {
+  const advancedDetails = createElement() as unknown as HTMLDetailsElement;
+  advancedDetails.open = false;
   return {
     serverStatus: createElement() as unknown as HTMLElement,
     roomStatus: createElement() as unknown as HTMLElement,
@@ -91,20 +96,24 @@ function createPopupRefs(): PopupRefs {
     sharedVideoMeta: createElement() as unknown as HTMLElement,
     sharedVideoOwner: createElement() as unknown as HTMLElement,
     voiceStatus: createElement() as unknown as HTMLElement,
-    voiceDot: createElement() as unknown as HTMLElement,
-    voiceMicState: createElement() as unknown as HTMLElement,
-    voiceMicButton: createElement() as unknown as HTMLButtonElement,
-    voiceMicLabel: createElement() as unknown as HTMLElement,
     voiceError: createElement() as unknown as HTMLElement,
     logs: createElement() as unknown as HTMLElement,
     memberList: createElement() as unknown as HTMLElement,
+    advancedDetails,
+    advancedState: createElement() as unknown as HTMLElement,
     copyLogsButton: createElement() as unknown as HTMLButtonElement,
     serverUrlInput: createElement() as unknown as HTMLInputElement,
     saveServerUrlButton: createElement() as unknown as HTMLButtonElement,
+    confirmDialog: createElement() as unknown as HTMLElement,
+    confirmTitle: createElement() as unknown as HTMLElement,
+    confirmDescription: createElement() as unknown as HTMLElement,
+    confirmConfirmButton: createElement() as unknown as HTMLButtonElement,
+    confirmCancelButton: createElement() as unknown as HTMLButtonElement,
     debugMemberStatus: createElement() as unknown as HTMLElement,
     retryStatusValue: createElement() as unknown as HTMLElement,
     retryStatusCount: createElement() as unknown as HTMLElement,
-    clockStatus: createElement() as unknown as HTMLElement,
+    clockOffsetStatus: createElement() as unknown as HTMLElement,
+    rttStatus: createElement() as unknown as HTMLElement,
     createRoomButton: createElement() as unknown as HTMLButtonElement,
     joinRoomButton: createElement() as unknown as HTMLButtonElement,
     leaveRoomButton: createElement() as unknown as HTMLButtonElement,
@@ -221,12 +230,266 @@ test("renderPopup updates popup metrics, owner hint, logs, and draft values", as
       true,
     );
     assert.equal(refs.sharedVideoTitle.textContent, "Shared Video");
-    assert.equal(refs.sharedVideoMeta.textContent, "BV1xx411c7mD");
+    assert.equal(refs.sharedVideoMeta.textContent, "Bilibili · BV1xx411c7mD");
     assert.equal(refs.sharedVideoOwner.textContent, "Shared by Bob");
     assert.equal(refs.sharedVideoOwner.hidden, false);
+    assert.equal(refs.clockOffsetStatus.textContent, "25ms");
+    assert.equal(refs.rttStatus.textContent, "60ms");
     assert.equal(refs.logs.textContent.includes("Connected"), true);
     assert.equal(refs.memberList.textContent.includes("Bob"), true);
     assert.equal(refs.memberList.textContent.includes("Me (Alice)"), true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup preserves debug log scroll position across log refreshes", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("en-US");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+  refs.logs.scrollTop = 52;
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: "ROOM01",
+        joinToken: null,
+        memberId: "member-1",
+        displayName: "Alice",
+        roomState: {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "Alice" }],
+        },
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [
+          { at: 1_710_000_001_000, scope: "background", message: "second" },
+          { at: 1_710_000_000_000, scope: "background", message: "first" },
+        ],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.logs.scrollTop, 52);
+    assert.equal(refs.logs.textContent.includes("second"), true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup marks long shared video titles for hover scrolling", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+  const longTitle =
+    "这是一个非常非常长的共享视频标题，用来验证鼠标悬浮时可以滚动展示完整内容";
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: "ROOM01",
+        joinToken: "join-token-1",
+        memberId: "member-1",
+        displayName: "小鹏",
+        roomState: {
+          roomCode: "ROOM01",
+          sharedVideo: {
+            videoId: "BV1xx411c7mD",
+            url: "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
+            title: longTitle,
+            sharedByMemberId: "member-1",
+          },
+          playback: null,
+          members: [{ id: "member-1", name: "小鹏" }],
+        },
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.sharedVideoTitle.title, longTitle);
+    assert.equal(refs.sharedVideoTitle.className, "video-title is-scrollable");
+    const titleText = (refs.sharedVideoTitle as unknown as FakeElement)
+      .children[0];
+    assert.equal(titleText.className, "video-title-text");
+    assert.equal(titleText.textContent, longTitle);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup shows the prototype empty shared-video hint before joining a room", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: "小鹏",
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.sharedVideoTitle.textContent, "暂无共享视频");
+    assert.equal(
+      refs.sharedVideoOwner.textContent,
+      "加入房间后显示共享视频标题、来源和分享人。",
+    );
+    assert.equal(refs.sharedVideoOwner.hidden, false);
+    assert.equal(refs.shareCurrentVideoButton.disabled, true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup keeps the empty shared-video content after joining a room", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: "U62V4F",
+        joinToken: "join-token-1",
+        memberId: "member-1",
+        displayName: "小鹏",
+        roomState: {
+          roomCode: "U62V4F",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "小鹏" }],
+        },
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "U62V4F",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.sharedVideoTitle.textContent, "暂无共享视频");
+    assert.equal(
+      refs.sharedVideoOwner.textContent,
+      "加入房间后显示共享视频标题、来源和分享人。",
+    );
+    assert.equal(refs.sharedVideoOwner.hidden, false);
+    assert.equal(refs.shareCurrentVideoButton.disabled, false);
   } finally {
     setLocaleForTests(null);
     Object.assign(globalThis, { document: originalDocument });
@@ -352,7 +615,7 @@ test("renderPopup shows retry progress after the connection error", async () => 
       [".", ".", "."],
     );
     assert.equal(refs.joinRoomButton.textContent, "加入");
-    assert.equal(refs.createRoomButton.textContent, "创建");
+    assert.equal(refs.createRoomButton.textContent, "创建房间");
     assert.equal(refs.joinRoomButton.disabled, true);
     assert.equal(roomCodeInput.disabled, true);
   } finally {
@@ -730,19 +993,291 @@ test("renderPopup renders voice status, mic toggle, and member voice indicators"
     });
 
     assert.equal(refs.voiceStatus.textContent, "Voice connected");
-    assert.equal(refs.voiceMicState.textContent, "Microphone on");
-    assert.equal(refs.voiceMicLabel.textContent, "Mute");
-    assert.equal(refs.voiceMicButton.disabled, false);
-    assert.equal(refs.voiceMicButton.classList.contains("is-live"), true);
     assert.equal(
       refs.voiceError.textContent,
       "Microphone permission was denied.",
     );
     assert.equal(refs.voiceError.hidden, false);
 
-    const bobChip = (refs.memberList as unknown as FakeElement).children[1];
-    const bobIndicator = bobChip.children[1];
-    assert.equal(bobIndicator.classList.contains("is-speaking"), true);
+    const selfRow = (refs.memberList as unknown as FakeElement).children[0];
+    assert.equal(selfRow.className, "member-row is-self");
+    const selfMicButton = selfRow.children[1];
+    assert.equal(selfMicButton.className, "member-state");
+    assert.equal(selfMicButton.getAttribute("data-voice-mic-toggle"), "true");
+    assert.equal(selfMicButton.getAttribute("aria-label"), "Mute");
+    assert.equal(selfMicButton.disabled, false);
+
+    const bobRow = (refs.memberList as unknown as FakeElement).children[1];
+    assert.equal(bobRow.className, "member-row");
+    const bobIndicator = bobRow.children[1];
+    assert.equal(bobIndicator.classList.contains("speaking"), true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup treats unknown remote voice state as muted", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+  const voice = createInitialVoiceRuntimeState();
+  voice.status = "connected";
+  voice.muted = true;
+  voice.participants = {
+    "member-1": {
+      memberId: "member-1",
+      connected: true,
+      muted: true,
+      speaking: false,
+    },
+  };
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: "ROOM01",
+        joinToken: "join-token-1",
+        memberId: "member-1",
+        displayName: "Alice",
+        roomState: {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [
+            { id: "member-1", name: "Alice" },
+            { id: "member-2", name: "Bob" },
+          ],
+        },
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice,
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    const bobRow = (refs.memberList as unknown as FakeElement).children[1];
+    const bobInfo = bobRow.children[0];
+    const bobText = bobInfo.children[1];
+    const bobIndicator = bobRow.children[1];
+    assert.equal(bobText.textContent.includes("已静音"), true);
+    assert.equal(bobIndicator.classList.contains("muted"), true);
+    assert.equal(bobIndicator.classList.contains("disabled-mic"), true);
+    assert.equal(bobIndicator.classList.contains("speaking"), false);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup renders a disabled self row when no room is joined", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: "小鹏",
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.membersStatus.textContent, "0 人");
+    assert.equal(refs.voiceStatus.textContent, "未加入房间");
+    assert.equal(refs.voiceStatus.classList.contains("is-muted"), true);
+
+    const selfRow = (refs.memberList as unknown as FakeElement).children[0];
+    assert.equal(selfRow.className, "member-row is-self");
+    assert.equal(selfRow.textContent.includes("我（小鹏）"), true);
+    assert.equal(selfRow.textContent.includes("尚未加入房间"), false);
+    const micState = selfRow.children[1];
+    assert.equal(micState.classList.contains("disabled-mic"), true);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup preserves manual advanced expansion across same room presence renders", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  const state = {
+    connected: true,
+    serverUrl: "ws://localhost:8787",
+    error: null,
+    roomCode: null,
+    joinToken: null,
+    memberId: null,
+    displayName: "小鹏",
+    roomState: null,
+    pendingCreateRoom: false,
+    pendingJoinRoomCode: null,
+    retryInMs: null,
+    retryAttempt: 0,
+    retryAttemptMax: 5,
+    clockOffsetMs: null,
+    rttMs: null,
+    voice: createInitialVoiceRuntimeState(),
+    logs: [],
+  } as const;
+
+  try {
+    const baseArgs = {
+      refs,
+      state,
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    };
+
+    renderPopup(baseArgs);
+    assert.equal(refs.advancedDetails.open, false);
+    refs.advancedDetails.open = true;
+
+    renderPopup({
+      ...baseArgs,
+      localStatusMessage: "服务器地址已保存。",
+    });
+
+    assert.equal(refs.advancedDetails.open, true);
+    assert.equal(refs.advancedState.textContent, "");
+    assert.equal(refs.advancedState.classList.contains("is-open"), true);
+    assert.equal(refs.advancedState.getAttribute("aria-label"), "已展开");
+    assert.equal(refs.advancedState.title, "已展开");
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup keeps advanced settings collapsed by default when joined", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: "U62V4F",
+        joinToken: "token",
+        memberId: "member-1",
+        displayName: "小鹏",
+        roomState: {
+          roomCode: "U62V4F",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "小鹏" }],
+        },
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "U62V4F",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.advancedDetails.open, false);
+    assert.equal(refs.advancedState.textContent, "");
+    assert.equal(refs.advancedState.classList.contains("is-open"), false);
+    assert.equal(refs.advancedState.getAttribute("aria-label"), "展开");
+    assert.equal(refs.advancedState.title, "展开");
   } finally {
     setLocaleForTests(null);
     Object.assign(globalThis, { document: originalDocument });
@@ -804,14 +1339,13 @@ test("renderPopup enables voice retry when voice connection failed", async () =>
     });
 
     assert.equal(refs.voiceStatus.textContent, "Voice failed");
-    assert.equal(refs.voiceMicLabel.textContent, "Retry");
-    assert.equal(refs.voiceMicButton.disabled, false);
-    assert.equal(refs.voiceMicButton.classList.contains("is-retry"), true);
-    assert.equal(refs.voiceMicButton.classList.contains("is-live"), false);
+    const selfRow = (refs.memberList as unknown as FakeElement).children[0];
+    const selfMicButton = selfRow.children[1];
+    assert.equal(selfMicButton.disabled, false);
+    assert.equal(selfMicButton.classList.contains("is-retry"), true);
+    assert.equal(selfMicButton.classList.contains("is-live"), false);
     assert.equal(
-      (refs.voiceMicButton as unknown as Record<string, string>)[
-        "aria-pressed"
-      ],
+      (selfMicButton as unknown as Record<string, string>)["aria-pressed"],
       "false",
     );
   } finally {

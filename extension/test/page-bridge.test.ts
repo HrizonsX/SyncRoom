@@ -185,3 +185,77 @@ test("page bridge resolves current bangumi episode from playinfo when season pag
     title: "第46话 汤姆与小老鼠 Tom and Cherie",
   });
 });
+
+test("page bridge uses movie media title instead of membership edition label", () => {
+  const detail = readFestivalVideoDetailFromSources({
+    initialState: {
+      videoInfo: {
+        bvid: "BV1mWL16EEy9",
+        cid: 38474616283,
+        title: "末日逃生2：迁移",
+      },
+    },
+    playInfo: {
+      result: {
+        arc: {
+          bvid: "BV1mWL16EEy9",
+          cid: 38474616283,
+        },
+        supplement: {
+          ogv_episode_info: {
+            episode_id: 4009753,
+            index_title: "中文版",
+          },
+          play_view_business_info: {
+            episode_info: {
+              ep_id: 4009753,
+              cid: 38474616283,
+            },
+          },
+        },
+      },
+    },
+    activeTitle: "中文版 会员",
+  });
+
+  assert.deepEqual(detail, {
+    epId: 4009753,
+    bvid: "BV1mWL16EEy9",
+    cid: 38474616283,
+    title: "末日逃生2：迁移",
+  });
+});
+
+test("page bridge can use page media title when movie data only exposes edition title", () => {
+  const detail = readFestivalVideoDetailFromSources({
+    playInfo: {
+      result: {
+        arc: {
+          bvid: "BV1mWL16EEy9",
+          cid: 38474616283,
+        },
+        supplement: {
+          ogv_episode_info: {
+            episode_id: 4009753,
+            index_title: "中文版",
+          },
+          play_view_business_info: {
+            episode_info: {
+              ep_id: 4009753,
+              cid: 38474616283,
+            },
+          },
+        },
+      },
+    },
+    activeTitle: "中文版 会员",
+    mediaTitle: "末日逃生2：迁移",
+  });
+
+  assert.deepEqual(detail, {
+    epId: 4009753,
+    bvid: "BV1mWL16EEy9",
+    cid: 38474616283,
+    title: "末日逃生2：迁移",
+  });
+});

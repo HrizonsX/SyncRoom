@@ -1,9 +1,22 @@
 :root {
   color-scheme: light;
+  --page-bg: #eef2f6;
+  --surface: #f8fafc;
+  --line: #d9e2eb;
+  --line-strong: #cbd6e2;
+  --ink: #202838;
+  --muted: #657386;
+  --subtle: #8c96a6;
+  --dark: #202b3d;
+  --green: #2aa67f;
+  --danger: #9f4d5e;
+  --danger-bg: #fff7f8;
+  --danger-line: #e4bac4;
   font-family:
-    Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
-  background: #f7f8fb;
-  color: #171923;
+    "Microsoft YaHei UI", "PingFang SC", "Noto Sans SC", "Segoe UI", Arial,
+    sans-serif;
+  background: var(--page-bg);
+  color: var(--ink);
 }
 
 * {
@@ -11,32 +24,54 @@
 }
 
 body {
+  display: grid;
+  place-items: center;
   margin: 0;
   min-width: 320px;
   min-height: 260px;
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0)),
+    var(--page-bg);
 }
 
 .permission-shell {
+  width: 100%;
+  max-width: 360px;
   display: grid;
-  gap: 14px;
-  padding: 28px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.78),
+      rgba(255, 255, 255, 0.2)
+    ),
+    var(--surface);
+  box-shadow:
+    0 18px 44px rgba(25, 35, 51, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
 .permission-mark {
-  width: 48px;
-  height: 48px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  background: #1d4ed8;
-  color: #fff;
+  border-radius: 12px;
+  background: #202b3d;
+  color: #f2f5f8;
+  box-shadow: 0 8px 18px rgba(25, 35, 51, 0.16);
 }
 
 .permission-mic {
   position: relative;
-  width: 18px;
-  height: 26px;
-  border: 2px solid #fff;
+  width: 15px;
+  height: 22px;
+  border: 2px solid currentColor;
   border-radius: 10px;
 }
 
@@ -47,7 +82,8 @@ body {
   bottom: -8px;
   width: 2px;
   height: 8px;
-  background: #fff;
+  border-radius: 999px;
+  background: currentColor;
   transform: translateX(-50%);
 }
 
@@ -58,58 +94,84 @@ body {
   bottom: -12px;
   width: 16px;
   height: 2px;
-  background: #fff;
+  border-radius: 999px;
+  background: currentColor;
   transform: translateX(-50%);
 }
 
 h1 {
+  align-self: end;
   margin: 0;
-  font-size: 22px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 850;
   line-height: 1.25;
 }
 
 p {
+  grid-column: 1 / -1;
   margin: 0;
-  color: #4a5568;
-  font-size: 14px;
-  line-height: 1.6;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.65;
 }
 
 .status {
-  min-height: 44px;
-  padding: 10px 12px;
-  border: 1px solid #d6dbe6;
-  border-radius: 8px;
-  background: #fff;
-  color: #2d3748;
+  min-height: 48px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
+  color: var(--muted);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .status[data-tone="success"] {
-  border-color: #9ae6b4;
-  background: #f0fff4;
-  color: #22543d;
+  border-color: #b9dcca;
+  background: #eef8f3;
+  color: #1f8564;
 }
 
 .status[data-tone="error"] {
-  border-color: #feb2b2;
-  background: #fff5f5;
-  color: #742a2a;
+  border-color: var(--danger-line);
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 button {
+  grid-column: 1 / -1;
   justify-self: start;
-  min-width: 132px;
-  min-height: 38px;
-  border: 0;
-  border-radius: 8px;
-  background: #1d4ed8;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
+  min-width: 128px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 1px solid rgba(32, 43, 61, 0.18);
+  border-radius: 999px;
+  background: var(--dark);
+  color: #f2f5f8;
+  box-shadow:
+    0 1px 2px rgba(25, 35, 51, 0.14),
+    0 10px 20px rgba(25, 35, 51, 0.14);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
   cursor: pointer;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease,
+    opacity 160ms ease;
+}
+
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: #2b3547;
+  box-shadow:
+    0 1px 2px rgba(25, 35, 51, 0.16),
+    0 12px 24px rgba(25, 35, 51, 0.18);
 }
 
 button:disabled {
   cursor: progress;
-  opacity: 0.65;
+  opacity: 0.62;
 }

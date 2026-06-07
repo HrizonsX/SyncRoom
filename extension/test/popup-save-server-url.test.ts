@@ -27,20 +27,24 @@ const REF_KEYS = [
   "sharedVideoMeta",
   "sharedVideoOwner",
   "voiceStatus",
-  "voiceDot",
-  "voiceMicState",
-  "voiceMicButton",
-  "voiceMicLabel",
   "voiceError",
   "logs",
   "memberList",
+  "advancedDetails",
+  "advancedState",
   "copyLogsButton",
   "serverUrlInput",
   "saveServerUrlButton",
+  "confirmDialog",
+  "confirmTitle",
+  "confirmDescription",
+  "confirmConfirmButton",
+  "confirmCancelButton",
   "debugMemberStatus",
   "retryStatusValue",
   "retryStatusCount",
-  "clockStatus",
+  "clockOffsetStatus",
+  "rttStatus",
   "createRoomButton",
   "joinRoomButton",
   "leaveRoomButton",
@@ -49,17 +53,40 @@ const REF_KEYS = [
 function createFakeRef(): EventTarget & Record<string, unknown> {
   const target = new EventTarget();
   const element = target as EventTarget & Record<string, unknown>;
+  const classes = new Set<string>();
+  const attributes = new Map<string, string>();
   element.value = "";
   element.disabled = false;
   element.textContent = "";
   element.hidden = false;
   element.innerHTML = "";
+  element.open = false;
+  element.title = "";
   element.classList = {
-    toggle: () => {},
-    contains: () => false,
-    add: () => {},
-    remove: () => {},
+    toggle: (name: string, force?: boolean) => {
+      if (force === false) {
+        classes.delete(name);
+        return false;
+      }
+      if (force === true || !classes.has(name)) {
+        classes.add(name);
+        return true;
+      }
+      classes.delete(name);
+      return false;
+    },
+    contains: (name: string) => classes.has(name),
+    add: (name: string) => {
+      classes.add(name);
+    },
+    remove: (name: string) => {
+      classes.delete(name);
+    },
   };
+  element.setAttribute = (name: string, value: string) => {
+    attributes.set(name, value);
+  };
+  element.getAttribute = (name: string) => attributes.get(name);
   return element;
 }
 
@@ -69,6 +96,19 @@ function createRefs(): PopupRefs {
     refs[key] = createFakeRef();
   }
   return refs as unknown as PopupRefs;
+}
+
+function createVoiceMicClickEvent(disabled = false): Event {
+  const button = {
+    disabled,
+    closest: (selector: string) =>
+      selector === "[data-voice-mic-toggle]" ? button : null,
+  };
+  const event = new Event("click");
+  Object.defineProperty(event, "target", {
+    value: button,
+  });
+  return event;
 }
 
 function createState(
@@ -102,6 +142,19 @@ function wrapStateMessage(state: BackgroundPopupState): {
 } {
   return { type: "background:state", payload: state };
 }
+
+const validActiveVideoResponse = {
+  ok: true,
+  payload: {
+    video: {
+      videoId: "BVnext",
+      url: "https://www.bilibili.com/video/BVnext",
+      title: "Next Video",
+    },
+    playback: null,
+  },
+  tabId: 9,
+};
 
 function installChromeRuntimeStub(
   handler: (message: unknown) => BackgroundPopupState,
@@ -282,6 +335,180 @@ test("saveServerUrl clears a previous localStatusMessage on a successful save", 
   }
 });
 
+test("advanced details state icon updates immediately on native toggle", () => {
+  setLocaleForTests("zh-CN");
+  try {
+    const refs = createRefs();
+    const details = refs.advancedDetails as unknown as EventTarget & {
+      open: boolean;
+    };
+
+    bindPopupActions(buildBindings({ refs }));
+
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+    assert.equal(refs.advancedState.textContent, "");
+    assert.equal(refs.advancedState.classList.contains("is-open"), true);
+    assert.equal(refs.advancedState.getAttribute("aria-label"), "已展开");
+    assert.equal(refs.advancedState.title, "已展开");
+
+    details.open = false;
+    details.dispatchEvent(new Event("toggle"));
+    assert.equal(refs.advancedState.textContent, "");
+    assert.equal(refs.advancedState.classList.contains("is-open"), false);
+    assert.equal(refs.advancedState.getAttribute("aria-label"), "展开");
+    assert.equal(refs.advancedState.title, "展开");
+  } finally {
+    setLocaleForTests(null);
+  }
+});
+
+test("share current video uses the inline confirmation before creating a room", async () => {
+  setLocaleForTests("en-US");
+  const previousWindow = (globalThis as unknown as { window?: unknown }).window;
+  try {
+    const refs = createRefs();
+    const requests: unknown[] = [];
+    const currentState = createState();
+    let nativeConfirmCalled = false;
+
+    (globalThis as unknown as { window: unknown }).window = {
+      confirm() {
+        nativeConfirmCalled = true;
+        return true;
+      },
+    };
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      runtime: {
+        async sendMessage(message: unknown): Promise<unknown> {
+          requests.push(message);
+          const type = (message as { type?: string }).type;
+          if (type === "popup:get-active-video") {
+            return validActiveVideoResponse;
+          }
+          if (type === "popup:share-current-video") {
+            return wrapStateMessage(currentState);
+          }
+          return wrapStateMessage(currentState);
+        },
+      },
+    };
+
+    bindPopupActions(
+      buildBindings({
+        refs,
+        queryState: async () => currentState,
+        getPopupState: () => currentState,
+      }),
+    );
+
+    (refs.shareCurrentVideoButton as unknown as EventTarget).dispatchEvent(
+      new Event("click"),
+    );
+    await flushMicrotasks();
+
+    assert.equal(nativeConfirmCalled, false);
+    assert.equal(
+      (refs.confirmDialog as unknown as { hidden: boolean }).hidden,
+      false,
+    );
+    assert.equal(
+      (refs.confirmTitle as unknown as { textContent: string }).textContent,
+      "Create room and sync?",
+    );
+    assert.deepEqual(requests, [{ type: "popup:get-active-video" }]);
+
+    (refs.confirmConfirmButton as unknown as EventTarget).dispatchEvent(
+      new Event("click"),
+    );
+    await flushMicrotasks();
+
+    assert.equal(
+      (refs.confirmDialog as unknown as { hidden: boolean }).hidden,
+      true,
+    );
+    assert.deepEqual(
+      requests.map((request) => (request as { type?: string }).type),
+      ["popup:get-active-video", "popup:share-current-video"],
+    );
+  } finally {
+    setLocaleForTests(null);
+    (globalThis as unknown as { window?: unknown }).window = previousWindow;
+  }
+});
+
+test("share current video can cancel the inline replacement confirmation", async () => {
+  setLocaleForTests("en-US");
+  try {
+    const refs = createRefs();
+    const requests: unknown[] = [];
+    const currentState = createState({
+      roomCode: "ROOM01",
+      roomState: {
+        roomCode: "ROOM01",
+        sharedVideo: {
+          videoId: "BVold",
+          url: "https://www.bilibili.com/video/BVold",
+          title: "Old Video",
+          sharedByMemberId: "member-1",
+        },
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+      },
+    });
+
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      runtime: {
+        async sendMessage(message: unknown): Promise<unknown> {
+          requests.push(message);
+          const type = (message as { type?: string }).type;
+          if (type === "popup:get-active-video") {
+            return validActiveVideoResponse;
+          }
+          if (type === "popup:share-current-video") {
+            return wrapStateMessage(currentState);
+          }
+          return wrapStateMessage(currentState);
+        },
+      },
+    };
+
+    bindPopupActions(
+      buildBindings({
+        refs,
+        queryState: async () => currentState,
+        getPopupState: () => currentState,
+      }),
+    );
+
+    (refs.shareCurrentVideoButton as unknown as EventTarget).dispatchEvent(
+      new Event("click"),
+    );
+    await flushMicrotasks();
+
+    assert.equal(
+      (refs.confirmTitle as unknown as { textContent: string }).textContent,
+      "Replace shared video?",
+    );
+
+    (refs.confirmCancelButton as unknown as EventTarget).dispatchEvent(
+      new Event("click"),
+    );
+    await flushMicrotasks();
+
+    assert.equal(
+      (refs.confirmDialog as unknown as { hidden: boolean }).hidden,
+      true,
+    );
+    assert.deepEqual(
+      requests.map((request) => (request as { type?: string }).type),
+      ["popup:get-active-video"],
+    );
+  } finally {
+    setLocaleForTests(null);
+  }
+});
+
 test("voice mic button sends a toggle request from current muted state", async () => {
   setLocaleForTests("en-US");
   const callOrder: string[] = [];
@@ -310,8 +537,8 @@ test("voice mic button sends a toggle request from current muted state", async (
       }),
     );
 
-    (refs.voiceMicButton as unknown as EventTarget).dispatchEvent(
-      new Event("click"),
+    (refs.memberList as unknown as EventTarget).dispatchEvent(
+      createVoiceMicClickEvent(),
     );
     await flushMicrotasks();
 
@@ -353,8 +580,8 @@ test("voice mic button sends a mute request from current unmuted state", async (
       }),
     );
 
-    (refs.voiceMicButton as unknown as EventTarget).dispatchEvent(
-      new Event("click"),
+    (refs.memberList as unknown as EventTarget).dispatchEvent(
+      createVoiceMicClickEvent(),
     );
     await flushMicrotasks();
 
@@ -395,8 +622,8 @@ test("voice mic button sends retry request when voice failed", async () => {
       }),
     );
 
-    (refs.voiceMicButton as unknown as EventTarget).dispatchEvent(
-      new Event("click"),
+    (refs.memberList as unknown as EventTarget).dispatchEvent(
+      createVoiceMicClickEvent(),
     );
     await flushMicrotasks();
 

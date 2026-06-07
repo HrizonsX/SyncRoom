@@ -66,6 +66,12 @@ function readFestivalVideoDetail(): {
         .querySelector(".bpx-player-top-left-title")
         ?.textContent?.trim() ||
       null;
+    const mediaTitle =
+      document
+        .querySelector<HTMLMetaElement>('meta[property="og:title"]')
+        ?.content?.trim() ||
+      document.querySelector("h1")?.textContent?.trim() ||
+      null;
 
     const playerInput = (
       window as typeof window & {
@@ -84,6 +90,7 @@ function readFestivalVideoDetail(): {
       activeCid,
       activeEpId,
       activeTitle,
+      mediaTitle,
     });
   } catch {
     return null;

@@ -12,6 +12,7 @@ import {
 import type { PopupRefs } from "./popup-view";
 
 let lastPendingRenderLogKey: string | null = null;
+const VIDEO_TITLE_SCROLL_THRESHOLD = 28;
 
 export function resetPopupRenderDebugStateForTests(): void {
   lastPendingRenderLogKey = null;
@@ -73,9 +74,9 @@ export function renderPopup(args: {
     !args.state.connected,
   );
   args.refs.roomStatus.textContent = args.state.roomCode ?? "-";
-  args.refs.membersStatus.textContent = t("membersCount", {
-    count: args.state.roomState?.members.length ?? 0,
-  });
+  args.refs.membersStatus.textContent = formatMembersCount(
+    args.state.roomState?.members.length ?? 0,
+  );
   args.refs.debugMemberStatus.textContent =
     args.state.displayName ?? args.state.memberId ?? "-";
   args.refs.retryStatusValue.textContent =
@@ -86,11 +87,10 @@ export function renderPopup(args: {
     args.state.retryAttempt > 0
       ? `(${args.state.retryAttempt}/${args.state.retryAttemptMax})`
       : "";
-  renderClockStatus(
-    args.refs.clockStatus,
+  args.refs.clockOffsetStatus.textContent = formatClockMetricValue(
     args.state.clockOffsetMs,
-    args.state.rttMs,
   );
+  args.refs.rttStatus.textContent = formatClockMetricValue(args.state.rttMs);
   const retryProgress = formatRetryProgress({
     retryAttempt: args.state.retryAttempt,
     retryAttemptMax: args.state.retryAttemptMax,
@@ -152,33 +152,41 @@ export function renderPopup(args: {
     lastKnownRoomCode: args.lastKnownRoomCode,
   });
 
-  args.refs.sharedVideoTitle.textContent =
-    args.state.roomState?.sharedVideo?.title ?? t("stateNoSharedVideo");
+  const hasRoom = Boolean(args.state.roomCode);
+  const sharedVideo = args.state.roomState?.sharedVideo ?? null;
+  const hasSharedVideo = Boolean(sharedVideo?.url);
+  renderSharedVideoTitle(
+    args.refs.sharedVideoTitle,
+    sharedVideo?.title ?? t("stateNoSharedVideo"),
+  );
   args.refs.sharedVideoMeta.textContent = formatVideoMeta(
-    args.state.roomState?.sharedVideo?.url ?? null,
+    sharedVideo?.url ?? null,
   );
   const ownerText = formatVideoOwner(
     args.state.roomState?.members ?? [],
-    args.state.roomState?.sharedVideo?.sharedByMemberId ?? null,
-    args.state.roomState?.sharedVideo?.sharedByDisplayName ?? null,
+    sharedVideo?.sharedByMemberId ?? null,
+    sharedVideo?.sharedByDisplayName ?? null,
   );
-  args.refs.sharedVideoOwner.textContent = ownerText;
+  const emptySharedVideoHint = !hasSharedVideo ? t("sharedVideoIdleHint") : "";
+  args.refs.sharedVideoOwner.textContent = ownerText || emptySharedVideoHint;
   args.refs.sharedVideoOwner.hidden =
-    !args.state.roomState?.sharedVideo?.url || !ownerText;
-  args.refs.sharedVideoCard.disabled = !args.state.roomState?.sharedVideo?.url;
-  args.refs.sharedVideoCard.classList.toggle(
-    "is-empty",
-    !args.state.roomState?.sharedVideo?.url,
-  );
+    (hasSharedVideo && !ownerText) ||
+    (!hasSharedVideo && !emptySharedVideoHint);
+  args.refs.sharedVideoCard.disabled = !hasSharedVideo;
+  args.refs.sharedVideoCard.classList.toggle("is-empty", !hasSharedVideo);
+  args.refs.shareCurrentVideoButton.disabled = !args.state.roomCode;
 
-  renderVoiceState(args.refs, args.state.voice, Boolean(args.state.roomCode));
+  renderVoiceState(args.refs, args.state.voice, hasRoom);
   renderMemberList(
     args.refs.memberList,
     args.state.roomState?.members ?? [],
     args.state.memberId,
+    args.state.displayName,
     args.state.voice,
+    hasRoom,
   );
   renderLogs(args.refs.logs, args.state.logs);
+  renderAdvancedState(args.refs);
 
   if (args.state.pendingJoinRoomCode || args.roomActionPending) {
     const logKey = [
@@ -202,11 +210,23 @@ export function renderPopup(args: {
   lastPendingRenderLogKey = null;
 }
 
+function renderSharedVideoTitle(container: HTMLElement, title: string): void {
+  const titleText = document.createElement("span");
+  titleText.className = "video-title-text";
+  titleText.textContent = title;
+  container.replaceChildren(titleText);
+  container.title = title;
+  container.className =
+    title.length > VIDEO_TITLE_SCROLL_THRESHOLD
+      ? "video-title is-scrollable"
+      : "video-title";
+}
+
 function renderRoomActionLabels(args: {
   createRoomButton: HTMLButtonElement;
   joinRoomButton: HTMLButtonElement;
 }): void {
-  args.createRoomButton.textContent = t("actionCreate");
+  args.createRoomButton.textContent = t("actionCreateRoom");
   args.joinRoomButton.textContent = t("actionJoin");
 }
 
@@ -261,41 +281,21 @@ function formatRetryProgress(args: {
 
 function formatVideoMeta(url: string | null): string {
   if (!url) {
-    return t("actionOpenSharedVideoHint");
+    return t("stateNotSynced");
   }
   const match = url.match(/\/video\/([^/?]+)/);
-  return match ? match[1] : t("actionOpenSharedVideo");
+  if (match) {
+    return `Bilibili · ${match[1]}`;
+  }
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return t("actionOpenSharedVideo");
+  }
 }
 
 function formatClockMetricValue(value: number | null): string {
   return value === null ? "-" : `${value}ms`;
-}
-
-function buildClockMetric(label: string, value: string): HTMLSpanElement {
-  const wrap = document.createElement("span");
-  wrap.className = "clock-metric";
-  const labelEl = document.createElement("span");
-  labelEl.className = "clock-metric-label";
-  labelEl.textContent = label;
-  const valueEl = document.createElement("span");
-  valueEl.className = "clock-metric-value";
-  valueEl.textContent = value;
-  wrap.append(labelEl, valueEl);
-  return wrap;
-}
-
-function renderClockStatus(
-  container: HTMLElement,
-  clockOffsetMs: number | null,
-  rttMs: number | null,
-): void {
-  container.replaceChildren(
-    buildClockMetric(
-      t("metricClockOffset"),
-      formatClockMetricValue(clockOffsetMs),
-    ),
-    buildClockMetric(t("metricClockRtt"), formatClockMetricValue(rttMs)),
-  );
 }
 
 function formatVideoOwner(
@@ -314,11 +314,13 @@ function renderLogs(
   container: HTMLElement,
   logs: BackgroundPopupState["logs"],
 ): void {
+  const previousScrollTop = container.scrollTop;
   if (logs.length === 0) {
     const empty = document.createElement("div");
-    empty.className = "muted";
+    empty.className = "log-empty advanced-log-line";
     empty.textContent = t("stateNoLogs");
     container.replaceChildren(empty);
+    container.scrollTop = 0;
     return;
   }
 
@@ -328,41 +330,62 @@ function renderLogs(
         hour12: false,
       });
       const line = document.createElement("div");
-      line.className = "log-line";
+      line.className = "log-line advanced-log-line";
       line.textContent = `[${time}] [${entry.scope}] ${entry.message}`;
       return line;
     }),
   );
+  container.scrollTop = previousScrollTop;
 }
 
 function renderMemberList(
   container: HTMLElement,
   members: RoomMember[],
   currentMemberId: string | null,
+  displayName: string | null,
   voiceState: VoiceRuntimeState,
+  hasRoom: boolean,
 ): void {
-  if (members.length === 0) {
-    const chip = document.createElement("span");
-    chip.className = "member-chip";
-    chip.textContent = t("stateNoMembers");
-    container.replaceChildren(chip);
+  if (!hasRoom) {
+    container.replaceChildren(createSelfIdleMemberRow(displayName, voiceState));
     return;
   }
 
   container.replaceChildren(
     ...members.map((member) => {
       const isCurrentMember = currentMemberId === member.id;
-      const chip = document.createElement("span");
-      chip.className = isCurrentMember
-        ? "member-chip member-chip-active"
-        : "member-chip";
+      const row = document.createElement("div");
+      row.className = isCurrentMember ? "member-row is-self" : "member-row";
+      const info = document.createElement("div");
+      info.className = "member-info";
+      const avatar = document.createElement("span");
+      avatar.className = "avatar";
+      avatar.textContent = getMemberAvatarText(member.name, isCurrentMember);
+      const text = document.createElement("span");
       const name = document.createElement("span");
       name.className = "member-name";
       name.textContent = isCurrentMember
         ? t("memberSelf", { name: member.name })
         : member.name;
-      chip.append(name, createVoiceIndicator(voiceState, member.id));
-      return chip;
+      const voiceText = document.createElement("span");
+      voiceText.className = "member-voice";
+      voiceText.textContent = formatMemberVoiceText(
+        voiceState,
+        member.id,
+        isCurrentMember,
+      );
+      text.append(name, voiceText);
+      info.append(avatar, text);
+      row.append(
+        info,
+        createMemberVoiceControl({
+          memberId: member.id,
+          isCurrentMember,
+          hasRoom,
+          voiceState,
+        }),
+      );
+      return row;
     }),
   );
 }
@@ -372,35 +395,24 @@ function renderVoiceState(
   voiceState: VoiceRuntimeState,
   hasRoom: boolean,
 ): void {
-  refs.voiceStatus.textContent = formatVoiceStatus(voiceState.status);
-  refs.voiceMicState.textContent = voiceState.muted
-    ? t("voiceMicMuted")
-    : t("voiceMicUnmuted");
-  const canRetryVoice = hasRoom && isVoiceRetryStatus(voiceState.status);
-  refs.voiceMicLabel.textContent = canRetryVoice
-    ? t("voiceActionRetry")
-    : voiceState.muted
-      ? t("voiceActionUnmute")
-      : t("voiceActionMute");
-  refs.voiceMicButton.disabled =
-    !hasRoom || (voiceState.status !== "connected" && !canRetryVoice);
-  refs.voiceMicButton.setAttribute(
-    "aria-pressed",
-    String(voiceState.status === "connected" && !voiceState.muted),
-  );
-  refs.voiceMicButton.classList.toggle("is-live", !voiceState.muted);
-  refs.voiceMicButton.classList.toggle("is-retry", canRetryVoice);
-  refs.voiceDot.classList.toggle(
-    "is-connected",
-    voiceState.status === "connected",
-  );
-  refs.voiceDot.classList.toggle("is-live", !voiceState.muted);
-  refs.voiceDot.classList.toggle(
-    "is-unavailable",
-    voiceState.status === "unavailable" || voiceState.status === "failed",
+  refs.voiceStatus.textContent = hasRoom
+    ? formatVoiceStatus(voiceState.status)
+    : t("stateNotInRoom");
+  refs.voiceStatus.classList.toggle(
+    "is-muted",
+    !hasRoom || voiceState.status !== "connected",
   );
   refs.voiceError.textContent = voiceState.error ?? "";
   refs.voiceError.hidden = !voiceState.error;
+}
+
+function renderAdvancedState(refs: PopupRefs): void {
+  const label = refs.advancedDetails.open
+    ? t("actionExpanded")
+    : t("actionExpand");
+  refs.advancedState.classList.toggle("is-open", refs.advancedDetails.open);
+  refs.advancedState.setAttribute("aria-label", label);
+  refs.advancedState.title = label;
 }
 
 function isVoiceRetryStatus(status: VoiceConnectionStatus): boolean {
@@ -425,23 +437,163 @@ function formatVoiceStatus(status: VoiceConnectionStatus): string {
   }
 }
 
-function createVoiceIndicator(
+function formatMembersCount(count: number): string {
+  if (count === 1) {
+    return t("membersCountSingular", { count });
+  }
+  return t("membersCount", { count });
+}
+
+function createSelfIdleMemberRow(
+  displayName: string | null,
+  voiceState: VoiceRuntimeState,
+): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "member-row is-self";
+  const info = document.createElement("div");
+  info.className = "member-info";
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  avatar.textContent = getSelfAvatarText();
+  const name = document.createElement("span");
+  name.className = "member-name";
+  name.textContent = displayName
+    ? t("memberSelf", { name: displayName })
+    : t("memberSelfFallback");
+  info.append(avatar, name);
+  row.append(
+    info,
+    createMemberVoiceControl({
+      memberId: null,
+      isCurrentMember: true,
+      hasRoom: false,
+      voiceState,
+    }),
+  );
+  return row;
+}
+
+function createMemberVoiceControl(args: {
+  memberId: string | null;
+  isCurrentMember: boolean;
+  hasRoom: boolean;
+  voiceState: VoiceRuntimeState;
+}): HTMLElement {
+  const participant = args.memberId
+    ? getRenderedParticipant(
+        args.voiceState,
+        args.memberId,
+        args.isCurrentMember,
+      )
+    : null;
+  const isInteractive = args.isCurrentMember && args.hasRoom;
+  const control = document.createElement(isInteractive ? "button" : "span");
+  control.className = "member-state";
+  if (isInteractive) {
+    const canRetryVoice = isVoiceRetryStatus(args.voiceState.status);
+    const disabled = args.voiceState.status !== "connected" && !canRetryVoice;
+    (control as HTMLButtonElement).type = "button";
+    (control as HTMLButtonElement).disabled = disabled;
+    control.setAttribute("data-voice-mic-toggle", "true");
+    control.setAttribute(
+      "aria-pressed",
+      String(args.voiceState.status === "connected" && !args.voiceState.muted),
+    );
+    control.setAttribute(
+      "aria-label",
+      canRetryVoice
+        ? t("voiceActionRetry")
+        : args.voiceState.muted
+          ? t("voiceActionUnmute")
+          : t("voiceActionMute"),
+    );
+    control.title = canRetryVoice
+      ? t("voiceActionRetry")
+      : args.voiceState.muted
+        ? t("voiceActionUnmute")
+        : t("voiceActionMute");
+    control.classList.toggle("is-retry", canRetryVoice);
+    control.classList.toggle(
+      "is-live",
+      args.voiceState.status === "connected" && !args.voiceState.muted,
+    );
+  }
+  const isMutedOrUnknown =
+    args.hasRoom && (!participant?.connected || participant.muted);
+  control.classList.toggle("disabled-mic", !args.hasRoom);
+  control.classList.toggle("muted", isMutedOrUnknown);
+  control.classList.toggle(
+    "speaking",
+    args.hasRoom && Boolean(participant?.connected && participant.speaking),
+  );
+  if (args.hasRoom && !participant?.connected && !args.isCurrentMember) {
+    control.classList.toggle("disabled-mic", true);
+  }
+  control.append(createMicIcon());
+  return control;
+}
+
+function getRenderedParticipant(
   voiceState: VoiceRuntimeState,
   memberId: string,
-): HTMLSpanElement {
-  const indicator = document.createElement("span");
-  const participant = voiceState.participants[memberId];
-  indicator.className = "member-voice-indicator";
-  if (!participant?.connected) {
-    indicator.classList.toggle("is-offline", true);
-    return indicator;
+  isCurrentMember: boolean,
+): {
+  connected: boolean;
+  muted: boolean;
+  speaking: boolean;
+} | null {
+  if (isCurrentMember) {
+    return {
+      connected: voiceState.status === "connected",
+      muted: voiceState.muted,
+      speaking: voiceState.speaking,
+    };
   }
-  indicator.classList.toggle("is-muted", participant.muted);
-  indicator.classList.toggle("is-speaking", participant.speaking);
-  indicator.title = participant.speaking
-    ? t("voiceMemberSpeaking")
-    : participant.muted
-      ? t("voiceMemberMuted")
-      : t("voiceMicUnmuted");
-  return indicator;
+  return voiceState.participants[memberId] ?? null;
+}
+
+function formatMemberVoiceText(
+  voiceState: VoiceRuntimeState,
+  memberId: string,
+  isCurrentMember: boolean,
+): string {
+  const participant = getRenderedParticipant(
+    voiceState,
+    memberId,
+    isCurrentMember,
+  );
+  if (!participant?.connected) {
+    return t("voiceMemberMuted");
+  }
+  if (participant.speaking) {
+    return t("voiceMemberSpeaking");
+  }
+  return participant.muted ? t("voiceMemberMuted") : t("voiceMicUnmuted");
+}
+
+function getMemberAvatarText(name: string, isCurrentMember: boolean): string {
+  if (isCurrentMember) {
+    return getSelfAvatarText();
+  }
+  return name.trim().slice(0, 1).toUpperCase() || "?";
+}
+
+function getSelfAvatarText(): string {
+  return /^en\b/i.test(getUiLanguage()) ? "Me" : "我";
+}
+
+function createMicIcon(): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  for (const pathData of [
+    "M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z",
+    "M18 10v1a6 6 0 0 1-12 0v-1",
+    "M12 17v4",
+  ]) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", pathData);
+    svg.append(path);
+  }
+  return svg;
 }

@@ -1,4 +1,4 @@
-# Bili-SyncPlay 多节点运维 Runbook
+# SyncRoom 多节点运维 Runbook
 
 本文档面向日常运维和应急值班，覆盖多 Room Node、独立 Global Admin 与 Redis
 共享控制面的扩容、缩容、Redis 故障、管理员口令轮换和常见告警定位。
@@ -79,8 +79,8 @@ curl -fsS http://10.0.0.11:8788/readyz
 curl -fsS http://10.0.0.11:8787/metrics
 
 # systemd 日志
-sudo journalctl -u bili-syncplay-server -f
-sudo journalctl -u bili-syncplay-global-admin -f
+sudo journalctl -u syncroom-server -f
+sudo journalctl -u syncroom-global-admin -f
 ```
 
 如果部署了独立指标端口，使用 `METRICS_PORT` 对应地址抓取 `/metrics`。
@@ -104,8 +104,8 @@ sudo journalctl -u bili-syncplay-global-admin -f
 5. 启动服务：
 
    ```bash
-   sudo systemctl enable --now bili-syncplay-server
-   sudo systemctl status bili-syncplay-server
+   sudo systemctl enable --now syncroom-server
+   sudo systemctl status syncroom-server
    ```
 
 6. 在入口层加入新 upstream，但先设置较低权重或仅灰度少量流量。
@@ -146,7 +146,7 @@ sudo journalctl -u bili-syncplay-global-admin -f
 8. 停止目标节点：
 
    ```bash
-   sudo systemctl stop bili-syncplay-server
+   sudo systemctl stop syncroom-server
    ```
 
 9. 等待至少一个 `NODE_HEARTBEAT_TTL_MS` 周期，确认 Global Admin 中目标节点消失或标记为过期。
@@ -161,7 +161,7 @@ sudo journalctl -u bili-syncplay-global-admin -f
 
 ## Redis 故障处理
 
-当 provider 配置为 `redis` 时，Bili-SyncPlay 不会自动无感切换到 in-memory。
+当 provider 配置为 `redis` 时，SyncRoom 不会自动无感切换到 in-memory。
 Redis 在启动阶段不可用会导致相关进程启动失败；运行中 Redis 异常会影响房间持久化、运行时索引、跨节点广播、管理员会话、审计事件和管理命令。
 
 ### 快速判断
@@ -170,7 +170,7 @@ Redis 在启动阶段不可用会导致相关进程启动失败；运行中 Redi
 redis-cli -u "$REDIS_URL" ping
 curl -fsS http://10.0.0.11:8787/readyz
 curl -fsS http://10.0.0.11:8787/metrics | grep bili_syncplay_redis_operation_failures_total
-sudo journalctl -u bili-syncplay-server --since "15 min ago" | grep -E "redis|Redis|node_heartbeat_failed"
+sudo journalctl -u syncroom-server --since "15 min ago" | grep -E "redis|Redis|node_heartbeat_failed"
 ```
 
 同时检查 Global Admin 概览：
@@ -186,8 +186,8 @@ sudo journalctl -u bili-syncplay-server --since "15 min ago" | grep -E "redis|Re
 3. Redis 恢复后重启受影响进程：
 
    ```bash
-   sudo systemctl restart bili-syncplay-server
-   sudo systemctl restart bili-syncplay-global-admin
+   sudo systemctl restart syncroom-server
+   sudo systemctl restart syncroom-global-admin
    ```
 
 4. 验证 `/readyz`、Global Admin 概览、跨节点同步和 Redis 错误计数。
@@ -225,8 +225,8 @@ NODE_HEARTBEAT_ENABLED=false
 4. 重启服务：
 
    ```bash
-   sudo systemctl restart bili-syncplay-server
-   sudo systemctl restart bili-syncplay-global-admin
+   sudo systemctl restart syncroom-server
+   sudo systemctl restart syncroom-global-admin
    ```
 
 5. 验证 `/readyz`、登录后台、创建测试房间和播放同步。
@@ -263,8 +263,8 @@ NODE_HEARTBEAT_ENABLED=false
 5. 滚动重启：
 
    ```bash
-   sudo systemctl restart bili-syncplay-server
-   sudo systemctl restart bili-syncplay-global-admin
+   sudo systemctl restart syncroom-server
+   sudo systemctl restart syncroom-global-admin
    ```
 
 6. 打开 `/admin`，用新密码登录。
@@ -277,7 +277,7 @@ NODE_HEARTBEAT_ENABLED=false
 Global Admin 不承载 WebSocket 房间流量，可独立滚动重启。
 
 ```bash
-sudo systemctl restart bili-syncplay-global-admin
+sudo systemctl restart syncroom-global-admin
 curl -fsS http://10.0.0.11:8788/readyz
 ```
 
@@ -305,8 +305,8 @@ curl -fsS http://10.0.0.11:8788/readyz
 curl -fsS http://<room-node>:8787/metrics
 curl -fsS http://<room-node>:8787/readyz
 curl -fsS http://<global-admin>:8788/readyz
-sudo journalctl -u bili-syncplay-server --since "30 min ago"
-sudo journalctl -u bili-syncplay-global-admin --since "30 min ago"
+sudo journalctl -u syncroom-server --since "30 min ago"
+sudo journalctl -u syncroom-global-admin --since "30 min ago"
 ```
 
 ## 变更后回归清单

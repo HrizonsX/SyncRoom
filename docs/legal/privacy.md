@@ -1,8 +1,8 @@
-# Bili SyncPlay Privacy Policy
+# SyncRoom Privacy Policy
 
-Effective date: 2026-04-13
+Effective date: 2026-06-07
 
-This Privacy Policy applies to the Bili SyncPlay browser extension (the "Extension"). It explains what information the Extension processes, how that information is used, and what controls users have over related data when using the synchronized playback features.
+This Privacy Policy applies to the SyncRoom browser extension (the "Extension"). It explains what information the Extension processes, how that information is used, and what controls users have over related data when using synchronized playback, optional room voice, and connection diagnostics.
 
 ## 1. Types of Information Processed
 
@@ -10,15 +10,15 @@ The Extension only processes information required to provide its core functional
 
 ### 1.1 Personal Information
 
-The Extension may read the display name or username visible on Bilibili pages and use it as the member display name in a sync room so participants can identify who started playback, paused, switched videos, or changed playback speed.
+The Extension may read the display name or username visible on Bilibili pages and use it as the member display name in a sync room so participants can identify who started playback, paused, switched videos, or changed playback speed. For generic HTML5 video pages, the Extension does not read website account profile data for sync purposes.
 
 The Extension does not intentionally collect real names, government ID numbers, email addresses, phone numbers, or mailing addresses.
 
 ### 1.2 Web History
 
-The Extension reads the URL of the current Bilibili video page in order to:
+The Extension reads the URL of the current supported video page in order to:
 
-- determine whether the current page supports synchronized playback
+- determine whether the current page is a supported Bilibili page or generic HTML5 `<video>` page
 - identify the currently shared video
 - synchronize the currently shared video across room participants
 
@@ -38,18 +38,24 @@ This information is used only to provide synchronized playback and is not used f
 The Extension may read limited content from the current video page, such as:
 
 - video title
-- video identifiers such as `bvid` and `cid`
+- video source and page title
+- video identifiers such as `bvid` and `cid` on Bilibili pages
 - video information associated with the current page
 
 This content is used only to identify and synchronize the current video.
+
+### 1.5 Voice Data
+
+When the server enables LiveKit voice, room members may connect to room voice. The microphone is muted by default. The Extension captures microphone audio only after the user explicitly clicks the mic button and grants browser microphone permission, then sends that audio through the configured LiveKit service to members in the same voice room. The Extension does not persistently store microphone audio locally for the voice feature.
 
 ## 2. How Information Is Used
 
 The Extension uses the information above only for the following purposes:
 
-- identifying the current Bilibili video page and its associated video
+- identifying the current supported video page and its associated video
 - creating, joining, and maintaining synchronized playback rooms
 - synchronizing play, pause, playback position, and playback speed between room participants
+- transmitting room voice when the user explicitly unmutes the microphone
 - displaying room state, shared video information, and member display names in the Extension UI
 - maintaining connection state, diagnosing connection issues, and improving feature reliability
 
@@ -64,9 +70,9 @@ The Extension does not use this information for:
 
 To provide its features, the Extension may communicate with the following remote endpoints:
 
-### 3.1 Bilibili APIs
+### 3.1 Video Site APIs
 
-The Extension may access Bilibili-related APIs to read necessary information such as the currently available display name for the logged-in user.
+The Extension may access Bilibili-related APIs to read necessary information such as the currently available display name for the logged-in user. For generic HTML5 video pages, the Extension mainly reads the standard video element, page URL, and page title already present on the page.
 
 ### 3.2 Sync Server
 
@@ -77,6 +83,10 @@ The Extension connects to a sync server configured or used by the user in order 
 - current playback state
 
 If you configure a third-party sync server yourself, related data will be sent to that server, and data retention and access control will depend on how that server is deployed and operated.
+
+### 3.3 LiveKit Voice Service
+
+If the sync server enables LiveKit voice, the Extension uses a short-lived voice token issued by the server to connect to the configured LiveKit service. When the user unmutes the microphone, microphone audio is transmitted through that LiveKit service. When the user is muted, microphone audio is not published.
 
 ## 4. Local Storage
 
@@ -105,6 +115,7 @@ Shared information may include:
 - display name
 - currently shared video information
 - current playback state such as play, pause, playback position, and playback speed
+- room voice audio when the user explicitly unmutes the microphone
 
 Unless required by law or regulation, the Extension does not actively disclose this information to unrelated third parties.
 
@@ -137,11 +148,11 @@ The Extension is not specifically directed to children and does not knowingly co
 
 This Privacy Policy may be updated based on feature changes, legal requirements, or operational needs. The latest version will be published in the project repository:
 
-https://github.com/Sky1wu/Bili-SyncPlay
+https://github.com/HrizonsX/SyncRoom
 
 ## 11. Contact
 
 If you have any questions, comments, or requests regarding this Privacy Policy, you may contact the project through:
 
-- Project: https://github.com/Sky1wu/Bili-SyncPlay
-- Issues: https://github.com/Sky1wu/Bili-SyncPlay/issues
+- Project: https://github.com/HrizonsX/SyncRoom
+- Issues: https://github.com/HrizonsX/SyncRoom/issues

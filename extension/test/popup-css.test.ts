@@ -14,6 +14,12 @@ test("member mic status uses green for live mic and neutral gray for muted mic",
   assert.doesNotMatch(ruleBody(".member-state.muted"), /var\(--danger-text\)/);
 });
 
+test("popup keeps the designed light theme in system dark mode", () => {
+  assert.match(ruleBody(":root"), /color-scheme:\s*only light/);
+  assert.doesNotMatch(popupCss, /prefers-color-scheme:\s*dark/);
+  assert.doesNotMatch(popupCss, /color-scheme:\s*dark/);
+});
+
 test("room heading icon is sized and aligned with the section label", () => {
   assert.match(ruleBody(".premium-heading-left"), /inline-flex/);
   assert.match(ruleBody(".premium-heading-left"), /align-items:\s*center/);

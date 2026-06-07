@@ -2,38 +2,35 @@
 
 [简体中文](./README.md) | English
 
-SyncRoom is a browser extension (Chrome, Edge, Firefox) plus a WebSocket server for synchronized web video rooms. Users can create or join a room, share the current Bilibili video or generic HTML5 `<video>` page, and keep play, pause, seek, and playback rate in sync across participants. The current source also includes optional LiveKit room voice, an admin panel, and an IP blacklist.
+> Watch together, speak in sync.
 
-It supports the full local workflow:
+SyncRoom is a browser extension plus WebSocket server for synchronized web video rooms. Users can create or join a room, share the current Bilibili video or a generic HTML5 `<video>` page, and keep play, pause, seek, and playback rate in sync across participants. The current source also includes optional LiveKit room voice, an admin panel, and an IP blacklist.
 
-- load the unpacked extension in Chrome, Edge, or Firefox 121+
-- run the local sync server
-- create a room and share an invite string
-- keep everyone on the same shared video in sync
-- optionally enable self-hosted LiveKit voice and the server admin panel
+## ✨ Feature Overview
 
-This repository is a monorepo:
+| Area            | Current implementation                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| 🎬 Video sync   | Bilibili-specific adapter plus generic HTML5 `<video>` pages; sync play, pause, seek, rate  |
+| 🧩 Extension    | Chrome, Edge, and Firefox 121+ event-page build                                             |
+| 🏠 Room invites | Create a room and share a `roomCode:joinToken` invite string                                |
+| 🎙️ Squad voice  | Optional self-hosted LiveKit; members can listen by default, mic is muted until user action |
+| 🛡️ Admin panel  | Overview, room detail, runtime events, audit logs, config summary, and IP blacklist         |
+| 🌐 Multi-node   | Redis-backed room state, runtime index, event streams, audit streams, and admin commands    |
 
-- `extension/`: browser extension (Chrome/Edge/Firefox)
-- `server/`: WebSocket room server and admin panel
-- `packages/protocol/`: shared protocol types
+## 🧭 At a Glance
 
-Note: the extension display name is SyncRoom. Some npm workspace package names, service names, and historical store links still use `bili-syncplay` / `@bili-syncplay/*`; this README keeps those actual identifiers where they still exist in the codebase.
+| Item                           | Value                                |
+| ------------------------------ | ------------------------------------ |
+| Invite format                  | `roomCode:joinToken`                 |
+| Default local server           | `ws://localhost:8787`                |
+| Recommended production URL     | `wss://<your-domain>`                |
+| Extension display name         | SyncRoom                             |
+| Main directories               | `extension/`, `server/`, `packages/` |
+| Historical compatibility names | Some packages, env vars, metrics     |
 
-## At a Glance
+> Compatibility note: the project and extension display name are now SyncRoom. To avoid breaking existing scripts, imports, monitoring, and deployments, some npm workspace package names, environment variables, release artifact names, Prometheus metrics, and health-check fields still keep historical `bili-syncplay` / `@bili-syncplay/*` identifiers.
 
-- Invite format: `roomCode:joinToken`
-- Default local server: `ws://localhost:8787`
-- Supported browsers for development: Chrome, Edge, Firefox 121+
-- Recommended production server URL: `wss://<your-domain>`
-- Extension name built from current source: SyncRoom
-
-## Quick Start
-
-If you want to use an already published store build, install it from one of the links below. Note: these store listings currently still use the old Bili-SyncPlay name. Build from source if you need the current SyncRoom name, generic HTML5 video support, LiveKit voice, and IP blacklist features.
-
-- [Legacy Bili-SyncPlay build on Chrome Web Store](https://chromewebstore.google.com/detail/bili-syncplay/lbmckljnginagfabglpfdepofoglfdkj)
-- [Legacy Bili-SyncPlay build on Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/bili-syncplay/cpgcalajpoihfgfeidmnijcdimnjniam)
+## 🚀 Quick Start
 
 ### 1. Install and build
 
@@ -93,12 +90,12 @@ Firefox treats the extension background as a secure context, so non-localhost se
 1. Open the popup
 2. Create a room, or join one with `roomCode:joinToken`
 3. Open a supported Bilibili video page or a generic page with an HTML5 `<video>`
-4. Click `Sync current page video`
+4. Click `Sync current video`
 5. Other members will open the same video and enter sync mode
 
 If a member later browses to a different non-shared video while still in the room, that page stays local and does not affect the room unless they explicitly sync it.
 
-## Features
+## 🧱 Feature Details
 
 - Rooms and invites
   - create a room and get an invite string
@@ -125,7 +122,7 @@ If a member later browses to a different non-shared video while still in the roo
   - non-shared pages do not broadcast playback back to the room
   - manual playback on a non-shared page stays local
 
-## Supported Pages
+## 📺 Supported Pages
 
 Generic support:
 
@@ -146,7 +143,7 @@ Video variants:
 - multi-part videos via `?p=`
 - festival pages via `bvid + cid`
 
-## Project Structure
+## 📁 Project Structure
 
 ```text
 SyncRoom/
@@ -158,7 +155,7 @@ SyncRoom/
   .github/workflows/    GitHub Actions workflows
 ```
 
-## Documentation
+## 📚 Documentation
 
 - [Documentation index](./docs/README.md)
 - [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md)
@@ -166,7 +163,7 @@ SyncRoom/
 - [Multi-node global admin migration](./docs/operations/multi-node-global-admin-migration.md)
 - [Privacy policy](./docs/legal/privacy.md)
 
-## Requirements
+## ⚙️ Requirements
 
 ### Version matrix
 
@@ -187,7 +184,7 @@ SyncRoom/
 - **No multi-user accounts or authentication for end users.** Room access is controlled by `roomCode:joinToken` invite strings only. There is no user registration or login system for viewers.
 - **No mobile browser or Safari support.** The extension is Manifest V3 for Chrome/Edge (service-worker background) and Firefox 121+ (event-page background); Safari and mobile browsers are out of scope.
 
-## Local Defaults
+## 🔧 Local Defaults
 
 - Default server URL: `ws://localhost:8787`
 - Empty server URL input falls back to the build-time default
@@ -195,7 +192,7 @@ SyncRoom/
 - Local unpacked extension development requires `ALLOWED_ORIGINS=chrome-extension://<extension-id>` (Chrome/Edge) or the current `moz-extension://<uuid>` / `ALLOW_ANY_FIREFOX_EXTENSION_ORIGIN=true` (Firefox; see "Start the local server")
 - Voice chat is disabled by default and requires a self-hosted LiveKit server. See [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md).
 
-### Open the Admin Control Panel
+### 🛡️ Open the Admin Control Panel
 
 To use the management UI locally, start the server with admin auth configured and then open:
 
@@ -263,10 +260,11 @@ After login, the current UI includes:
 - runtime events
 - audit logs
 - config summary
-- existing admin actions such as close room, expire room, clear shared video, kick member, and disconnect session
+- IP blacklist management, including manual add/remove and adding member IPs from room detail
+- admin actions such as close room, expire room, clear shared video, kick member, and disconnect session
 - kicked members are temporarily blocked from immediately rejoining with their previous `memberToken`
 
-## Developer Reference
+## 🧰 Developer Reference
 
 ### Local Development
 
@@ -515,7 +513,7 @@ During build, that manifest version is generated automatically from the root `pa
 
 ### Runtime Behavior
 
-- if the user clicks `Sync current page video` before joining a room, the extension prompts to create a room first
+- if the user clicks `同步当前视频` / `Sync current video` before joining a room, the extension prompts to create a room first
 - if the room is already sharing a different video, the popup asks for confirmation before replacing it
 - the background service worker only forwards playback updates from the currently recognized shared tab
 - switching the server URL disconnects the current socket and reconnects using the new address if the extension still has an active room or pending room creation
@@ -539,7 +537,7 @@ Practical consequences:
 - if the persisted server URL becomes invalid, the extension keeps that value visible and stops auto reconnect until the URL is fixed
 - closing the browser does not restore the previous room automatically on the next launch
 
-### Server Deployment
+### 🚢 Server Deployment
 
 Recommended setup:
 
@@ -633,7 +631,7 @@ The current server implementation:
 - supports origin allowlists, connection throttling, message throttling, and structured security logs
 - optionally issues room-scoped LiveKit voice tokens when `VOICE_ENABLED=true` and LiveKit config is complete
 
-### Multi-Node Deployment and Global Admin
+### 🌐 Multi-Node Deployment and Global Admin
 
 The server now supports a full multi-node topology with shared admin sessions, shared event and audit streams, shared runtime indexes, cross-node room-state fanout, cross-node admin commands, and a dedicated global admin entrypoint.
 
@@ -831,7 +829,7 @@ Redis key families used by the multi-node control plane:
 - `bsp:room-events`: room event bus channel
 - `bsp:admin-command:*`, `bsp:admin-command-result:*`: admin command channels
 
-### Security Environment Variables
+### 🔐 Security Environment Variables
 
 The server accepts the following environment variables. Safe defaults are built in, but production should set them explicitly:
 
@@ -916,7 +914,7 @@ Quick admin hash example:
 node -e "const { createHash } = require('node:crypto'); console.log('sha256:' + createHash('sha256').update('secret-123').digest('hex'));"
 ```
 
-### Admin API
+### 🧾 Admin API
 
 The server now includes a P0 admin backend on the same HTTP port.
 
@@ -1030,12 +1028,6 @@ Expected response:
 
 ```text
 PONG
-```
-
-The current server startup log still uses the historical service name:
-
-```text
-Bili-SyncPlay server listening on http://localhost:8787
 ```
 
 Verify the local health check in another shell:
@@ -1472,6 +1464,8 @@ Output:
 release/bili-syncplay-extension-v<version>.zip
 ```
 
+> This file name is a historical release-script artifact name. The extension display name inside the package is still SyncRoom.
+
 ### Automated GitHub Release
 
 The repository already includes a GitHub Actions workflow that:
@@ -1490,6 +1484,6 @@ git tag v0.9.0
 git push origin v0.9.0
 ```
 
-## License
+## 📄 License
 
 This project is licensed under the GNU General Public License v3.0. See [LICENSE](./LICENSE).

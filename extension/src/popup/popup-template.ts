@@ -77,12 +77,23 @@ export function renderPopupTemplate(): string {
             <input class="idle-room-input" id="room-code" placeholder="${escapeHtml(t("roomCodePlaceholder"))}" aria-label="${escapeHtml(t("roomCodePlaceholder"))}">
             <button class="secondary compact-button" id="join-room" type="button">${escapeHtml(t("actionJoin"))}</button>
           </div>
+          <div class="easter-egg" id="easter-egg" hidden>
+            <span class="easter-mark" aria-hidden="true">
+              <span class="easter-dot"></span>
+              <span class="easter-dot"></span>
+              <span class="easter-dot"></span>
+            </span>
+            <span class="easter-copy">
+              <strong>${escapeHtml(t("easterEggTitle"))}</strong>
+              <span>${escapeHtml(t("easterEggBody"))}</span>
+            </span>
+          </div>
         </div>
       </section>
 
       <div class="status-banner premium-banner" id="status-message" hidden></div>
 
-      <section class="premium-panel video-panel">
+      <section class="premium-panel video-panel" id="shared-video-panel">
         <div class="premium-panel-inner">
           <div class="premium-heading">
             <span class="premium-heading-left">
@@ -100,7 +111,9 @@ export function renderPopupTemplate(): string {
             </div>
           </button>
           <div class="video-subline">
-            <div class="video-owner" id="shared-video-owner" hidden>${escapeHtml(t("ownerSharedBy", { owner: "-" }))}</div>
+            <div class="video-owner" id="shared-video-owner" hidden>
+              <span class="video-owner-text" id="shared-video-owner-text">${escapeHtml(t("ownerSharedBy", { owner: "-" }))}</span>
+            </div>
             <button class="secondary compact-button share-button" id="share-current-video" type="button">
               <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <path d="M12 5v14"></path>

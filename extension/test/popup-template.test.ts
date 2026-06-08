@@ -101,6 +101,11 @@ test("popup template maps advanced settings to the prototype structure", () => {
     assert.match(html, /class="logs-header advanced-log-head"/);
     assert.match(html, /class="log-box advanced-log-box"/);
     assert.match(html, /class="video-title-text"/);
+    assert.match(html, /id="easter-egg"/);
+    assert.match(html, /class="easter-egg"/);
+    assert.match(html, /hidden/);
+    assert.doesNotMatch(html, /id="shared-video-owner-extra"/);
+    assert.doesNotMatch(html, /class="video-owner-extra"/);
   } finally {
     setLocaleForTests(null);
   }

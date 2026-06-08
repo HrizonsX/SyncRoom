@@ -91,10 +91,13 @@ function createPopupRefs(): PopupRefs {
     roomCodeInput: createElement() as unknown as HTMLInputElement,
     copyRoomButton: createElement() as unknown as HTMLButtonElement,
     shareCurrentVideoButton: createElement() as unknown as HTMLButtonElement,
+    sharedVideoPanel: createElement() as unknown as HTMLElement,
     sharedVideoCard: createElement() as unknown as HTMLButtonElement,
     sharedVideoTitle: createElement() as unknown as HTMLElement,
     sharedVideoMeta: createElement() as unknown as HTMLElement,
     sharedVideoOwner: createElement() as unknown as HTMLElement,
+    sharedVideoOwnerText: createElement() as unknown as HTMLElement,
+    easterEgg: createElement() as unknown as HTMLElement,
     voiceStatus: createElement() as unknown as HTMLElement,
     voiceError: createElement() as unknown as HTMLElement,
     logs: createElement() as unknown as HTMLElement,
@@ -231,7 +234,7 @@ test("renderPopup updates popup metrics, owner hint, logs, and draft values", as
     );
     assert.equal(refs.sharedVideoTitle.textContent, "Shared Video");
     assert.equal(refs.sharedVideoMeta.textContent, "Bilibili · BV1xx411c7mD");
-    assert.equal(refs.sharedVideoOwner.textContent, "Shared by Bob");
+    assert.equal(refs.sharedVideoOwnerText.textContent, "Shared by Bob");
     assert.equal(refs.sharedVideoOwner.hidden, false);
     assert.equal(refs.clockOffsetStatus.textContent, "25ms");
     assert.equal(refs.rttStatus.textContent, "60ms");
@@ -422,7 +425,7 @@ test("renderPopup shows the prototype empty shared-video hint before joining a r
 
     assert.equal(refs.sharedVideoTitle.textContent, "暂无共享视频");
     assert.equal(
-      refs.sharedVideoOwner.textContent,
+      refs.sharedVideoOwnerText.textContent,
       "加入房间后显示共享视频标题、来源和分享人。",
     );
     assert.equal(refs.sharedVideoOwner.hidden, false);
@@ -485,11 +488,152 @@ test("renderPopup keeps the empty shared-video content after joining a room", as
 
     assert.equal(refs.sharedVideoTitle.textContent, "暂无共享视频");
     assert.equal(
-      refs.sharedVideoOwner.textContent,
+      refs.sharedVideoOwnerText.textContent,
       "加入房间后显示共享视频标题、来源和分享人。",
     );
     assert.equal(refs.sharedVideoOwner.hidden, false);
     assert.equal(refs.shareCurrentVideoButton.disabled, false);
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
+});
+
+test("renderPopup toggles the local easter egg panel", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("zh-CN");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: "小鹏",
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      easterEggVisible: true,
+      easterEggEffectActive: true,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.easterEgg.hidden, false);
+    assert.equal(
+      refs.sharedVideoPanel.classList.contains("is-easter-egg-active"),
+      true,
+    );
+
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: "小鹏",
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      easterEggVisible: false,
+      easterEggEffectActive: true,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.easterEgg.hidden, true);
+    assert.equal(
+      refs.sharedVideoPanel.classList.contains("is-easter-egg-active"),
+      true,
+    );
+
+    renderPopup({
+      refs,
+      state: {
+        connected: true,
+        serverUrl: "ws://localhost:8787",
+        error: null,
+        roomCode: null,
+        joinToken: null,
+        memberId: null,
+        displayName: "小彭",
+        roomState: null,
+        pendingCreateRoom: false,
+        pendingJoinRoomCode: null,
+        retryInMs: null,
+        retryAttempt: 0,
+        retryAttemptMax: 5,
+        clockOffsetMs: null,
+        rttMs: null,
+        voice: createInitialVoiceRuntimeState(),
+        logs: [],
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: null,
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      easterEggVisible: false,
+      easterEggEffectActive: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(
+      refs.sharedVideoPanel.classList.contains("is-easter-egg-active"),
+      false,
+    );
   } finally {
     setLocaleForTests(null);
     Object.assign(globalThis, { document: originalDocument });
@@ -913,7 +1057,7 @@ test("renderPopup falls back to sharedByDisplayName when the sharer is no longer
       sendPopupLog: async () => {},
     });
 
-    assert.equal(refs.sharedVideoOwner.textContent, "Shared by Bob");
+    assert.equal(refs.sharedVideoOwnerText.textContent, "Shared by Bob");
     assert.equal(refs.sharedVideoOwner.hidden, false);
   } finally {
     setLocaleForTests(null);

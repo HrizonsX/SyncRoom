@@ -60,6 +60,8 @@ export function renderPopup(args: {
   lastKnownRoomCode: string | null;
   copyRoomSuccess: boolean;
   copyLogsSuccess: boolean;
+  easterEggVisible?: boolean;
+  easterEggEffectActive?: boolean;
   sendPopupLog: (message: string) => Promise<void>;
 }): void {
   const roomCodeFocused = document.activeElement === args.refs.roomCodeInput;
@@ -144,6 +146,11 @@ export function renderPopup(args: {
   );
   args.refs.roomPanelJoined.hidden = !args.state.roomCode;
   args.refs.roomPanelIdle.hidden = Boolean(args.state.roomCode);
+  args.refs.easterEgg.hidden = !args.easterEggVisible;
+  args.refs.sharedVideoPanel.classList.toggle(
+    "is-easter-egg-active",
+    Boolean(args.easterEggEffectActive),
+  );
   applyRoomActionControlState({
     refs: args.refs,
     roomActionPending: args.roomActionPending,
@@ -168,7 +175,8 @@ export function renderPopup(args: {
     sharedVideo?.sharedByDisplayName ?? null,
   );
   const emptySharedVideoHint = !hasSharedVideo ? t("sharedVideoIdleHint") : "";
-  args.refs.sharedVideoOwner.textContent = ownerText || emptySharedVideoHint;
+  args.refs.sharedVideoOwnerText.textContent =
+    ownerText || emptySharedVideoHint;
   args.refs.sharedVideoOwner.hidden =
     (hasSharedVideo && !ownerText) ||
     (!hasSharedVideo && !emptySharedVideoHint);

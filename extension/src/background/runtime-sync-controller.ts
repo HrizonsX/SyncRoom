@@ -14,6 +14,7 @@ export function createRuntimeSyncController(args: {
   shareState: BackgroundRuntimeState["share"];
   clockState: BackgroundRuntimeState["clock"];
   diagnosticsState: BackgroundRuntimeState["diagnostics"];
+  announcementState: BackgroundRuntimeState["announcements"];
   voiceState: BackgroundRuntimeState["voice"];
   persistBackgroundState: (state: BackgroundRuntimeState) => Promise<void>;
 }): RuntimeSyncController {
@@ -60,6 +61,10 @@ export function createRuntimeSyncController(args: {
       diagnostics: {
         logs: args.diagnosticsState.logs,
         lastPopupStateLogKey: args.diagnosticsState.lastPopupStateLogKey,
+      },
+      announcements: {
+        current: args.announcementState.current,
+        refreshInFlight: args.announcementState.refreshInFlight,
       },
       voice: {
         status: args.voiceState.status,

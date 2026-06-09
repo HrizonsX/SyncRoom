@@ -5,6 +5,8 @@ export interface PopupRefs {
   message: HTMLElement;
   roomPanelJoined: HTMLElement;
   roomPanelIdle: HTMLElement;
+  announcementPanel: HTMLElement;
+  announcementTrack: HTMLElement;
   roomCodeInput: HTMLInputElement;
   copyRoomButton: HTMLButtonElement;
   shareCurrentVideoButton: HTMLButtonElement;
@@ -47,6 +49,8 @@ export function collectPopupRefs(): PopupRefs {
     message: getById("status-message"),
     roomPanelJoined: getById("room-panel-joined"),
     roomPanelIdle: getById("room-panel-idle"),
+    announcementPanel: getById("announcement-panel"),
+    announcementTrack: getById("announcement-track"),
     roomCodeInput: getById("room-code") as HTMLInputElement,
     copyRoomButton: getById("copy-room") as HTMLButtonElement,
     shareCurrentVideoButton: getById(

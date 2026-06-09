@@ -6,6 +6,9 @@ export const PLAYBACK_SYNC_INTENTS = [
 ] as const;
 
 export type PlaybackSyncIntent = (typeof PLAYBACK_SYNC_INTENTS)[number];
+export const MAX_ANNOUNCEMENT_ITEMS = 8;
+export const ANNOUNCEMENT_TEXT_MAX_LENGTH = 160;
+export const ANNOUNCEMENT_ID_MAX_LENGTH = 64;
 
 export function isPlaybackSyncIntent(
   value: unknown,
@@ -60,4 +63,15 @@ export interface RoomState {
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
   members: RoomMember[];
+}
+
+export interface AnnouncementItem {
+  id: string;
+  text: string;
+}
+
+export interface AnnouncementState {
+  version: number;
+  updatedAt: number;
+  items: AnnouncementItem[];
 }

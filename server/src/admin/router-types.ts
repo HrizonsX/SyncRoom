@@ -11,12 +11,18 @@ import type {
   IpBlockListResult,
   RoomListQuery,
 } from "./types.js";
+import type { AnnouncementState } from "@bili-syncplay/protocol";
 
 export type AdminRouterOptions = {
   getConfigSummary: () => unknown;
   getMetrics: () => Promise<string>;
   authService?: AdminAuthService;
   roomStoreReady: () => Promise<boolean>;
+  getAnnouncements: () => AnnouncementState;
+  updateAnnouncements: (
+    actor: AdminSession,
+    items: unknown,
+  ) => Promise<AnnouncementState>;
   getOverview: () => Promise<unknown>;
   listRooms: (query: RoomListQuery) => Promise<unknown>;
   getRoomDetail: (roomCode: string) => Promise<unknown | null>;

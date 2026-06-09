@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { ServerMessage } from "@bili-syncplay/protocol";
 import type { WebSocket } from "ws";
+import type { AnnouncementStore } from "../announcement-store.js";
 import type { GlobalEventStore } from "../admin/global-event-store.js";
 import { createAdminOverviewService } from "../admin/overview-service.js";
 import { createAdminRoomQueryService } from "../admin/room-query-service.js";
@@ -25,6 +26,7 @@ import type {
   LogEvent,
   PersistenceConfig,
   SecurityConfig,
+  Session,
 } from "../types.js";
 import type { RuntimeStore } from "../runtime-store.js";
 import { createAdminServices } from "./admin-services.js";
@@ -54,7 +56,9 @@ export async function createSharedAdminHttpBootstrap(args: {
   runtimeStore: RuntimeStore;
   eventStore: GlobalEventStore;
   roomService: ReturnType<typeof createRoomService>;
+  announcementStore: AnnouncementStore;
   send: (socket: WebSocket, message: ServerMessage) => void;
+  listAnnouncementPushSessions: () => Promise<Session[]>;
   publishRoomEvent: (message: RoomEventBusMessage) => Promise<void>;
   requestAdminCommand: AdminCommandBus["request"];
   logEvent: LogEvent;
@@ -114,7 +118,9 @@ export async function createSharedAdminHttpBootstrap(args: {
     runtimeStore: args.runtimeStore,
     eventStore: args.eventStore,
     roomService: args.roomService,
+    announcementStore: args.announcementStore,
     send: args.send,
+    listAnnouncementPushSessions: args.listAnnouncementPushSessions,
     publishRoomEvent: args.publishRoomEvent,
     requestAdminCommand: args.requestAdminCommand,
     logEvent: args.logEvent,

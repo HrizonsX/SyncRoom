@@ -6,6 +6,7 @@ import {
   createSharedAdminHttpBootstrap,
   resolveServerRuntimeDependencies,
 } from "./bootstrap/admin-http-bootstrap.js";
+import { createInMemoryAnnouncementStore } from "./announcement-store.js";
 import {
   createServerBootstrapContext,
   createSharedServerShutdownSteps,
@@ -71,6 +72,7 @@ export async function createGlobalAdminServer(
     logEvent,
     now,
   });
+  const announcementStore = createInMemoryAnnouncementStore({ now });
   const {
     httpServer,
     metricsHttpServer,
@@ -83,7 +85,9 @@ export async function createGlobalAdminServer(
     runtimeStore,
     eventStore,
     roomService,
+    announcementStore,
     send() {},
+    listAnnouncementPushSessions: () => Promise.resolve([]),
     publishRoomEvent: (message: RoomEventBusMessage) =>
       roomEventBus.publish(message),
     requestAdminCommand: (command, timeoutMs) =>

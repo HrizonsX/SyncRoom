@@ -11,6 +11,28 @@ export const handleActionRoutes: AdminRouteHandler = async ({
   options,
 }) => {
   if (
+    request.method === "PUT" &&
+    segments.length === 3 &&
+    segments[0] === "api" &&
+    segments[1] === "admin" &&
+    segments[2] === "announcements"
+  ) {
+    if (!helpers.requireWriteOrigin(request, response)) {
+      return true;
+    }
+    const session = await helpers.requireAdmin(request, response);
+    if (!session) {
+      return true;
+    }
+    if (!helpers.requireRole(session, "operator", response)) {
+      return true;
+    }
+    const body = await readJsonBody<{ items?: unknown }>(request);
+    sendOk(response, await options.updateAnnouncements(session, body.items));
+    return true;
+  }
+
+  if (
     request.method === "POST" &&
     segments.length === 3 &&
     segments[0] === "api" &&

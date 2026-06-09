@@ -1,5 +1,6 @@
 import type {
   ErrorMessage,
+  AnnouncementUpdateMessage,
   RoomCreatedMessage,
   RoomJoinedMessage,
   RoomMemberJoinedMessage,
@@ -11,12 +12,19 @@ import type {
   ServerVoiceStateMessage,
 } from "../types/server-message.js";
 import type {
+  AnnouncementItem,
+  AnnouncementState,
   PlaybackState,
   RoomMember,
   RoomState,
   SharedVideo,
 } from "../types/domain.js";
-import { isPlaybackSyncIntent } from "../types/domain.js";
+import {
+  ANNOUNCEMENT_ID_MAX_LENGTH,
+  ANNOUNCEMENT_TEXT_MAX_LENGTH,
+  MAX_ANNOUNCEMENT_ITEMS,
+  isPlaybackSyncIntent,
+} from "../types/domain.js";
 import {
   isActorId,
   isFiniteNumber,
@@ -51,6 +59,13 @@ const CLIENT_MESSAGE_TYPES = new Set([
 
 function isBoundedString(value: unknown, maxLength: number): value is string {
   return isString(value) && value.length <= maxLength;
+}
+
+function isNonEmptyBoundedString(
+  value: unknown,
+  maxLength: number,
+): value is string {
+  return isBoundedString(value, maxLength) && value.trim().length > 0;
 }
 
 function isLiveKitUrl(value: unknown): value is string {
@@ -234,6 +249,37 @@ function isVoiceStateMessage(value: unknown): value is ServerVoiceStateMessage {
   );
 }
 
+function isAnnouncementItem(value: unknown): value is AnnouncementItem {
+  return (
+    isRecord(value) &&
+    isNonEmptyBoundedString(value.id, ANNOUNCEMENT_ID_MAX_LENGTH) &&
+    isNonEmptyBoundedString(value.text, ANNOUNCEMENT_TEXT_MAX_LENGTH)
+  );
+}
+
+export function isAnnouncementState(
+  value: unknown,
+): value is AnnouncementState {
+  return (
+    isRecord(value) &&
+    isFiniteNumber(value.version) &&
+    isFiniteNumber(value.updatedAt) &&
+    Array.isArray(value.items) &&
+    value.items.length <= MAX_ANNOUNCEMENT_ITEMS &&
+    value.items.every((item) => isAnnouncementItem(item))
+  );
+}
+
+function isAnnouncementUpdateMessage(
+  value: unknown,
+): value is AnnouncementUpdateMessage {
+  return (
+    isRecord(value) &&
+    value.type === "announcement:update" &&
+    isAnnouncementState(value.payload)
+  );
+}
+
 export function isServerMessage(value: unknown): value is ServerMessage {
   if (!isRecord(value) || !isString(value.type)) {
     return false;
@@ -258,6 +304,8 @@ export function isServerMessage(value: unknown): value is ServerMessage {
       return isVoiceAccessGrantedMessage(value);
     case "voice:state":
       return isVoiceStateMessage(value);
+    case "announcement:update":
+      return isAnnouncementUpdateMessage(value);
     default:
       return false;
   }

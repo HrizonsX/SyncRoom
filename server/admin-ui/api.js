@@ -72,6 +72,15 @@ export function createAdminApi({
     listIpBlocks() {
       return this.request("/api/admin/ip-blocks");
     },
+    getAnnouncements() {
+      return this.request("/api/admin/announcements");
+    },
+    updateAnnouncements(items) {
+      return this.request("/api/admin/announcements", {
+        method: "PUT",
+        body: { items },
+      });
+    },
     blockIp(ip, reason) {
       return this.request("/api/admin/ip-blocks", {
         method: "POST",

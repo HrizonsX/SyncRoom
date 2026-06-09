@@ -451,6 +451,13 @@ a {
   line-height: 1.5;
 }
 
+.announcement-intro-text {
+  max-width: none;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+
 /* ── Grids ── */
 
 .grid {
@@ -584,6 +591,99 @@ a {
   line-height: 1.5;
 }
 
+.announcement-form {
+  display: grid;
+  gap: 12px;
+}
+
+.announcement-editor-list {
+  display: grid;
+  gap: 10px;
+}
+
+.announcement-editor-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.announcement-delete-button {
+  align-self: start;
+}
+
+.announcement-empty {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.announcement-row-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.announcement-editor-fields {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.announcement-editor-fields input,
+.announcement-editor-fields textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.announcement-editor-fields input {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.announcement-editor-fields textarea {
+  min-height: 64px;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.announcement-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.announcement-version {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .field.inline {
   display: flex;
   align-items: center;
@@ -631,6 +731,11 @@ a {
   gap: 12px;
   flex-wrap: wrap;
   padding-top: 8px;
+}
+
+.filter-footer .actions {
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .filter-summary {

@@ -13,6 +13,8 @@ import type { PopupRefs } from "./popup-view";
 
 let lastPendingRenderLogKey: string | null = null;
 const VIDEO_TITLE_SCROLL_THRESHOLD = 28;
+const ANNOUNCEMENT_SLIDE_HEIGHT_PX = 32;
+const ANNOUNCEMENT_ITEM_DURATION_SECONDS = 5.6;
 
 export function resetPopupRenderDebugStateForTests(): void {
   lastPendingRenderLogKey = null;
@@ -112,6 +114,7 @@ export function renderPopup(args: {
     (visibleRetryProgress ? t("connectionServerUnreachable") : null);
   renderStatusMessage(args.refs.message, visibleMessage, visibleRetryProgress);
   args.refs.message.hidden = !visibleMessage;
+  renderAnnouncements(args.refs, args.state.announcements?.items ?? []);
   renderRoomActionLabels({
     createRoomButton: args.refs.createRoomButton,
     joinRoomButton: args.refs.joinRoomButton,
@@ -216,6 +219,65 @@ export function renderPopup(args: {
   }
 
   lastPendingRenderLogKey = null;
+}
+
+function renderAnnouncements(
+  refs: PopupRefs,
+  items: NonNullable<BackgroundPopupState["announcements"]>["items"],
+): void {
+  refs.announcementPanel.hidden = items.length === 0;
+  if (items.length === 0) {
+    refs.announcementTrack.className = "announcement-track";
+    refs.announcementTrack.setAttribute("style", "");
+    refs.announcementTrack.replaceChildren();
+    return;
+  }
+
+  refs.announcementTrack.className =
+    items.length > 1 ? "announcement-track" : "announcement-track is-single";
+  refs.announcementTrack.setAttribute(
+    "style",
+    [
+      `--announcement-count: ${items.length}`,
+      `--announcement-end-offset: -${items.length * ANNOUNCEMENT_SLIDE_HEIGHT_PX}px`,
+      `--announcement-cycle-duration: ${items.length * ANNOUNCEMENT_ITEM_DURATION_SECONDS}s`,
+      `--announcement-item-duration: ${ANNOUNCEMENT_ITEM_DURATION_SECONDS}s`,
+    ].join("; "),
+  );
+
+  const renderedItems = items.map((item, index) =>
+    createAnnouncementSlide(formatAnnouncementDisplayText(item), index),
+  );
+  refs.announcementTrack.replaceChildren(...renderedItems);
+}
+
+function formatAnnouncementDisplayText(
+  item: NonNullable<BackgroundPopupState["announcements"]>["items"][number],
+): string {
+  const title = item.id.trim();
+  const text = item.text.trim();
+  if (title && text) {
+    return `${title}-${text}`;
+  }
+  return title || text;
+}
+
+function createAnnouncementSlide(text: string, index: number): HTMLElement {
+  const slide = document.createElement("span");
+  slide.className = "announcement-slide";
+  slide.setAttribute("data-announcement-index", String(index));
+  const marquee = document.createElement("span");
+  marquee.className = "announcement-marquee";
+  marquee.append(createAnnouncementItem(text));
+  slide.append(marquee);
+  return slide;
+}
+
+function createAnnouncementItem(text: string): HTMLElement {
+  const item = document.createElement("span");
+  item.className = "announcement-item";
+  item.textContent = text;
+  return item;
 }
 
 function renderSharedVideoTitle(container: HTMLElement, title: string): void {

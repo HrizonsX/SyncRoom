@@ -196,6 +196,15 @@ export function createDemoData() {
     },
   ];
 
+  const announcements = {
+    version: 1,
+    updatedAt: now - 1000 * 60 * 12,
+    items: [
+      { id: "notice-1", text: "今晚 20:00 维护 10 分钟，请提前保存房间邀请。" },
+      { id: "notice-2", text: "新版插件已支持通用 HTML5 视频同步。" },
+    ],
+  };
+
   const auditLogs = [
     {
       timestamp: now - 1000 * 60 * 5,
@@ -232,7 +241,15 @@ export function createDemoData() {
     },
   ];
 
-  return { now, rooms, roomMembers, events, auditLogs, ipBlocks };
+  return {
+    now,
+    rooms,
+    roomMembers,
+    events,
+    auditLogs,
+    ipBlocks,
+    announcements,
+  };
 }
 
 export function createMockApiRequest() {
@@ -444,6 +461,19 @@ export function createMockApiRequest() {
           created: true,
           disconnectedSessionCount: 1,
         };
+      }
+    }
+    if (pathname === "/api/admin/announcements") {
+      if (method === "GET") {
+        return demoData.announcements;
+      }
+      if (method === "PUT") {
+        demoData.announcements = {
+          version: demoData.announcements.version + 1,
+          updatedAt: Date.now(),
+          items: Array.isArray(options.body?.items) ? options.body.items : [],
+        };
+        return demoData.announcements;
       }
     }
     if (pathname.startsWith("/api/admin/ip-blocks/") && method === "DELETE") {

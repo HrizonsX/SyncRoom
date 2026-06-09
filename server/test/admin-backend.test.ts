@@ -455,6 +455,106 @@ test("admin endpoints support auth, overview, rooms, and events without breaking
   }
 });
 
+test("announcement endpoints expose public state and push admin updates over existing websocket connections", async () => {
+  const server = await startAdminServer();
+
+  try {
+    const initialPublic = await requestJson(
+      server.httpBaseUrl,
+      "/api/announcements",
+    );
+    assert.equal(initialPublic.status, 200);
+    assert.deepEqual(initialPublic.body.data, {
+      version: 0,
+      updatedAt: 0,
+      items: [],
+    });
+
+    const token = await login(server.httpBaseUrl);
+    const socket = await connectClient(server.wsUrl);
+    const collector = createMessageCollector(socket);
+    try {
+      const update = await requestJson(
+        server.httpBaseUrl,
+        "/api/admin/announcements",
+        {
+          method: "PUT",
+          token,
+          body: {
+            items: [
+              {
+                id: "notice-1",
+                text: "今晚 20:00 维护 10 分钟，请提前保存房间邀请。",
+              },
+              {
+                id: "notice-2",
+                text: "新版插件支持通用 HTML5 视频同步。",
+              },
+            ],
+          },
+        },
+      );
+      assert.equal(update.status, 200);
+      assert.equal(
+        (update.body.data as { items: Array<{ text: string }> }).items[0]?.text,
+        "今晚 20:00 维护 10 分钟，请提前保存房间邀请。",
+      );
+
+      const pushed = await collector.next("announcement:update");
+      assert.deepEqual(pushed.payload, update.body.data);
+
+      const adminRead = await requestJson(
+        server.httpBaseUrl,
+        "/api/admin/announcements",
+        { token },
+      );
+      assert.equal(adminRead.status, 200);
+      assert.deepEqual(adminRead.body.data, update.body.data);
+
+      const publicRead = await requestJson(
+        server.httpBaseUrl,
+        "/api/announcements",
+      );
+      assert.equal(publicRead.status, 200);
+      assert.deepEqual(publicRead.body.data, update.body.data);
+    } finally {
+      await closeClient(socket);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("admin announcement updates reject oversized payloads before broadcasting", async () => {
+  const server = await startAdminServer();
+
+  try {
+    const token = await login(server.httpBaseUrl);
+    const response = await requestJson(
+      server.httpBaseUrl,
+      "/api/admin/announcements",
+      {
+        method: "PUT",
+        token,
+        body: {
+          items: Array.from({ length: 9 }, (_, index) => ({
+            id: `notice-${index}`,
+            text: `公告 ${index}`,
+          })),
+        },
+      },
+    );
+
+    assert.equal(response.status, 400);
+    assert.equal(
+      (response.body.error as { code: string }).code,
+      "input_invalid",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("admin overview falls back to server package version", async () => {
   const packageJson = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),

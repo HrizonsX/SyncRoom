@@ -1,6 +1,7 @@
 import {
   isPlaybackState,
   isSharedVideo,
+  type AnnouncementState,
   type PlaybackState,
   type RoomState,
   type SharedVideo,
@@ -68,6 +69,7 @@ export type BackgroundToPopupMessage =
         retryAttemptMax: number;
         clockOffsetMs: number | null;
         rttMs: number | null;
+        announcements?: AnnouncementState;
         voice: VoiceRuntimeState;
         logs: DebugLogEntry[];
       };

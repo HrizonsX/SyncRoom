@@ -89,6 +89,35 @@ test("shared video title scrolls on hover only when marked as scrollable", () =>
   assert.match(popupCss, /@keyframes\s+videoTitleScroll/);
 });
 
+test("announcement strip uses a gray surface with vertical item cycling and per-item scrolling", () => {
+  assert.match(ruleBody(".announcement-strip"), /min-height:\s*32px/);
+  assert.match(ruleBody(".announcement-strip"), /(?:^|\n)\s*height:\s*32px/);
+  assert.match(ruleBody(".announcement-strip"), /overflow:\s*hidden/);
+  assert.match(ruleBody(".announcement-strip"), /#f3f4f6/);
+  assert.match(
+    ruleBody(".announcement-track"),
+    /animation:\s*announcementStackCycle/,
+  );
+  assert.match(ruleBody(".announcement-track"), /(?:^|\n)\s*height:\s*32px/);
+  assert.match(ruleBody(".announcement-track"), /flex-direction:\s*column/);
+  assert.match(ruleBody(".announcement-slide"), /padding:\s*0 12px 0 8px/);
+  assert.match(ruleBody(".announcement-marquee"), /overflow:\s*hidden/);
+  assert.match(ruleBody(".announcement-marquee"), /min-width:\s*0/);
+  assert.match(ruleBody(".announcement-item"), /announcementTextSweep/);
+  assert.match(ruleBody(".announcement-item"), /padding-right:\s*8px/);
+  assert.match(
+    popupCss,
+    /\.announcement-strip:hover \.announcement-track,\s*\.announcement-strip:hover \.announcement-item\s*\{[\s\S]*animation-play-state:\s*paused/,
+  );
+  assert.match(popupCss, /@keyframes\s+announcementStackCycle/);
+  assert.match(popupCss, /@keyframes\s+announcementTextSweep/);
+  assert.match(
+    popupCss,
+    /@keyframes\s+announcementStackCycle[\s\S]*translateY/,
+  );
+  assert.match(popupCss, /prefers-reduced-motion:\s*reduce/);
+});
+
 test("idle shared-video layout keeps the helper copy beside the action button", () => {
   assert.match(
     ruleBody(".video-card-button.is-empty ~ .video-subline"),

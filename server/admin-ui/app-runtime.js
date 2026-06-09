@@ -315,6 +315,8 @@ export function createAdminApp({
         return pageLoaders.renderEventsPage();
       case "/ip-blocks":
         return pageLoaders.renderIpBlocksPage();
+      case "/announcements":
+        return pageLoaders.renderAnnouncementsPage();
       case "/audit-logs":
         return pageLoaders.renderAuditLogsPage();
       case "/config":
@@ -377,6 +379,7 @@ export function createAdminApp({
             ${renderNavLink("/rooms", "房间管理")}
             ${renderNavLink("/events", "运行事件")}
             ${renderNavLink("/ip-blocks", "小黑屋")}
+            ${renderNavLink("/announcements", "公告")}
             ${renderNavLink("/audit-logs", "审计日志")}
             ${renderNavLink("/config", "配置")}
           </nav>

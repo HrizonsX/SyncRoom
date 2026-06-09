@@ -4,6 +4,7 @@ import {
 } from "@bili-syncplay/protocol";
 import type { BackgroundToContentMessage } from "../shared/messages";
 import { normalizeSharedVideoUrl } from "../shared/url";
+import { createAnnouncementController } from "./announcement-controller";
 import { resetRoomLifecycleTransientState } from "./room-state";
 import {
   toConnectionCheckUrl as buildConnectionCheckUrl,
@@ -50,6 +51,7 @@ const roomSessionState = stateStore.getState().room;
 const shareState = stateStore.getState().share;
 const clockState = stateStore.getState().clock;
 const diagnosticsState = stateStore.getState().diagnostics;
+const announcementState = stateStore.getState().announcements;
 const voiceState = stateStore.getState().voice;
 const diagnosticsController = createDiagnosticsController({
   diagnosticsState,
@@ -79,8 +81,15 @@ const runtimeSyncController = createRuntimeSyncController({
   shareState,
   clockState,
   diagnosticsState,
+  announcementState,
   voiceState,
   persistBackgroundState,
+});
+const announcementController = createAnnouncementController({
+  announcementState,
+  getServerUrl: () => connectionState.serverUrl,
+  log: (scope, message) => diagnosticsController.log(scope, message),
+  notifyAll,
 });
 outgoingMessageController = createOutgoingMessageController({
   connectionState,
@@ -165,6 +174,8 @@ serverMessageController = createServerMessageController({
   consumeRoomState: (roomState) => {
     outgoingMessageController?.consumeRoomState(roomState);
   },
+  handleAnnouncementUpdate: (announcements) =>
+    announcementController.applyAnnouncementUpdate(announcements),
   handleRoomSessionServerMessage: (message) =>
     roomSessionController.handleServerMessage(message),
   handleVoiceServerMessage: (message) =>
@@ -342,6 +353,8 @@ async function bootstrap(): Promise<void> {
       chrome.tabs.onRemoved.addListener(listener);
     },
   });
+  await announcementController.loadCachedAnnouncements();
+  void announcementController.refreshAnnouncements();
   bootstrapStatus = "ready";
 }
 

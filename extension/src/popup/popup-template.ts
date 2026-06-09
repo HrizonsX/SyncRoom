@@ -22,6 +22,10 @@ export function renderPopupTemplate(): string {
         <span class="connection-status status-pill" id="server-status">-</span>
       </header>
 
+      <section class="announcement-strip" id="announcement-panel" hidden aria-label="${escapeHtml(t("sectionAnnouncements"))}">
+        <div class="announcement-track" id="announcement-track"></div>
+      </section>
+
       <section class="premium-panel room-command" id="room-panel-joined">
         <div class="premium-panel-inner">
           <div class="premium-room-top">

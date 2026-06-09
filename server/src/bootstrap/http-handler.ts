@@ -81,6 +81,7 @@ export function createHttpRequestHandler(args: {
     try {
       const handled =
         adminUiEnabled ||
+        pathname === "/api/announcements" ||
         pathname === "/healthz" ||
         pathname === "/readyz" ||
         pathname === "/metrics"

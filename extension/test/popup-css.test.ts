@@ -35,11 +35,28 @@ test("retry loading dots render as inline ellipsis text", () => {
   assert.match(ruleBody(".status-retry-dot"), /animation:\s*retryDotPulse/);
 });
 
+test("current room member count pill uses a green status dot", () => {
+  const capacityDotRules = exactRuleBodies(".capacity-pill::before");
+  const finalCapacityDotRule = capacityDotRules.at(-1) ?? "";
+  assert.match(finalCapacityDotRule, /background:\s*var\(--green\)/);
+  assert.doesNotMatch(capacityDotRules.join("\n"), /var\(--amber\)/);
+});
+
 test("brand tagline is compact and sits under the product name", () => {
   assert.match(ruleBody(".brand-copy"), /display:\s*flex/);
   assert.match(ruleBody(".brand-copy"), /flex-direction:\s*column/);
   assert.match(ruleBody(".popup-tagline"), /font-size:\s*10px/);
   assert.match(ruleBody(".popup-tagline"), /color:\s*var\(--text-subtle\)/);
+});
+
+test("brand mark and title have lightweight hover motion", () => {
+  assert.match(ruleBody(".brand-mark:hover"), /animation:\s*brandMarkSpin/);
+  assert.match(ruleBody(".brand-title:hover"), /animation:\s*brandTitlePulse/);
+  assert.match(popupCss, /@keyframes\s+brandMarkSpin/);
+  assert.match(popupCss, /rotate\(360deg\)/);
+  assert.match(popupCss, /@keyframes\s+brandTitlePulse/);
+  assert.match(popupCss, /scale\(1\.08\)/);
+  assert.match(popupCss, /scale\(0\.98\)/);
 });
 
 test("premium popup cards and member list use the prototype surface styles", () => {
@@ -67,7 +84,7 @@ test("shared video title scrolls on hover only when marked as scrollable", () =>
   assert.match(ruleBody(".video-title-text"), /display:\s*inline-block/);
   assert.match(
     ruleBody(".video-title.is-scrollable:hover .video-title-text"),
-    /animation:\s*videoTitleScroll/,
+    /animation:\s*videoTitleScroll\s+4\.8s/,
   );
   assert.match(popupCss, /@keyframes\s+videoTitleScroll/);
 });
@@ -88,6 +105,87 @@ test("idle shared-video layout keeps the helper copy beside the action button", 
   assert.match(
     ruleBody(".video-card-button.is-empty ~ .video-subline .video-owner"),
     /-webkit-line-clamp:\s*2/,
+  );
+  assert.match(
+    ruleBody(".video-card-button.is-empty ~ .video-subline .video-owner-text"),
+    /white-space:\s*normal/,
+  );
+  assert.match(
+    ruleBody(".video-card-button.is-empty ~ .video-subline .video-owner-text"),
+    /-webkit-line-clamp:\s*2/,
+  );
+});
+
+test("idle room entry leaves a little more space before the join button", () => {
+  assert.match(ruleBody(".idle-room-input"), /margin-right:\s*4px/);
+});
+
+test("room code easter egg uses the refined popup surface style", () => {
+  assert.match(ruleBody(".easter-egg"), /display:\s*grid/);
+  assert.match(ruleBody(".easter-egg"), /border:\s*1px solid var\(--border\)/);
+  assert.match(ruleBody(".easter-egg"), /border-radius:\s*12px/);
+  assert.match(ruleBody(".easter-mark"), /var\(--dark\)/);
+  assert.match(ruleBody(".easter-dot"), /animation:\s*easterDotPulse/);
+  assert.match(popupCss, /@keyframes\s+easterDotPulse/);
+});
+
+test("room code easter egg adds a subtle marquee ring to the shared video card", () => {
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active"),
+    /position:\s*relative/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active"),
+    /box-shadow:[\s\S]*rgba\(34,\s*211,\s*238,\s*0\.2\)/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /linear-gradient/,
+  );
+  assert.doesNotMatch(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /repeating-linear-gradient/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /#22d3ee/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /#a78bfa/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /#f472b6/,
+  );
+  assert.doesNotMatch(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /#202838|#8c96a6/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /filter:[\s\S]*drop-shadow\(0 0 10px/,
+  );
+  assert.doesNotMatch(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /conic-gradient/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::before"),
+    /animation:\s*sharedVideoMarqueeRing/,
+  );
+  assert.match(
+    ruleBody(".video-panel.is-easter-egg-active::after"),
+    /inset:\s*2px/,
+  );
+  assert.match(popupCss, /@keyframes\s+sharedVideoMarqueeRing/);
+  assert.match(
+    keyframesBody("sharedVideoMarqueeRing"),
+    /background-position:\s*-200% 0/,
+  );
+  assert.doesNotMatch(
+    keyframesBody("sharedVideoMarqueeRing"),
+    /transform:\s*rotate/,
   );
 });
 
@@ -198,10 +296,26 @@ function ruleBody(selector: string): string {
 }
 
 function exactRuleBody(selector: string): string {
+  const matches = exactRuleBodies(selector);
+  assert.ok(matches[0], `Missing exact CSS rule for ${selector}`);
+  return matches[0];
+}
+
+function exactRuleBodies(selector: string): string[] {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`(?:^|\\n)${escapedSelector}\\s*\\{([^}]*)\\}`).exec(
-    popupCss,
+  return Array.from(
+    popupCss.matchAll(
+      new RegExp(`(?:^|\\n)${escapedSelector}\\s*\\{([^}]*)\\}`, "g"),
+    ),
+    (match) => match[1],
   );
-  assert.ok(match, `Missing exact CSS rule for ${selector}`);
+}
+
+function keyframesBody(name: string): string {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(
+    `@keyframes\\s+${escapedName}\\s*\\{\\s*to\\s*\\{([^}]*)\\}`,
+  ).exec(popupCss);
+  assert.ok(match, `Missing keyframes for ${name}`);
   return match[1];
 }

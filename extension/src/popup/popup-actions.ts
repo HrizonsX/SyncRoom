@@ -4,13 +4,18 @@ import { areSharedVideoUrlsEqual } from "../shared/url";
 import { parseInviteValue } from "./helpers";
 import { formatInviteDraft } from "./popup-render";
 import { sendPopupAction, sendPopupActiveVideoQuery } from "./popup-port";
-import type { PopupUiStateStore } from "./popup-store";
+import {
+  persistPopupEasterEggEffectActive,
+  type PopupUiStateStore,
+} from "./popup-store";
 import {
   syncServerUrlDraft,
   updateServerUrlDraft,
   type ServerUrlDraftState,
 } from "./server-url-draft";
 import type { PopupRefs } from "./popup-view";
+
+const EASTER_EGG_ROOM_CODE = "fupengzi";
 
 export function bindPopupActions(args: {
   refs: PopupRefs;
@@ -51,6 +56,7 @@ export function bindPopupActions(args: {
     patchUiState({
       localRoomEntryPending: true,
       localStatusMessage: null,
+      easterEggVisible: false,
       roomActionPending: true,
     });
     try {
@@ -96,6 +102,7 @@ export function bindPopupActions(args: {
         uiState.lastKnownRoomCode,
         args.getPopupState()?.joinToken ?? null,
       ),
+      easterEggVisible: false,
       roomActionPending: true,
     });
     try {
@@ -191,11 +198,15 @@ export function bindPopupActions(args: {
     args.applyRoomActionControlState(refs);
     const inviteText = refs.roomCodeInput.value.trim();
     const invite = parseInviteValue(inviteText);
-    patchUiState({
+    const nextUiState: Parameters<typeof patchUiState>[0] = {
       roomCodeDraft: invite
         ? `${invite.roomCode}:${invite.joinToken}`
         : inviteText,
-    });
+    };
+    if (args.uiStateStore.getState().easterEggVisible) {
+      nextUiState.easterEggVisible = false;
+    }
+    patchUiState(nextUiState);
     if (args.uiStateStore.getState().localStatusMessage) {
       patchUiState({ localStatusMessage: null });
     }
@@ -205,7 +216,7 @@ export function bindPopupActions(args: {
   });
 
   const saveServerUrl = async () => {
-    patchUiState({ localStatusMessage: null });
+    patchUiState({ localStatusMessage: null, easterEggVisible: false });
     const originalServerUrl = args.serverUrlDraft.value;
     const state = await sendPopupAction({
       type: "popup:set-server-url",
@@ -328,9 +339,27 @@ export function bindPopupActions(args: {
       return;
     }
 
+    if (args2.inviteText.trim().toLowerCase() === EASTER_EGG_ROOM_CODE) {
+      refs.roomCodeInput.value = "";
+      patchUiState({
+        localRoomEntryPending: false,
+        localStatusMessage: null,
+        roomActionPending: false,
+        roomCodeDraft: "",
+        easterEggVisible: true,
+        easterEggEffectActive: true,
+      });
+      void persistPopupEasterEggEffectActive(true);
+      args.applyRoomActionControlState(refs);
+      return;
+    }
+
     const invite = parseInviteValue(args2.inviteText);
     if (!invite) {
-      patchUiState({ localStatusMessage: t("errorInvalidInviteFormat") });
+      patchUiState({
+        localStatusMessage: t("errorInvalidInviteFormat"),
+        easterEggVisible: false,
+      });
       void args.sendPopupLog(args2.invalidLabel);
       return;
     }
@@ -338,6 +367,7 @@ export function bindPopupActions(args: {
       localRoomEntryPending: true,
       localStatusMessage: null,
       roomCodeDraft: `${invite.roomCode}:${invite.joinToken}`,
+      easterEggVisible: false,
     });
     void args.sendPopupLog(`${args2.reasonLabel} room=${invite.roomCode}`);
     patchUiState({ roomActionPending: true });

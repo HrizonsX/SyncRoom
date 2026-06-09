@@ -22,10 +22,13 @@ const REF_KEYS = [
   "roomCodeInput",
   "copyRoomButton",
   "shareCurrentVideoButton",
+  "sharedVideoPanel",
   "sharedVideoCard",
   "sharedVideoTitle",
   "sharedVideoMeta",
   "sharedVideoOwner",
+  "sharedVideoOwnerText",
+  "easterEgg",
   "voiceStatus",
   "voiceError",
   "logs",
@@ -359,6 +362,73 @@ test("advanced details state icon updates immediately on native toggle", () => {
     assert.equal(refs.advancedState.getAttribute("aria-label"), "展开");
     assert.equal(refs.advancedState.title, "展开");
   } finally {
+    setLocaleForTests(null);
+  }
+});
+
+test("join room easter egg clears fupengzi without sending a join request", async () => {
+  setLocaleForTests("zh-CN");
+  const previousChrome = (globalThis as unknown as { chrome?: unknown }).chrome;
+  try {
+    const refs = createRefs();
+    const uiStateStore = createPopupUiStateStore();
+    const requests: unknown[] = [];
+    const storageWrites: unknown[] = [];
+    refs.roomCodeInput.value = "fupengzi";
+
+    installChromeRuntimeStub((message) => {
+      requests.push(message);
+      return createState();
+    });
+    (
+      globalThis as unknown as {
+        chrome: {
+          runtime: unknown;
+          storage: {
+            session: {
+              set(value: unknown): Promise<void>;
+            };
+          };
+        };
+      }
+    ).chrome.storage = {
+      session: {
+        async set(value: unknown): Promise<void> {
+          storageWrites.push(value);
+        },
+      },
+    };
+
+    bindPopupActions(buildBindings({ refs, uiStateStore }));
+
+    (refs.joinRoomButton as unknown as EventTarget).dispatchEvent(
+      new Event("click"),
+    );
+    await flushMicrotasks();
+
+    assert.deepEqual(requests, []);
+    assert.equal(refs.roomCodeInput.value, "");
+    assert.equal(uiStateStore.getState().roomCodeDraft, "");
+    assert.equal(uiStateStore.getState().localStatusMessage, null);
+    assert.equal(uiStateStore.getState().easterEggVisible, true);
+    assert.equal(uiStateStore.getState().easterEggEffectActive, true);
+    assert.deepEqual(storageWrites, [
+      {
+        "bili-syncplay-popup-ui": {
+          easterEggEffectActive: true,
+        },
+      },
+    ]);
+
+    refs.roomCodeInput.value = "ROOM01:join-token";
+    (refs.roomCodeInput as unknown as EventTarget).dispatchEvent(
+      new Event("input"),
+    );
+
+    assert.equal(uiStateStore.getState().easterEggVisible, false);
+    assert.equal(uiStateStore.getState().easterEggEffectActive, true);
+  } finally {
+    (globalThis as unknown as { chrome?: unknown }).chrome = previousChrome;
     setLocaleForTests(null);
   }
 });

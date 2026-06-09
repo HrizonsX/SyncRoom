@@ -8,7 +8,10 @@ import {
   applyRoomActionControlState as applyRoomActionControlStateToRefs,
   renderPopup,
 } from "./popup-render";
-import { createPopupUiStateStore } from "./popup-store";
+import {
+  createPopupUiStateStore,
+  loadPersistedPopupUiState,
+} from "./popup-store";
 import { renderPopupTemplate } from "./popup-template";
 import { collectPopupRefs, type PopupRefs } from "./popup-view";
 import { createServerUrlDraftState } from "./server-url-draft";
@@ -51,6 +54,7 @@ async function init(): Promise<void> {
   );
 
   refs = collectPopupRefs();
+  await loadPersistedPopupUiState(popupUiStateStore);
   bindPopupActions({
     refs,
     leaveGuardMs: LEAVE_GUARD_MS,
@@ -146,6 +150,8 @@ function render(): void {
     lastKnownRoomCode: uiState.lastKnownRoomCode,
     copyRoomSuccess: uiState.copyRoomSuccess,
     copyLogsSuccess: uiState.copyLogsSuccess,
+    easterEggVisible: uiState.easterEggVisible,
+    easterEggEffectActive: uiState.easterEggEffectActive,
     sendPopupLog,
   });
 }

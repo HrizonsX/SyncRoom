@@ -8,10 +8,13 @@ export interface PopupRefs {
   roomCodeInput: HTMLInputElement;
   copyRoomButton: HTMLButtonElement;
   shareCurrentVideoButton: HTMLButtonElement;
+  sharedVideoPanel: HTMLElement;
   sharedVideoCard: HTMLButtonElement;
   sharedVideoTitle: HTMLElement;
   sharedVideoMeta: HTMLElement;
   sharedVideoOwner: HTMLElement;
+  sharedVideoOwnerText: HTMLElement;
+  easterEgg: HTMLElement;
   voiceStatus: HTMLElement;
   voiceError: HTMLElement;
   logs: HTMLElement;
@@ -49,10 +52,13 @@ export function collectPopupRefs(): PopupRefs {
     shareCurrentVideoButton: getById(
       "share-current-video",
     ) as HTMLButtonElement,
+    sharedVideoPanel: getById("shared-video-panel"),
     sharedVideoCard: getById("shared-video-card") as HTMLButtonElement,
     sharedVideoTitle: getById("shared-video-title"),
     sharedVideoMeta: getById("shared-video-meta"),
     sharedVideoOwner: getById("shared-video-owner"),
+    sharedVideoOwnerText: getById("shared-video-owner-text"),
+    easterEgg: getById("easter-egg"),
     voiceStatus: getById("voice-status"),
     voiceError: getById("voice-error"),
     logs: getById("debug-logs"),

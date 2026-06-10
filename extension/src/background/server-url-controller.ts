@@ -17,6 +17,7 @@ export function createServerUrlController(args: {
   resetReconnectState: () => void;
   stopClockSyncTimer: () => void;
   clearPendingLocalShare: (reason: string) => void;
+  refreshAnnouncements: () => Promise<void>;
   log: (scope: "background", message: string) => void;
   logInvalidServerUrl: (context: string, invalidUrl: string) => void;
 }) {
@@ -55,6 +56,7 @@ export function createServerUrlController(args: {
         "background",
         `Server URL updated to ${args.connectionState.serverUrl}`,
       );
+      await args.refreshAnnouncements();
 
       if (args.connectionState.socket) {
         args.resetReconnectState();

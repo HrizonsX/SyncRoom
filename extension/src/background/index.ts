@@ -232,6 +232,7 @@ const serverUrlController = createServerUrlController({
   stopClockSyncTimer: () => clockController.stopClockSyncTimer(),
   clearPendingLocalShare: (reason) =>
     shareController.clearPendingLocalShare(reason),
+  refreshAnnouncements: () => announcementController.refreshAnnouncements(),
   log: (scope, message) => diagnosticsController.log(scope, message),
   logInvalidServerUrl,
 });

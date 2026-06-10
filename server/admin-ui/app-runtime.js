@@ -26,6 +26,43 @@ import {
   renderNavLink as renderNavLinkTemplate,
 } from "./templates.js";
 
+export async function copyTextToClipboard({ document, navigator, value }) {
+  const text = typeof value === "string" ? value : "";
+  if (!text) {
+    return false;
+  }
+
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the textarea fallback for non-secure contexts.
+  }
+
+  const textarea = document?.createElement?.("textarea");
+  if (!textarea || !document?.body?.appendChild || !document?.execCommand) {
+    return false;
+  }
+
+  textarea.value = text;
+  textarea.setAttribute?.("readonly", "");
+  Object.assign(textarea.style, {
+    left: "-9999px",
+    opacity: "0",
+    position: "fixed",
+    top: "0",
+  });
+  document.body.appendChild(textarea);
+  textarea.select?.();
+  try {
+    return document.execCommand("copy") === true;
+  } finally {
+    textarea.remove?.();
+  }
+}
+
 export function createAdminApp({
   document = globalThis.document,
   location = globalThis.location,
@@ -234,12 +271,15 @@ export function createAdminApp({
 
     document.querySelectorAll("[data-copy]").forEach((button) => {
       button.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(button.getAttribute("data-copy"));
-          showNotice("success", "已复制到剪贴板。");
-        } catch {
-          showNotice("error", "复制失败。");
-        }
+        const copied = await copyTextToClipboard({
+          document,
+          navigator,
+          value: button.getAttribute("data-copy"),
+        });
+        showNotice(
+          copied ? "success" : "error",
+          copied ? "已复制到剪贴板。" : "复制失败。",
+        );
         rerender();
       });
     });

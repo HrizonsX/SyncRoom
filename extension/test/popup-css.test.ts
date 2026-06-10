@@ -64,7 +64,10 @@ test("premium popup cards and member list use the prototype surface styles", () 
   assert.match(ruleBody(".premium-panel"), /border-radius:\s*16px/);
   assert.match(ruleBody(".room-command"), /#edf2f7/);
   assert.match(ruleBody(".member-table"), /flex-direction:\s*column/);
-  assert.match(ruleBody(".member-row:hover .avatar"), /avatar-spin-once/);
+  assert.match(ruleBody(".avatar"), /transition:[\s\S]*transform\s+160ms/);
+  assert.match(ruleBody(".member-row:hover .avatar"), /transform:/);
+  assert.doesNotMatch(ruleBody(".member-row:hover .avatar"), /animation/);
+  assert.doesNotMatch(popupCss, /@keyframes\s+avatar-spin-once/);
 });
 
 test("popup window scrollbar is narrow and visually subdued", () => {

@@ -14,7 +14,9 @@ import type { PopupRefs } from "./popup-view";
 let lastPendingRenderLogKey: string | null = null;
 const VIDEO_TITLE_SCROLL_THRESHOLD = 28;
 const ANNOUNCEMENT_SLIDE_HEIGHT_PX = 32;
-const ANNOUNCEMENT_ITEM_DURATION_SECONDS = 5.6;
+const ANNOUNCEMENT_MIN_ITEM_DURATION_SECONDS = 5.6;
+const ANNOUNCEMENT_MAX_ITEM_DURATION_SECONDS = 14;
+const ANNOUNCEMENT_SECONDS_PER_CHARACTER = 0.16;
 
 export function resetPopupRenderDebugStateForTests(): void {
   lastPendingRenderLogKey = null;
@@ -235,20 +237,33 @@ function renderAnnouncements(
 
   refs.announcementTrack.className =
     items.length > 1 ? "announcement-track" : "announcement-track is-single";
+  const announcementTexts = items.map(formatAnnouncementDisplayText);
+  const itemDurationSeconds =
+    getAnnouncementItemDurationSeconds(announcementTexts);
   refs.announcementTrack.setAttribute(
     "style",
     [
       `--announcement-count: ${items.length}`,
       `--announcement-end-offset: -${items.length * ANNOUNCEMENT_SLIDE_HEIGHT_PX}px`,
-      `--announcement-cycle-duration: ${items.length * ANNOUNCEMENT_ITEM_DURATION_SECONDS}s`,
-      `--announcement-item-duration: ${ANNOUNCEMENT_ITEM_DURATION_SECONDS}s`,
+      `--announcement-cycle-duration: ${items.length * itemDurationSeconds}s`,
+      `--announcement-item-duration: ${itemDurationSeconds}s`,
     ].join("; "),
   );
 
-  const renderedItems = items.map((item, index) =>
-    createAnnouncementSlide(formatAnnouncementDisplayText(item), index),
+  const renderedItems = announcementTexts.map((text, index) =>
+    createAnnouncementSlide(text, index),
   );
   refs.announcementTrack.replaceChildren(...renderedItems);
+}
+
+function getAnnouncementItemDurationSeconds(texts: string[]): number {
+  const longestLength = Math.max(0, ...texts.map((text) => text.length));
+  const duration =
+    Math.ceil(longestLength * ANNOUNCEMENT_SECONDS_PER_CHARACTER * 10) / 10;
+  return Math.min(
+    ANNOUNCEMENT_MAX_ITEM_DURATION_SECONDS,
+    Math.max(ANNOUNCEMENT_MIN_ITEM_DURATION_SECONDS, duration),
+  );
 }
 
 function formatAnnouncementDisplayText(

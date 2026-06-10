@@ -241,6 +241,45 @@ test("renderPopup renders compact announcements and hides the strip when empty",
       refs,
       state: {
         ...baseState,
+        announcements: {
+          version: 2,
+          updatedAt: 1_710_000_005_000,
+          items: [
+            { id: "Short", text: "Brief notice." },
+            {
+              id: "Long",
+              text: "This announcement is intentionally long so the marquee has enough time to finish before the next announcement appears.",
+            },
+          ],
+        },
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    const longAnnouncementStyle = refs.announcementTrack.getAttribute("style");
+    assert.match(
+      longAnnouncementStyle ?? "",
+      /--announcement-item-duration: 14s/,
+    );
+    assert.match(
+      longAnnouncementStyle ?? "",
+      /--announcement-cycle-duration: 28s/,
+    );
+
+    renderPopup({
+      refs,
+      state: {
+        ...baseState,
         announcements: { version: 2, updatedAt: 1_710_000_010_000, items: [] },
       },
       serverUrlDraft: { value: "", dirty: false },

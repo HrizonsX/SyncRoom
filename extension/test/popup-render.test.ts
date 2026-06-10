@@ -49,6 +49,10 @@ class FakeElement {
     return `${this.ownText}${this.children.map((child) => child.textContent).join("")}`;
   }
 
+  get firstElementChild(): FakeElement | null {
+    return this.children[0] ?? null;
+  }
+
   append(...nodes: FakeElement[]): void {
     this.children.push(...nodes);
   }
@@ -88,6 +92,8 @@ function createPopupRefs(): PopupRefs {
     message: createElement() as unknown as HTMLElement,
     roomPanelJoined: createElement() as unknown as HTMLElement,
     roomPanelIdle: createElement() as unknown as HTMLElement,
+    announcementPanel: createElement() as unknown as HTMLElement,
+    announcementTrack: createElement() as unknown as HTMLElement,
     roomCodeInput: createElement() as unknown as HTMLInputElement,
     copyRoomButton: createElement() as unknown as HTMLButtonElement,
     shareCurrentVideoButton: createElement() as unknown as HTMLButtonElement,
@@ -140,6 +146,122 @@ test("applyRoomActionControlState disables room actions during room transitions"
   assert.equal(refs.joinRoomButton.disabled, true);
   assert.equal(refs.leaveRoomButton.disabled, true);
   assert.equal(refs.roomCodeInput.disabled, true);
+});
+
+test("renderPopup renders compact announcements and hides the strip when empty", async () => {
+  resetPopupRenderDebugStateForTests();
+  setLocaleForTests("en-US");
+  const originalDocument = globalThis.document;
+  const refs = createPopupRefs();
+
+  Object.assign(globalThis, {
+    document: fakeDocument,
+  });
+
+  try {
+    const baseState = {
+      connected: true,
+      serverUrl: "ws://localhost:8787",
+      error: null,
+      roomCode: "ROOM01",
+      joinToken: "join-token-1",
+      memberId: "member-1",
+      displayName: "Alice",
+      roomState: {
+        roomCode: "ROOM01",
+        sharedVideo: null,
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+      },
+      pendingCreateRoom: false,
+      pendingJoinRoomCode: null,
+      retryInMs: null,
+      retryAttempt: 0,
+      retryAttemptMax: 5,
+      clockOffsetMs: null,
+      rttMs: null,
+      voice: createInitialVoiceRuntimeState(),
+      logs: [],
+    };
+
+    renderPopup({
+      refs,
+      state: {
+        ...baseState,
+        announcements: {
+          version: 1,
+          updatedAt: 1_710_000_000_000,
+          items: [
+            { id: "Maintenance", text: "Starts at 20:00." },
+            { id: "Feature", text: "HTML5 video sync is available." },
+          ],
+        },
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.announcementPanel.hidden, false);
+    assert.equal(
+      refs.announcementTrack.textContent.includes(
+        "Maintenance-Starts at 20:00.",
+      ),
+      true,
+    );
+    assert.equal(
+      refs.announcementTrack.textContent.includes(
+        "Feature-HTML5 video sync is available.",
+      ),
+      true,
+    );
+    assert.equal(refs.announcementTrack.children.length, 2);
+    assert.equal(
+      refs.announcementTrack.children[0]?.className,
+      "announcement-slide",
+    );
+    assert.equal(
+      refs.announcementTrack.children[0]?.firstElementChild?.className,
+      "announcement-marquee",
+    );
+    assert.equal(
+      refs.announcementTrack.children[1]?.className,
+      "announcement-slide",
+    );
+
+    renderPopup({
+      refs,
+      state: {
+        ...baseState,
+        announcements: { version: 2, updatedAt: 1_710_000_010_000, items: [] },
+      },
+      serverUrlDraft: { value: "", dirty: false },
+      roomCodeDraft: "",
+      setRoomCodeDraft: () => {},
+      localStatusMessage: null,
+      roomActionPending: false,
+      lastKnownPendingCreateRoom: false,
+      lastKnownPendingJoinRoomCode: null,
+      lastKnownRoomCode: "ROOM01",
+      copyRoomSuccess: false,
+      copyLogsSuccess: false,
+      sendPopupLog: async () => {},
+    });
+
+    assert.equal(refs.announcementPanel.hidden, true);
+    assert.equal(refs.announcementTrack.textContent, "");
+  } finally {
+    setLocaleForTests(null);
+    Object.assign(globalThis, { document: originalDocument });
+  }
 });
 
 test("renderPopup updates popup metrics, owner hint, logs, and draft values", async () => {

@@ -620,3 +620,75 @@ test("rejects voice:state server messages with invalid status", () => {
     false,
   );
 });
+
+test("accepts a valid announcement:update message", () => {
+  assert.equal(
+    isServerMessage({
+      type: "announcement:update",
+      payload: {
+        version: 2,
+        updatedAt: 1_725_000_000_000,
+        items: [
+          {
+            id: "notice-1",
+            text: "今晚 20:00 维护 10 分钟，请提前保存房间邀请。",
+          },
+          {
+            id: "notice-2",
+            text: "新版插件支持通用 HTML5 视频同步。",
+          },
+        ],
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects announcement:update with invalid item fields or oversized lists", () => {
+  assert.equal(
+    isServerMessage({
+      type: "announcement:update",
+      payload: {
+        version: 1,
+        updatedAt: 1_725_000_000_000,
+        items: [
+          {
+            id: "",
+            text: "missing id",
+          },
+        ],
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isServerMessage({
+      type: "announcement:update",
+      payload: {
+        version: 1,
+        updatedAt: 1_725_000_000_000,
+        items: [
+          {
+            id: "notice-1",
+            text: "x".repeat(161),
+          },
+        ],
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isServerMessage({
+      type: "announcement:update",
+      payload: {
+        version: 1,
+        updatedAt: 1_725_000_000_000,
+        items: Array.from({ length: 9 }, (_, index) => ({
+          id: `notice-${index}`,
+          text: `公告 ${index}`,
+        })),
+      },
+    }),
+    false,
+  );
+});

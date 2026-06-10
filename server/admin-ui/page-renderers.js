@@ -27,6 +27,9 @@ import {
   textField,
 } from "./render-utils.js";
 
+const MAX_ANNOUNCEMENT_ITEMS = 8;
+const ANNOUNCEMENT_TEXT_MAX_LENGTH = 160;
+
 export function roomsQueryFromLocation(search) {
   const params = new URLSearchParams(search);
   return {
@@ -38,6 +41,25 @@ export function roomsQueryFromLocation(search) {
     page: Number(params.get("page") || "1"),
     pageSize: Number(params.get("pageSize") || "20"),
   };
+}
+
+function renderAnnouncementRows(data, canManage) {
+  const disabled = canManage ? "" : "disabled";
+
+  return data.items
+    .map(
+      (item, index) => `
+        <div class="announcement-editor-row" data-announcement-item="${index}">
+          <div class="announcement-row-index" data-announcement-row-index>${index + 1}</div>
+          <div class="announcement-editor-fields">
+            <input name="announcement-id-${index}" value="${escapeHtml(item.id || "")}" placeholder="notice-${index + 1}" ${disabled} />
+            <textarea name="announcement-text-${index}" maxlength="${ANNOUNCEMENT_TEXT_MAX_LENGTH}" placeholder="填写要展示给插件端用户的公告内容" ${disabled}>${escapeHtml(item.text || "")}</textarea>
+          </div>
+          <button class="button ghost announcement-delete-button" type="button" data-delete-announcement ${disabled}>删除</button>
+        </div>
+      `,
+    )
+    .join("");
 }
 
 export function listQueryFromLocation(search, defaults = {}) {
@@ -751,6 +773,150 @@ export function createPageLoaders(options) {
                 rerender();
               });
             });
+        },
+      };
+    },
+
+    async renderAnnouncementsPage() {
+      const data = await api.getAnnouncements();
+      const canEdit = canManage();
+      return {
+        instanceId: state.lastOverviewData?.instanceId,
+        html: `
+          <div class="section">
+            <section class="panel announcement-admin-panel">
+              <div class="section-header">
+                <h3>插件公告</h3>
+                <div class="actions">
+                  <button class="button" type="button" data-add-announcement ${canEdit && data.items.length < MAX_ANNOUNCEMENT_ITEMS ? "" : "disabled"}>新增</button>
+                  <button class="button ghost" type="button" data-refresh-announcements>刷新</button>
+                </div>
+              </div>
+              <div class="panel-intro">
+                <div class="panel-intro-text announcement-intro-text">最多 ${MAX_ANNOUNCEMENT_ITEMS} 条，每条最多 ${ANNOUNCEMENT_TEXT_MAX_LENGTH} 字。保存后会通过已有 WebSocket 连接推送给在线插件；插件也会把结果缓存到浏览器 storage。</div>
+              </div>
+              <form id="announcements-form" class="announcement-form">
+                <div class="announcement-editor-list" data-announcement-list>
+                  ${renderAnnouncementRows(data, canEdit)}
+                </div>
+                <div class="announcement-empty" data-announcement-empty ${data.items.length > 0 ? "hidden" : ""}>暂无公告，点击新增创建一条公告。</div>
+                <div class="announcement-form-footer">
+                  <div class="announcement-version">
+                    <span>版本 ${escapeHtml(data.version)}</span>
+                    <span>${data.updatedAt ? `更新于 ${formatDateTime(data.updatedAt)}` : "尚未更新"}</span>
+                  </div>
+                  <div class="actions">
+                    <button class="button primary" type="submit" data-action="save-announcements" ${canEdit ? "" : "disabled"}>保存公告</button>
+                  </div>
+                </div>
+              </form>
+            </section>
+          </div>
+        `,
+        bind() {
+          document
+            .querySelector("[data-refresh-announcements]")
+            ?.addEventListener("click", () => rerender());
+          const form = document.querySelector("#announcements-form");
+          const list = document.querySelector("[data-announcement-list]");
+          const addButton = document.querySelector("[data-add-announcement]");
+          const emptyState = document.querySelector(
+            "[data-announcement-empty]",
+          );
+          const getAnnouncementRows = () =>
+            Array.from(
+              list?.querySelectorAll("[data-announcement-item]") || [],
+            );
+          const syncAnnouncementEditor = () => {
+            const rowElements = getAnnouncementRows();
+            rowElements.forEach((row, index) => {
+              row.setAttribute("data-announcement-item", String(index));
+              const indexNode = row.querySelector(
+                "[data-announcement-row-index]",
+              );
+              if (indexNode) {
+                indexNode.textContent = String(index + 1);
+              }
+              const idInput = row.querySelector(
+                'input[name^="announcement-id-"]',
+              );
+              if (idInput) {
+                idInput.name = `announcement-id-${index}`;
+                idInput.placeholder = `notice-${index + 1}`;
+              }
+              const textInput = row.querySelector(
+                'textarea[name^="announcement-text-"]',
+              );
+              if (textInput) {
+                textInput.name = `announcement-text-${index}`;
+              }
+            });
+            if (emptyState) {
+              emptyState.hidden = rowElements.length > 0;
+            }
+            if (addButton) {
+              addButton.disabled =
+                !canEdit || rowElements.length >= MAX_ANNOUNCEMENT_ITEMS;
+            }
+          };
+          addButton?.addEventListener("click", () => {
+            if (
+              !list ||
+              getAnnouncementRows().length >= MAX_ANNOUNCEMENT_ITEMS
+            ) {
+              return;
+            }
+            list.insertAdjacentHTML(
+              "beforeend",
+              renderAnnouncementRows(
+                { items: [{ id: "", text: "" }] },
+                canEdit,
+              ),
+            );
+            syncAnnouncementEditor();
+          });
+          list?.addEventListener("click", (event) => {
+            const target = event.target;
+            const button = target?.closest?.("[data-delete-announcement]");
+            if (!button || !list.contains(button)) {
+              return;
+            }
+            button.closest("[data-announcement-item]")?.remove();
+            syncAnnouncementEditor();
+          });
+          syncAnnouncementEditor();
+          form?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const items = [];
+            for (const [index, row] of getAnnouncementRows().entries()) {
+              const text =
+                row
+                  .querySelector('textarea[name^="announcement-text-"]')
+                  ?.value.trim() || "";
+              if (!text) {
+                continue;
+              }
+              const id =
+                row
+                  .querySelector('input[name^="announcement-id-"]')
+                  ?.value.trim() || `notice-${index + 1}`;
+              items.push({ id, text });
+            }
+
+            try {
+              await api.updateAnnouncements(items);
+              state.notice = {
+                type: "success",
+                message: "公告已保存，并已推送给在线插件。",
+              };
+            } catch (error) {
+              state.notice = {
+                type: "error",
+                message: error.message || "公告保存失败。",
+              };
+            }
+            rerender();
+          });
         },
       };
     },

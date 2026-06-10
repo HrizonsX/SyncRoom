@@ -1,4 +1,5 @@
 import type {
+  AnnouncementState,
   PlaybackState,
   RoomState,
   SharedVideo,
@@ -7,6 +8,7 @@ import type {
   DebugLogEntry,
   SharedVideoToastPayload,
 } from "../shared/messages";
+import { createEmptyAnnouncementState } from "../shared/storage";
 import {
   createInitialVoiceRuntimeState,
   type VoiceRuntimeState,
@@ -81,12 +83,18 @@ export interface DiagnosticsState {
   lastPopupStateLogKey: string | null;
 }
 
+export interface AnnouncementRuntimeState {
+  current: AnnouncementState;
+  refreshInFlight: Promise<void> | null;
+}
+
 export interface BackgroundRuntimeState {
   connection: ConnectionState;
   room: RoomSessionState;
   share: ShareState;
   clock: ClockState;
   diagnostics: DiagnosticsState;
+  announcements: AnnouncementRuntimeState;
   voice: VoiceRuntimeState;
 }
 
@@ -133,6 +141,10 @@ export function createBackgroundRuntimeState(): BackgroundRuntimeState {
     diagnostics: {
       logs: [],
       lastPopupStateLogKey: null,
+    },
+    announcements: {
+      current: createEmptyAnnouncementState(),
+      refreshInFlight: null,
     },
     voice: createInitialVoiceRuntimeState(),
   };

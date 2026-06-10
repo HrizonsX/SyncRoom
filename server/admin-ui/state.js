@@ -35,6 +35,10 @@ export const routeMeta = {
     title: "小黑屋",
     description: "维护禁止连接的 IP 黑名单。",
   },
+  "/announcements": {
+    title: "公告维护",
+    description: "维护插件端展示的循环公告，保存后会推送给在线插件。",
+  },
   "/audit-logs": {
     title: "审计日志",
     description: "查看管理员操作留痕和请求参数。",

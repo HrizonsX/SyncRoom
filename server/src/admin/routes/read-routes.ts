@@ -12,6 +12,20 @@ export const handleReadRoutes: AdminRouteHandler = async ({
   helpers,
   options,
 }) => {
+  if (request.method === "GET" && pathname === "/api/announcements") {
+    sendOk(response, options.getAnnouncements());
+    return true;
+  }
+
+  if (request.method === "GET" && pathname === "/api/admin/announcements") {
+    const session = await helpers.requireAdmin(request, response);
+    if (!session) {
+      return true;
+    }
+    sendOk(response, options.getAnnouncements());
+    return true;
+  }
+
   if (request.method === "GET" && pathname === "/api/admin/overview") {
     const session = await helpers.requireAdmin(request, response);
     if (!session) {

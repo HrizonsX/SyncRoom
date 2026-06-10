@@ -1,4 +1,8 @@
-import type { RoomState, ServerMessage } from "@bili-syncplay/protocol";
+import type {
+  AnnouncementState,
+  RoomState,
+  ServerMessage,
+} from "@bili-syncplay/protocol";
 import type { SyncRequestController } from "./sync-request-controller";
 
 export interface ServerMessageController {
@@ -9,6 +13,9 @@ export function createServerMessageController(args: {
   log: (message: string) => void;
   shouldLogIncomingMessage: (messageType: ServerMessage["type"]) => boolean;
   consumeRoomState: (roomState: RoomState) => void;
+  handleAnnouncementUpdate?: (
+    announcements: AnnouncementState,
+  ) => Promise<void> | void;
   handleRoomSessionServerMessage: (message: ServerMessage) => Promise<void>;
   handleVoiceServerMessage?: (message: ServerMessage) => Promise<boolean>;
   syncVoiceLifecycle?: (options?: { forceRefresh?: boolean }) => Promise<void>;
@@ -35,6 +42,12 @@ export function createServerMessageController(args: {
 
     if (message.type === "error" && message.payload.code === "rate_limited") {
       args.syncRequestController?.markRateLimited(message.payload.retryAfterMs);
+    }
+
+    if (message.type === "announcement:update") {
+      await args.handleAnnouncementUpdate?.(message.payload);
+      args.notifyAll();
+      return;
     }
 
     const handledByVoice =

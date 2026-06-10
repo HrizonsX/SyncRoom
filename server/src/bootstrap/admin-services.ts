@@ -1,7 +1,14 @@
 import type { IncomingMessage } from "node:http";
-import type { ServerMessage } from "@bili-syncplay/protocol";
+import type { AnnouncementState, ServerMessage } from "@bili-syncplay/protocol";
 import type { WebSocket } from "ws";
-import { createAdminActionService } from "../admin/action-service.js";
+import {
+  AdminActionError,
+  createAdminActionService,
+} from "../admin/action-service.js";
+import {
+  AnnouncementValidationError,
+  type AnnouncementStore,
+} from "../announcement-store.js";
 import type { AdminCommandBus } from "../admin-command-bus.js";
 import { createAuditLogService } from "../admin/audit-log.js";
 import { createInMemoryAdminSessionStore } from "../admin/auth-store.js";
@@ -32,7 +39,9 @@ import type {
   LogEvent,
   PersistenceConfig,
   SecurityConfig,
+  Session,
 } from "../types.js";
+import { hasAttachedSocket } from "../types.js";
 
 export function createAdminServices(args: {
   securityConfig: SecurityConfig;
@@ -41,7 +50,9 @@ export function createAdminServices(args: {
   runtimeStore: RuntimeStore;
   eventStore: GlobalEventStore;
   roomService: ReturnType<typeof createRoomService>;
+  announcementStore: AnnouncementStore;
   send: (socket: WebSocket, message: ServerMessage) => void;
+  listAnnouncementPushSessions: () => Promise<Session[]>;
   publishRoomEvent: (message: RoomEventBusMessage) => Promise<void>;
   requestAdminCommand: AdminCommandBus["request"];
   logEvent: LogEvent;
@@ -149,6 +160,55 @@ export function createAdminServices(args: {
       });
     }
 
+    async function broadcastAnnouncementUpdate(
+      state: AnnouncementState,
+    ): Promise<{ pushedSessionCount: number; failedSessionCount: number }> {
+      const sessions = await args.listAnnouncementPushSessions();
+      let pushedSessionCount = 0;
+      let failedSessionCount = 0;
+      for (const session of sessions) {
+        if (!hasAttachedSocket(session)) {
+          continue;
+        }
+        try {
+          args.send(session.socket, {
+            type: "announcement:update",
+            payload: state,
+          });
+          pushedSessionCount += 1;
+        } catch {
+          failedSessionCount += 1;
+        }
+      }
+      return { pushedSessionCount, failedSessionCount };
+    }
+
+    async function updateAnnouncements(
+      actor: AdminSession,
+      items: unknown,
+    ): Promise<AnnouncementState> {
+      let state: AnnouncementState;
+      try {
+        state = args.announcementStore.replaceItems(items);
+      } catch (error) {
+        if (error instanceof AnnouncementValidationError) {
+          throw new AdminActionError(400, "input_invalid", error.message);
+        }
+        throw error;
+      }
+
+      const { pushedSessionCount, failedSessionCount } =
+        await broadcastAnnouncementUpdate(state);
+      args.logEvent("admin_announcements_updated", {
+        result: "ok",
+        actor: actor.username,
+        itemCount: state.items.length,
+        pushedSessionCount,
+        failedSessionCount,
+      });
+      return state;
+    }
+
     const actionService = createAdminActionService({
       instanceId: args.persistenceConfig.instanceId,
       roomStore: args.roomStore,
@@ -179,6 +239,8 @@ export function createAdminServices(args: {
       getMetrics: () => metricsService.render(),
       authService,
       roomStoreReady: () => args.roomStore.isReady(),
+      getAnnouncements: () => args.announcementStore.getState(),
+      updateAnnouncements,
       getOverview: () => overviewService.getOverview(),
       listRooms: (query: import("../admin/types.js").RoomListQuery) =>
         roomQueryService.listRooms(query),

@@ -1,4 +1,8 @@
-import type { RoomState } from "@bili-syncplay/protocol";
+import {
+  isAnnouncementState,
+  type AnnouncementState,
+  type RoomState,
+} from "@bili-syncplay/protocol";
 
 export interface PersistedState {
   roomCode: string | null;
@@ -38,6 +42,7 @@ export interface PersistedProfileState {
 
 const SESSION_KEY = "bili-syncplay-session";
 const PROFILE_KEY = "bili-syncplay-profile";
+const ANNOUNCEMENTS_KEY = "bili-syncplay-announcements";
 
 export async function loadState(): Promise<PersistedState> {
   const [session, profile] = await Promise.all([
@@ -106,4 +111,27 @@ export async function saveProfileState(
       serverUrl: value.serverUrl,
     },
   });
+}
+
+export async function loadAnnouncementState(): Promise<AnnouncementState> {
+  const result =
+    await chrome.storage.local.get<Record<string, unknown>>(ANNOUNCEMENTS_KEY);
+  const stored = result[ANNOUNCEMENTS_KEY];
+  return isAnnouncementState(stored) ? stored : createEmptyAnnouncementState();
+}
+
+export async function saveAnnouncementState(
+  value: AnnouncementState,
+): Promise<void> {
+  await chrome.storage.local.set({
+    [ANNOUNCEMENTS_KEY]: value,
+  });
+}
+
+export function createEmptyAnnouncementState(): AnnouncementState {
+  return {
+    version: 0,
+    updatedAt: 0,
+    items: [],
+  };
 }

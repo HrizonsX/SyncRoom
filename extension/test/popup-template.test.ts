@@ -43,6 +43,24 @@ test("popup template renders a short product tagline under the SyncRoom name", (
   }
 });
 
+test("popup template places compact announcements above the room section", () => {
+  setLocaleForTests("en-US");
+  try {
+    const html = renderPopupTemplate();
+    const announcementIndex = html.indexOf('id="announcement-panel"');
+
+    assert.ok(announcementIndex > -1, "missing announcement panel");
+    assert.match(html, /class="announcement-strip"/);
+    assert.match(html, /id="announcement-track"/);
+    assert.ok(
+      announcementIndex < html.indexOf('id="room-panel-joined"'),
+      "announcements should render above the current room area",
+    );
+  } finally {
+    setLocaleForTests(null);
+  }
+});
+
 test("popup template integrates voice controls into the online members panel", () => {
   setLocaleForTests("zh-CN");
   try {

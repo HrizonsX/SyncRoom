@@ -24,6 +24,7 @@ export function createPopupStateSnapshot(args: {
       retryAttemptMax: args.retryAttemptMax,
       clockOffsetMs: args.state.clock.clockOffsetMs,
       rttMs: args.state.clock.rttMs,
+      announcements: args.state.announcements.current,
       voice: args.state.voice,
       logs: args.state.diagnostics.logs,
     },

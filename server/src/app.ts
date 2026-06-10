@@ -35,6 +35,7 @@ import {
   sendError,
 } from "./ws-session-handler.js";
 import type { AdminSessionStore } from "./admin-session-store.js";
+import { createInMemoryAnnouncementStore } from "./announcement-store.js";
 import type {
   AdminConfig,
   AdminUiConfig,
@@ -185,6 +186,7 @@ export async function createSyncServer(
     signToken: dependencies.voiceTokenSigner ?? createLiveKitTokenSigner(),
     now,
   });
+  const announcementStore = createInMemoryAnnouncementStore({ now });
 
   async function publishRoomEvent(message: RoomEventBusMessage): Promise<void> {
     try {
@@ -299,7 +301,10 @@ export async function createSyncServer(
     runtimeStore,
     eventStore,
     roomService,
+    announcementStore,
     send,
+    listAnnouncementPushSessions: () =>
+      Promise.resolve(localRuntimeStore.listClusterSessions()),
     publishRoomEvent,
     requestAdminCommand: (command, timeoutMs) =>
       adminCommandBus.request(command, timeoutMs),

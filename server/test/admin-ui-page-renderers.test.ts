@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   bindRoomActionButtons,
@@ -6,6 +7,11 @@ import {
   createRoomActionConfig,
   memberActionButtons,
 } from "../admin-ui/page-renderers.js";
+
+const adminStyles = readFileSync(
+  new URL("../admin-ui/styles.css", import.meta.url),
+  "utf8",
+);
 
 function createButton(attributes: Record<string, string> = {}) {
   const listeners = new Map<string, (event?: unknown) => unknown>();
@@ -42,6 +48,32 @@ function createDocumentStub({
     },
   };
 }
+
+function countOccurrences(value: string, pattern: string): number {
+  return value.split(pattern).length - 1;
+}
+
+function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`${escaped}\\s*\\{([\\s\\S]*?)\\}`).exec(
+    adminStyles,
+  );
+  assert.ok(match, `Missing CSS rule for ${selector}`);
+  return match[1];
+}
+
+test("filter footer button groups align to the right edge", () => {
+  assert.match(ruleBody(".filter-footer .actions"), /margin-left:\s*auto/);
+  assert.match(
+    ruleBody(".filter-footer .actions"),
+    /justify-content:\s*flex-end/,
+  );
+});
+
+test("announcement intro copy stays on a single line without an English kicker", () => {
+  assert.match(ruleBody(".announcement-intro-text"), /white-space:\s*nowrap/);
+  assert.match(ruleBody(".announcement-intro-text"), /max-width:\s*none/);
+});
 
 test("overview page toggles auto refresh and supports manual refresh binding", async () => {
   const refreshButton = createButton();
@@ -322,6 +354,61 @@ test("ip block page renders add form and blacklist rows", async () => {
   assert.equal(page.html.includes("spam"), true);
   assert.equal(page.html.includes("data-ip-block-form"), true);
   assert.equal(page.html.includes('data-ip-block-action="delete"'), true);
+});
+
+test("announcements page renders only published items with add and delete controls", async () => {
+  const pageLoaders = createPageLoaders({
+    document: createDocumentStub(),
+    location: { search: "" },
+    history: { replaceState() {} },
+    state: {
+      overviewAutoRefresh: true,
+      lastOverviewData: { instanceId: "instance-1" },
+    },
+    api: {
+      async getAnnouncements() {
+        return {
+          version: 4,
+          updatedAt: 1_710_000_000_000,
+          items: [
+            { id: "notice-1", text: "今晚 20:00 维护 10 分钟" },
+            { id: "notice-2", text: "插件已支持通用 HTML5 视频同步" },
+          ],
+        };
+      },
+    },
+    routeHref(path: string) {
+      return `/admin${path}`;
+    },
+    withDemoQuery(url: string) {
+      return url;
+    },
+    serializeQuery() {
+      return "";
+    },
+    navigate() {},
+    navigateToUrl() {},
+    rerender() {},
+    canManage() {
+      return true;
+    },
+    confirmAction() {},
+    openReasonDialog() {},
+  });
+
+  const page = await pageLoaders.renderAnnouncementsPage();
+
+  assert.equal(page.html.includes("今晚 20:00 维护 10 分钟"), true);
+  assert.equal(page.html.includes("插件已支持通用 HTML5 视频同步"), true);
+  assert.equal(page.html.includes("ANNOUNCEMENTS"), false);
+  assert.equal(page.html.includes("panel-intro-kicker"), false);
+  assert.equal(page.html.includes("announcement-intro-text"), true);
+  assert.equal(page.html.includes('id="announcements-form"'), true);
+  assert.equal(countOccurrences(page.html, "data-announcement-item="), 2);
+  assert.equal(page.html.includes("announcement-text-2"), false);
+  assert.equal(page.html.includes("data-add-announcement"), true);
+  assert.equal(countOccurrences(page.html, "data-delete-announcement"), 2);
+  assert.equal(page.html.includes('data-action="save-announcements"'), true);
 });
 
 test("member action buttons include blacklist action only when member has an IP", () => {

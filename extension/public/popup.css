@@ -247,6 +247,116 @@ body {
   padding: 13px 14px;
 }
 
+.announcement-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+  background: #f3f4f6;
+  color: var(--text-secondary);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.announcement-strip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: 12px;
+  flex: 0 0 7px;
+  border-radius: 999px;
+  background: var(--green);
+}
+
+.announcement-track {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 32px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 32px;
+  white-space: nowrap;
+  animation: announcementStackCycle var(--announcement-cycle-duration, 5.6s)
+    steps(var(--announcement-count, 1), end) infinite;
+  will-change: transform;
+}
+
+.announcement-track.is-single {
+  animation: none;
+  transform: none;
+}
+
+.announcement-slide {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px 0 8px;
+  overflow: hidden;
+  flex: 0 0 32px;
+}
+
+.announcement-marquee {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.announcement-item {
+  display: inline-block;
+  min-width: max-content;
+  max-width: none;
+  padding-right: 8px;
+  vertical-align: bottom;
+  animation: announcementTextSweep var(--announcement-item-duration, 5.6s)
+    linear infinite;
+  will-change: transform;
+}
+
+.announcement-strip:hover .announcement-track,
+.announcement-strip:hover .announcement-item {
+  animation-play-state: paused;
+}
+
+@keyframes announcementStackCycle {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(var(--announcement-end-offset, -32px));
+  }
+}
+
+@keyframes announcementTextSweep {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+
+  82%,
+  100% {
+    transform: translateX(min(0px, calc(318px - 100%)));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .announcement-track,
+  .announcement-item {
+    animation: none;
+    transform: none;
+  }
+}
+
 .room-command {
   position: relative;
   overflow: hidden;

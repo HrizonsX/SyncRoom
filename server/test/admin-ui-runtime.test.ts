@@ -233,6 +233,71 @@ test("bootstrap redirects authenticated login route to overview", async () => {
   }
 });
 
+test("copy helper falls back when navigator clipboard is unavailable", async () => {
+  const { copyTextToClipboard } = await loadAdminAppModule();
+  const appended: unknown[] = [];
+  let removed = false;
+  let selected = false;
+  let copied = false;
+  const textarea = {
+    value: "",
+    style: {},
+    setAttribute() {},
+    select() {
+      selected = true;
+    },
+    remove() {
+      removed = true;
+    },
+  };
+  const document = {
+    body: {
+      appendChild(element: unknown) {
+        appended.push(element);
+      },
+    },
+    createElement(tagName: string) {
+      assert.equal(tagName, "textarea");
+      return textarea;
+    },
+    execCommand(command: string) {
+      copied = command === "copy";
+      return copied;
+    },
+  };
+
+  const result = await copyTextToClipboard({
+    document,
+    navigator: {},
+    value: "member-1",
+  });
+
+  assert.equal(result, true);
+  assert.equal(textarea.value, "member-1");
+  assert.equal(selected, true);
+  assert.equal(copied, true);
+  assert.equal(removed, true);
+  assert.deepEqual(appended, [textarea]);
+});
+
+test("copy helper rejects empty copy values without throwing", async () => {
+  const { copyTextToClipboard } = await loadAdminAppModule();
+
+  const result = await copyTextToClipboard({
+    document: {},
+    navigator: {
+      clipboard: {
+        async writeText() {
+          throw new Error("should not copy empty values");
+        },
+      },
+    },
+    value: null,
+  });
+
+  assert.equal(result, false);
+});
+
 async function waitFor(check: () => boolean, timeoutMs = 200) {
   const startedAt = Date.now();
   while (!check()) {

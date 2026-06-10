@@ -159,7 +159,7 @@ test("falls back through title sources in order", () => {
   );
 });
 
-test("ignores movie membership edition labels when a page heading is available", () => {
+test("ignores movie edition labels when a page heading is available", () => {
   assert.equal(
     resolveSharedVideoTitle({
       currentPartTitle: "中文版 会员",
@@ -168,6 +168,15 @@ test("ignores movie membership edition labels when a page heading is available",
         "末日逃生2：迁移中文版-电影-高清正版在线观看-bilibili-哔哩哔哩",
     }),
     "末日逃生2：迁移",
+  );
+  assert.equal(
+    resolveSharedVideoTitle({
+      currentPartTitle: "中文配音",
+      headingTitle: "罗小黑战记2",
+      documentTitle:
+        "罗小黑战记2中文配音-电影-高清正版在线观看-bilibili-哔哩哔哩",
+    }),
+    "罗小黑战记2",
   );
 });
 

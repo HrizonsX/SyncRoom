@@ -1,4 +1,4 @@
-import { isMembershipEditionLabel } from "./title-utils";
+import { isMovieEditionLabel } from "./title-utils";
 
 export interface PageVideoCandidate {
   id?: string | number;
@@ -160,7 +160,7 @@ export function readFestivalVideoDetailFromSources(args: {
   const preferMediaTitle =
     fallbackMediaTitle !== undefined &&
     [matchedTitle, activeTitle, playInfoTitle].some(
-      (title) => typeof title === "string" && isMembershipEditionLabel(title),
+      (title) => typeof title === "string" && isMovieEditionLabel(title),
     );
 
   return {

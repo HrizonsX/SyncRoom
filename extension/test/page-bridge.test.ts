@@ -259,3 +259,37 @@ test("page bridge can use page media title when movie data only exposes edition 
     title: "末日逃生2：迁移",
   });
 });
+
+test("page bridge prefers movie media title over short dubbing edition labels", () => {
+  const detail = readFestivalVideoDetailFromSources({
+    playInfo: {
+      result: {
+        arc: {
+          bvid: "BV1movie90209",
+          cid: 39020900001,
+        },
+        supplement: {
+          ogv_episode_info: {
+            episode_id: 90209,
+            index_title: "中文配音",
+          },
+          play_view_business_info: {
+            episode_info: {
+              ep_id: 90209,
+              cid: 39020900001,
+            },
+          },
+        },
+      },
+    },
+    activeTitle: "中文配音",
+    mediaTitle: "罗小黑战记2",
+  });
+
+  assert.deepEqual(detail, {
+    epId: 90209,
+    bvid: "BV1movie90209",
+    cid: 39020900001,
+    title: "罗小黑战记2",
+  });
+});

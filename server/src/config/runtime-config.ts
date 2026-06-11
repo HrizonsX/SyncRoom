@@ -106,7 +106,7 @@ export type RuntimeConfig = {
 };
 
 const DEFAULT_CONFIG_FILE = "server.config.json";
-const CONFIG_PATH_ENV = "BILI_SYNCPLAY_CONFIG";
+const CONFIG_PATH_ENV = "SYNCROOM_CONFIG";
 
 function isPlainObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);

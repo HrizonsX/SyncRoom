@@ -414,7 +414,7 @@ test("join room easter egg clears fupengzi without sending a join request", asyn
     assert.equal(uiStateStore.getState().easterEggEffectActive, true);
     assert.deepEqual(storageWrites, [
       {
-        "bili-syncplay-popup-ui": {
+        "syncroom-popup-ui": {
           easterEggEffectActive: true,
         },
       },

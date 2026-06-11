@@ -16,7 +16,7 @@ import {
 } from "../src/app.js";
 import { getDefaultVoiceConfig } from "../src/config/voice-config.js";
 import { createInMemoryRoomStore, type RoomStore } from "../src/room-store.js";
-import { PROTOCOL_VERSION, type ServerMessage } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION, type ServerMessage } from "@syncroom/protocol";
 
 const ALLOWED_ORIGIN = "chrome-extension://allowed-extension";
 
@@ -761,7 +761,7 @@ test("voice access issues scoped LiveKit details for a valid room member", async
       assert.equal(access.payload.livekitUrl, "wss://voice.example.com");
       assert.equal(
         access.payload.roomName,
-        `bili-syncplay:${created.payload.roomCode}`,
+        `syncroom:${created.payload.roomCode}`,
       );
       assert.equal(
         access.payload.participantIdentity,

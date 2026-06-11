@@ -20,7 +20,7 @@ import {
 async function withTempDir(
   run: (tempDir: string) => Promise<void>,
 ): Promise<void> {
-  const tempDir = await mkdtemp(join(tmpdir(), "bili-syncplay-config-"));
+  const tempDir = await mkdtemp(join(tmpdir(), "syncroom-config-"));
   try {
     await run(tempDir);
   } finally {
@@ -499,7 +499,7 @@ test("runtime config resolves explicit config file path from env", async () => {
 
     const config = await loadRuntimeConfig(
       {
-        BILI_SYNCPLAY_CONFIG: "custom-config.json",
+        SYNCROOM_CONFIG: "custom-config.json",
         ALLOW_MISSING_ORIGIN_IN_DEV: "true",
       },
       { cwd: tempDir },

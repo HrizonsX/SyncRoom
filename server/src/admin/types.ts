@@ -1,4 +1,4 @@
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 
 export type AdminRole = "viewer" | "operator" | "admin";
 

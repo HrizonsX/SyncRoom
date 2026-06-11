@@ -27,9 +27,9 @@ This repository uses a monorepo structure with shared protocol code, a browser e
 ## Shared Sources Of Truth
 
 - Shared URL normalization must remain centralized.
-- Protocol types and guards must remain centralized under `@bili-syncplay/protocol`.
+- Protocol types and guards must remain centralized under `@syncroom/protocol`.
 - Server environment parsing must remain centralized in the server config layer.
-- Preserve public import stability for `@bili-syncplay/protocol`; internal refactors should still export through the package root.
+- Preserve public import stability for `@syncroom/protocol`; internal refactors should still export through the package root.
 
 ## Protocol Changes
 

@@ -21,7 +21,7 @@ test("manifest injects content script into generic http and https video pages", 
   );
 });
 
-test("manifest locale descriptions use the SyncRoom tagline", async () => {
+test("manifest locale descriptions use the syncRoom tagline", async () => {
   const zhMessages = JSON.parse(
     await readFile(
       new URL("../public/_locales/zh_CN/messages.json", import.meta.url),

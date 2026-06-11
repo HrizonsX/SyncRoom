@@ -102,7 +102,7 @@ export function parseBilibiliVideoRef(
       (typeof process === "undefined" || process.env.NODE_ENV !== "production")
     ) {
       console.debug(
-        "[bili-syncplay] parseBilibiliVideoRef: unexpected error parsing URL",
+        "[syncroom] parseBilibiliVideoRef: unexpected error parsing URL",
         url,
         err,
       );

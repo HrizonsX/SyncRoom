@@ -18,12 +18,12 @@ const extensionPackageRaw = await readFile(
 );
 const extensionPackage = JSON.parse(extensionPackageRaw);
 const version = extensionPackage.version;
-const zipName = `bili-syncplay-extension-v${version}-${targetBrowser}.zip`;
+const zipName = `syncroom-extension-v${version}-${targetBrowser}.zip`;
 const zipPath = path.join(releaseDir, zipName);
 // Firefox 用户可直接拖入 .xpi 安装；与 zip 同字节流，复制即可。
 const xpiPath =
   targetBrowser === "firefox"
-    ? path.join(releaseDir, `bili-syncplay-extension-v${version}-firefox.xpi`)
+    ? path.join(releaseDir, `syncroom-extension-v${version}-firefox.xpi`)
     : null;
 
 await access(distDir, constants.F_OK);

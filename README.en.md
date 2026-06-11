@@ -1,10 +1,10 @@
-# SyncRoom
+# syncRoom
 
 [简体中文](./README.md) | English
 
 > Watch together, speak in sync.
 
-SyncRoom is a browser extension plus WebSocket server for synchronized web video rooms. Users can create or join a room, share the current Bilibili video or a generic HTML5 `<video>` page, and keep play, pause, seek, and playback rate in sync across participants. The current source also includes optional LiveKit room voice, an admin panel, and an IP blacklist.
+syncRoom is a browser extension plus WebSocket server for synchronized web video rooms. Users can create or join a room, share the current Bilibili video or a generic HTML5 `<video>` page, and keep play, pause, seek, and playback rate in sync across participants. The current source also includes optional LiveKit room voice, an admin panel, and an IP blacklist.
 
 ## ✨ Feature Overview
 
@@ -19,16 +19,16 @@ SyncRoom is a browser extension plus WebSocket server for synchronized web video
 
 ## 🧭 At a Glance
 
-| Item                           | Value                                |
-| ------------------------------ | ------------------------------------ |
-| Invite format                  | `roomCode:joinToken`                 |
-| Default local server           | `ws://localhost:8787`                |
-| Recommended production URL     | `wss://<your-domain>`                |
-| Extension display name         | SyncRoom                             |
-| Main directories               | `extension/`, `server/`, `packages/` |
-| Historical compatibility names | Some packages, env vars, metrics     |
+| Item                       | Value                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------- |
+| Invite format              | `roomCode:joinToken`                                                                    |
+| Default local server       | `ws://localhost:8787`                                                                   |
+| Recommended production URL | `wss://<your-domain>`                                                                   |
+| Extension display name     | syncRoom                                                                                |
+| Main directories           | `extension/`, `server/`, `packages/`                                                    |
+| Naming convention          | Display name `syncRoom`; package and runtime identifiers use `syncroom` / `@syncroom/*` |
 
-> Compatibility note: the project and extension display name are now SyncRoom. To avoid breaking existing scripts, imports, monitoring, and deployments, some npm workspace package names, environment variables, release artifact names, Prometheus metrics, and health-check fields still keep historical `bili-syncplay` / `@bili-syncplay/*` identifiers.
+> Naming note: the project display name is syncRoom. npm workspace package names, environment variables, Prometheus metrics, storage keys, and internal channels use the matching `syncroom` / `@syncroom/*` / `SYNCROOM_*` identifiers.
 
 ## 🚀 Quick Start
 
@@ -146,7 +146,7 @@ Video variants:
 ## 📁 Project Structure
 
 ```text
-SyncRoom/
+syncRoom/
   extension/            Browser extension (Chrome/Edge/Firefox)
   server/               WebSocket room server
   packages/protocol/    Shared protocol types
@@ -401,11 +401,11 @@ npm run build
 Build the extension with a fixed Chrome extension ID:
 
 ```powershell
-$env:BILI_SYNCPLAY_EXTENSION_KEY="<chrome-web-store-public-key>"
-npm run build -w @bili-syncplay/extension
+$env:SYNCROOM_EXTENSION_KEY="<chrome-web-store-public-key>"
+npm run build -w @syncroom/extension
 ```
 
-If `BILI_SYNCPLAY_EXTENSION_KEY` is set, the build writes it to `extension/dist/manifest.json` as `manifest.key`. Use the same public key as the Chrome Web Store item so locally loaded builds keep the same extension ID as the published one.
+If `SYNCROOM_EXTENSION_KEY` is set, the build writes it to `extension/dist/manifest.json` as `manifest.key`. Use the same public key as the Chrome Web Store item so locally loaded builds keep the same extension ID as the published one.
 
 Run the automated test suites:
 
@@ -422,16 +422,16 @@ Current test coverage in this repository includes:
 Workspace-level test commands are also available:
 
 ```bash
-npm run test -w @bili-syncplay/protocol
-npm run test -w @bili-syncplay/server
-npm run test:redis -w @bili-syncplay/server
-npm run test -w @bili-syncplay/extension
+npm run test -w @syncroom/protocol
+npm run test -w @syncroom/server
+npm run test:redis -w @syncroom/server
+npm run test -w @syncroom/extension
 ```
 
 Redis integration test notes:
 
-- `npm run test -w @bili-syncplay/server` keeps Redis-specific tests optional and may skip them when `REDIS_URL` is not configured
-- `npm run test:redis -w @bili-syncplay/server` is the explicit Redis regression entry point
+- `npm run test -w @syncroom/server` keeps Redis-specific tests optional and may skip them when `REDIS_URL` is not configured
+- `npm run test:redis -w @syncroom/server` is the explicit Redis regression entry point
 - `npm run test:server:redis` runs the same Redis regression from the workspace root
 - `REDIS_URL` is required for those explicit Redis test commands and they fail fast when it is missing
 
@@ -500,7 +500,7 @@ ws://localhost:8787
 
 Development notes:
 
-- `@bili-syncplay/server` depends on the built output of `@bili-syncplay/protocol`
+- `@syncroom/server` depends on the built output of `@syncroom/protocol`
 - for a clean local setup, prefer `npm run build` instead of building `server` alone
 - the extension does not keep a permanent socket by default; it connects when a room already exists in session state or when the user creates / joins a room
 - reconnecting into an existing room now requires the stored `joinToken`; stale `memberToken` values are discarded on disconnect
@@ -552,12 +552,12 @@ The extension supports changing the server URL from the popup, so you can switch
 wss://sync.example.com
 ```
 
-Only `ws://` and `wss://` server URLs are accepted. Empty input falls back to the build's embedded default. When `BILI_SYNCPLAY_DEFAULT_SERVER_URL` is unset, that default remains `ws://localhost:8787`.
+Only `ws://` and `wss://` server URLs are accepted. Empty input falls back to the build's embedded default. When `SYNCROOM_DEFAULT_SERVER_URL` is unset, that default remains `ws://localhost:8787`.
 
-If you want the Chrome Web Store build to ship with a public server URL while keeping the repository default at `ws://localhost:8787`, set `BILI_SYNCPLAY_DEFAULT_SERVER_URL` when building the extension. For example in PowerShell:
+If you want the Chrome Web Store build to ship with a public server URL while keeping the repository default at `ws://localhost:8787`, set `SYNCROOM_DEFAULT_SERVER_URL` when building the extension. For example in PowerShell:
 
 ```powershell
-$env:BILI_SYNCPLAY_DEFAULT_SERVER_URL="wss://sync.example.com"
+$env:SYNCROOM_DEFAULT_SERVER_URL="wss://sync.example.com"
 npm run build:release
 ```
 
@@ -568,7 +568,7 @@ For local unpacked-extension development, `ALLOWED_ORIGINS` should include the c
 The server now also supports an optional JSON config file. Resolution order is:
 
 - built-in defaults
-- `server.config.json` in the current working directory, or the path from `BILI_SYNCPLAY_CONFIG`
+- `server.config.json` in the current working directory, or the path from `SYNCROOM_CONFIG`
 - environment variables
 
 This keeps the existing env-only startup flow fully compatible while allowing production deployments to move shared non-secret settings into a file.
@@ -621,7 +621,7 @@ The current server implementation:
 
 - listens on `PORT` or `server.config.json#port`, defaulting to `8787`
 - serves WebSocket traffic and a simple health check on the same port
-- returns `{"ok":true,"service":"bili-syncplay-server"}` on `GET /`
+- returns `{"ok":true,"service":"syncroom-server"}` on `GET /`
 - exposes the admin control panel and APIs on the same port: `/admin`, `/healthz`, `/readyz`, `/api/admin/*`
 - supports `memory` and `redis` room storage providers
 - persists room base state when `ROOM_STORE_PROVIDER=redis`
@@ -675,7 +675,7 @@ Recommended provider settings for a full multi-node rollout:
 Room node example:
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -688,7 +688,7 @@ node server/dist/index.js
 Dedicated global admin example:
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -761,7 +761,7 @@ Suggested port layout:
 Example room node environment on server 1:
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -780,7 +780,7 @@ node server/dist/index.js
 Example room node environment on server 2:
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-b \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -799,7 +799,7 @@ node server/dist/index.js
 Example global admin environment on server 1:
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -833,7 +833,7 @@ Redis key families used by the multi-node control plane:
 
 The server accepts the following environment variables. Safe defaults are built in, but production should set them explicitly:
 
-- `BILI_SYNCPLAY_CONFIG`: optional path to a JSON config file; when unset, the server looks for `server.config.json` in the current working directory
+- `SYNCROOM_CONFIG`: optional path to a JSON config file; when unset, the server looks for `server.config.json` in the current working directory
 - `ALLOWED_ORIGINS`: comma-separated WebSocket `Origin` allowlist
 - if `ALLOWED_ORIGINS` is empty, the server rejects all explicit `Origin` values by default
 - `ALLOW_MISSING_ORIGIN_IN_DEV`: allow missing `Origin` headers when set to `true`
@@ -998,7 +998,7 @@ Why `npm run build` is recommended for first deployment:
 If you only want to build the server package:
 
 ```bash
-npm run build -w @bili-syncplay/server
+npm run build -w @syncroom/server
 ```
 
 Use that command only when `packages/protocol` is already built and unchanged.
@@ -1039,7 +1039,7 @@ curl http://127.0.0.1:8787/
 Expected response:
 
 ```json
-{ "ok": true, "service": "bili-syncplay-server" }
+{ "ok": true, "service": "syncroom-server" }
 ```
 
 ### 3. Create systemd services
@@ -1055,7 +1055,7 @@ Create `/etc/systemd/system/syncroom-room-node-a.service`:
 
 ```ini
 [Unit]
-Description=SyncRoom room node A
+Description=syncRoom room node A
 After=network.target
 
 [Service]
@@ -1063,7 +1063,7 @@ Type=simple
 User=syncroom
 Group=syncroom
 WorkingDirectory=/opt/syncroom
-Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
+Environment=SYNCROOM_CONFIG=/etc/syncroom/server.config.json
 Environment=PORT=8787
 Environment=INSTANCE_ID=room-node-a
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1091,7 +1091,7 @@ Create `/etc/systemd/system/syncroom-global-admin.service`:
 
 ```ini
 [Unit]
-Description=SyncRoom global admin
+Description=syncRoom global admin
 After=network.target
 
 [Service]
@@ -1099,7 +1099,7 @@ Type=simple
 User=syncroom
 Group=syncroom
 WorkingDirectory=/opt/syncroom
-Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
+Environment=SYNCROOM_CONFIG=/etc/syncroom/server.config.json
 Environment=GLOBAL_ADMIN_PORT=8788
 Environment=INSTANCE_ID=global-admin
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1237,13 +1237,13 @@ limit_conn_zone $binary_remote_addr zone=conn_per_ip:10m;
 limit_req_zone $binary_remote_addr zone=req_per_ip:10m rate=20r/m;
 limit_req_zone $binary_remote_addr zone=admin_req_per_ip:10m rate=5r/s;
 
-upstream bili_syncplay_ws {
+upstream syncroom_ws {
     least_conn;
     server 127.0.0.1:8787;
     server 10.0.0.12:8787;
 }
 
-upstream bili_syncplay_admin {
+upstream syncroom_admin {
     server 127.0.0.1:8788;
 }
 
@@ -1252,7 +1252,7 @@ server {
     server_name sync.example.com;
 
     location ^~ /admin {
-        proxy_pass http://bili_syncplay_admin;
+        proxy_pass http://syncroom_admin;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1261,7 +1261,7 @@ server {
 
     location ^~ /api/admin/ {
         limit_req zone=admin_req_per_ip burst=20 nodelay;
-        proxy_pass http://bili_syncplay_admin;
+        proxy_pass http://syncroom_admin;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1271,7 +1271,7 @@ server {
     location / {
         limit_conn conn_per_ip 10;
         limit_req zone=req_per_ip burst=10 nodelay;
-        proxy_pass http://bili_syncplay_ws;
+        proxy_pass http://syncroom_ws;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1349,7 +1349,7 @@ npm run build
 If you know only `server/` changed and `packages/protocol` is unchanged, you can rebuild only the server package:
 
 ```bash
-npm run build -w @bili-syncplay/server
+npm run build -w @syncroom/server
 ```
 
 Single-node / single-process restart flow:
@@ -1414,19 +1414,19 @@ Useful checks:
 curl http://127.0.0.1:8787/
 
 # Server tests
-npm run test -w @bili-syncplay/server
+npm run test -w @syncroom/server
 
 # Redis integration regression
-REDIS_URL=redis://127.0.0.1:6379 npm run test:redis -w @bili-syncplay/server
+REDIS_URL=redis://127.0.0.1:6379 npm run test:redis -w @syncroom/server
 
 # Full multi-node regression
 REDIS_URL=redis://127.0.0.1:6379 npx tsx --test server/test/multi-node-*.test.ts
 
 # Protocol tests
-npm run test -w @bili-syncplay/protocol
+npm run test -w @syncroom/protocol
 
 # Extension tests
-npm run test -w @bili-syncplay/extension
+npm run test -w @syncroom/extension
 ```
 
 Chrome-side debugging tips:
@@ -1461,10 +1461,10 @@ npm run build:release
 Output:
 
 ```text
-release/bili-syncplay-extension-v<version>.zip
+release/syncroom-extension-v<version>.zip
 ```
 
-> This file name is a historical release-script artifact name. The extension display name inside the package is still SyncRoom.
+> The extension display name inside the package is syncRoom.
 
 ### Automated GitHub Release
 

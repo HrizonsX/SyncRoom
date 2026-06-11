@@ -1,4 +1,4 @@
-import type { ClientMessage, ServerMessage } from "@bili-syncplay/protocol";
+import type { ClientMessage, ServerMessage } from "@syncroom/protocol";
 import { localizeServerError, t } from "../shared/i18n";
 import type { VoiceRuntimeEvent } from "../shared/voice-host-messages";
 import type { VoiceRuntimeState } from "../shared/voice-state";

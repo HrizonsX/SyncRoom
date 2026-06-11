@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server as HttpServer } from "node:http";
-import type { ServerMessage } from "@bili-syncplay/protocol";
+import type { ServerMessage } from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import type { AnnouncementStore } from "../announcement-store.js";
 import type { GlobalEventStore } from "../admin/global-event-store.js";

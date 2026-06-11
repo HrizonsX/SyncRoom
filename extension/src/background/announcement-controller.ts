@@ -1,7 +1,7 @@
 import {
   isAnnouncementState,
   type AnnouncementState,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import {
   loadAnnouncementState,
   saveAnnouncementState,
@@ -28,6 +28,8 @@ export function createAnnouncementController(args: {
   notifyAll: () => void;
 }): AnnouncementController {
   const fetchAnnouncements = args.fetchImpl ?? fetch;
+  let refreshInFlightUrl: string | null = null;
+  let refreshSequence = 0;
 
   async function loadCachedAnnouncements(): Promise<void> {
     try {
@@ -42,21 +44,27 @@ export function createAnnouncementController(args: {
   }
 
   async function refreshAnnouncements(): Promise<void> {
-    if (args.announcementState.refreshInFlight) {
+    const url = toAnnouncementsApiUrl(args.getServerUrl());
+    if (args.announcementState.refreshInFlight && refreshInFlightUrl === url) {
       return args.announcementState.refreshInFlight;
     }
 
-    const refreshTask = doRefreshAnnouncements().finally(() => {
+    const sequence = (refreshSequence += 1);
+    const refreshTask = doRefreshAnnouncements(url, sequence).finally(() => {
       if (args.announcementState.refreshInFlight === refreshTask) {
         args.announcementState.refreshInFlight = null;
+        refreshInFlightUrl = null;
       }
     });
+    refreshInFlightUrl = url;
     args.announcementState.refreshInFlight = refreshTask;
     return refreshTask;
   }
 
-  async function doRefreshAnnouncements(): Promise<void> {
-    const url = toAnnouncementsApiUrl(args.getServerUrl());
+  async function doRefreshAnnouncements(
+    url: string | null,
+    sequence: number,
+  ): Promise<void> {
     if (!url) {
       args.log("background", "Skipped announcement refresh for invalid URL.");
       return;
@@ -78,6 +86,14 @@ export function createAnnouncementController(args: {
       const payload = (await response.json()) as AnnouncementApiResponse;
       if (payload.ok !== true || !isAnnouncementState(payload.data)) {
         args.log("background", "Announcement refresh returned invalid data.");
+        return;
+      }
+
+      if (
+        sequence !== refreshSequence ||
+        url !== toAnnouncementsApiUrl(args.getServerUrl())
+      ) {
+        args.log("background", "Ignored stale announcement refresh result.");
         return;
       }
 

@@ -1,5 +1,5 @@
-import type { ClientMessage, ServerMessage } from "@bili-syncplay/protocol";
-import { isServerMessage, PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import type { ClientMessage, ServerMessage } from "@syncroom/protocol";
+import { isServerMessage, PROTOCOL_VERSION } from "@syncroom/protocol";
 import type { DebugLogEntry } from "../shared/messages";
 import type { ConnectionState, RoomSessionState } from "./runtime-state";
 import { getConnectionErrorMessage } from "./connection-error";

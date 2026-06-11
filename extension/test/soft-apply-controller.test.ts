@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PlaybackState } from "@bili-syncplay/protocol";
+import type { PlaybackState } from "@syncroom/protocol";
 import { createContentRuntimeState } from "../src/content/runtime-state";
 import { createSoftApplyController } from "../src/content/soft-apply-controller";
 

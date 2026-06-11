@@ -2,7 +2,7 @@ import type {
   ClientMessage,
   PlaybackState,
   RoomState,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 
 const HEARTBEAT_LOG_INTERVAL_MS = 10000;
 

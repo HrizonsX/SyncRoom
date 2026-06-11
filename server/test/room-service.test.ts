@@ -4,7 +4,7 @@ import {
   parseSharedVideoRef,
   type PlaybackState,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import { createActiveRoomRegistry } from "../src/active-room-registry.js";
 import {

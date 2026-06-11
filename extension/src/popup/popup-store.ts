@@ -18,7 +18,7 @@ export interface PopupUiState {
 
 export type PopupUiStateStore = StateStore<PopupUiState>;
 
-const POPUP_UI_STORAGE_KEY = "bili-syncplay-popup-ui";
+const POPUP_UI_STORAGE_KEY = "syncroom-popup-ui";
 
 interface PersistedPopupUiState {
   easterEggEffectActive?: boolean;

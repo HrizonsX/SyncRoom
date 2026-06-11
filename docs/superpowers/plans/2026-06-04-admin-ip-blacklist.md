@@ -21,7 +21,7 @@
 - Test: `server/test/ip-block-store.test.ts`
 
 - [ ] Write failing tests for IP normalization and memory store add/list/delete behavior.
-- [ ] Run `npm run --ignore-scripts test -w @bili-syncplay/server -- server/test/ip-block-store.test.ts` and verify missing modules/functions fail.
+- [ ] Run `npm run --ignore-scripts test -w @syncroom/server -- server/test/ip-block-store.test.ts` and verify missing modules/functions fail.
 - [ ] Implement `normalizeIpAddress`, `createInMemoryIpBlockStore`, and the `IpBlockStore` types.
 - [ ] Implement `createRedisIpBlockStore` with namespace-aware Redis keys.
 - [ ] Run the focused test and verify it passes.

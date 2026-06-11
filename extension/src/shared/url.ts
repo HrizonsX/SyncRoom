@@ -1,4 +1,4 @@
-import { normalizeSharedVideoUrl as normalizeProtocolSharedVideoUrl } from "@bili-syncplay/protocol";
+import { normalizeSharedVideoUrl as normalizeProtocolSharedVideoUrl } from "@syncroom/protocol";
 
 const NORMALIZE_CACHE_CAPACITY = 16;
 const normalizeCache = new Map<string, string | null>();

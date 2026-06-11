@@ -4,7 +4,7 @@ import {
   MAX_ANNOUNCEMENT_ITEMS,
   type AnnouncementItem,
   type AnnouncementState,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 
 export class AnnouncementValidationError extends Error {}
 

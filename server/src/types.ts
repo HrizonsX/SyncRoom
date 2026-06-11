@@ -7,7 +7,7 @@ import type {
   RoomState,
   ServerMessage,
   SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { AdminRole } from "./admin/types.js";
 
 export type WindowCounter = {

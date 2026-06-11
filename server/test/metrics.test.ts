@@ -49,40 +49,40 @@ test("metrics collector renders event counters, histograms, and redis failure co
 
   const rendered = await metrics.render();
 
-  assert.equal(rendered.includes("bili_syncplay_connections 1"), true);
-  assert.equal(rendered.includes("bili_syncplay_active_rooms 1"), true);
-  assert.equal(rendered.includes("bili_syncplay_rooms_non_expired 2"), true);
+  assert.equal(rendered.includes("syncroom_connections 1"), true);
+  assert.equal(rendered.includes("syncroom_active_rooms 1"), true);
+  assert.equal(rendered.includes("syncroom_rooms_non_expired 2"), true);
   assert.equal(
-    rendered.includes('bili_syncplay_events_total{event="room_created"} 1'),
+    rendered.includes('syncroom_events_total{event="room_created"} 1'),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_message_handler_duration_seconds_count{message_type="room:join"} 1',
+      'syncroom_message_handler_duration_seconds_count{message_type="room:join"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_redis_runtime_store_duration_seconds_count{operation="register_session"} 1',
+      'syncroom_redis_runtime_store_duration_seconds_count{operation="register_session"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_redis_room_event_bus_publish_duration_seconds_count{operation="publish"} 1',
+      'syncroom_redis_room_event_bus_publish_duration_seconds_count{operation="publish"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_redis_operation_failures_total{component="room_event_bus",operation="publish"} 1',
+      'syncroom_redis_operation_failures_total{component="room_event_bus",operation="publish"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_redis_operation_failures_total{component="runtime_store",operation="register_session"} 1',
+      'syncroom_redis_operation_failures_total{component="runtime_store",operation="register_session"} 1',
     ),
     true,
   );
@@ -91,20 +91,20 @@ test("metrics collector renders event counters, histograms, and redis failure co
   // room_state_updated drops.
   assert.equal(
     rendered.includes(
-      'bili_syncplay_room_event_publish_dropped_total{event_type="room_member_changed"} 2',
+      'syncroom_room_event_publish_dropped_total{event_type="room_member_changed"} 2',
     ),
     true,
   );
   // Pre-seeded to 0 so "no drops" is distinguishable from "metric absent".
   assert.equal(
     rendered.includes(
-      'bili_syncplay_room_event_publish_dropped_total{event_type="room_state_updated"} 0',
+      'syncroom_room_event_publish_dropped_total{event_type="room_state_updated"} 0',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_room_event_publish_dropped_total{event_type="voice_state_updated"} 0',
+      'syncroom_room_event_publish_dropped_total{event_type="voice_state_updated"} 0',
     ),
     true,
   );
@@ -150,6 +150,6 @@ test("metrics collector can rebind to the effective runtime store", async () => 
 
   const rendered = await metrics.render();
 
-  assert.equal(rendered.includes("bili_syncplay_connections 1"), true);
-  assert.equal(rendered.includes("bili_syncplay_active_rooms 1"), true);
+  assert.equal(rendered.includes("syncroom_connections 1"), true);
+  assert.equal(rendered.includes("syncroom_active_rooms 1"), true);
 });

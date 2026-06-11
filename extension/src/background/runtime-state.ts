@@ -3,7 +3,7 @@ import type {
   PlaybackState,
   RoomState,
   SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type {
   DebugLogEntry,
   SharedVideoToastPayload,
@@ -14,13 +14,13 @@ import {
   type VoiceRuntimeState,
 } from "../shared/voice-state";
 
-declare const __BILI_SYNCPLAY_DEFAULT_SERVER_URL__: string | undefined;
+declare const __SYNCROOM_DEFAULT_SERVER_URL__: string | undefined;
 
 const LOCALHOST_SERVER_URL = "ws://localhost:8787";
 
 export const DEFAULT_SERVER_URL =
-  typeof __BILI_SYNCPLAY_DEFAULT_SERVER_URL__ === "string"
-    ? __BILI_SYNCPLAY_DEFAULT_SERVER_URL__
+  typeof __SYNCROOM_DEFAULT_SERVER_URL__ === "string"
+    ? __SYNCROOM_DEFAULT_SERVER_URL__
     : LOCALHOST_SERVER_URL;
 export const MAX_RECONNECT_ATTEMPTS = 5;
 export const SHARE_TOAST_TTL_MS = 8000;

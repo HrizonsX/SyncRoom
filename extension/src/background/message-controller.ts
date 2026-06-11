@@ -9,11 +9,7 @@ import type {
   MicrophonePermissionController,
   MicrophonePermissionResult,
 } from "./microphone-permission-controller";
-import type {
-  PlaybackState,
-  RoomState,
-  SharedVideo,
-} from "@bili-syncplay/protocol";
+import type { PlaybackState, RoomState, SharedVideo } from "@syncroom/protocol";
 import {
   createSyncRequestController,
   type SyncRequestController,

@@ -405,14 +405,14 @@ export function createAdminApp({
       instanceId,
       page.serviceName || state.lastOverviewData?.name,
     );
-    document.title = `${meta.title} | Bili-SyncPlay Admin`;
+    document.title = `${meta.title} | syncRoom Admin`;
 
     appRoot.innerHTML = `
       <div class="shell">
         <aside class="sidebar">
           <div class="brand">
             <span class="brand-eyebrow">Admin</span>
-            <h1>Bili-SyncPlay</h1>
+            <h1>syncRoom</h1>
           </div>
           <nav class="nav">
             ${renderNavLink("/overview", "概览")}

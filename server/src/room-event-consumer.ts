@@ -5,7 +5,7 @@ import {
   type Session,
 } from "./types.js";
 import type { RoomEventBus, RoomEventBusMessage } from "./room-event-bus.js";
-import type { ServerMessage } from "@bili-syncplay/protocol";
+import type { ServerMessage } from "@syncroom/protocol";
 
 const MEMBER_DELTA_PROTOCOL_VERSION = 2;
 type MemberDeltaMessage = Extract<

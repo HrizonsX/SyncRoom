@@ -2,7 +2,7 @@ import {
   isAnnouncementState,
   type AnnouncementState,
   type RoomState,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 
 export interface PersistedState {
   roomCode: string | null;
@@ -40,9 +40,9 @@ export interface PersistedProfileState {
   serverUrl: string | null;
 }
 
-const SESSION_KEY = "bili-syncplay-session";
-const PROFILE_KEY = "bili-syncplay-profile";
-const ANNOUNCEMENTS_KEY = "bili-syncplay-announcements";
+const SESSION_KEY = "syncroom-session";
+const PROFILE_KEY = "syncroom-profile";
+const ANNOUNCEMENTS_KEY = "syncroom-announcements";
 
 export async function loadState(): Promise<PersistedState> {
   const [session, profile] = await Promise.all([

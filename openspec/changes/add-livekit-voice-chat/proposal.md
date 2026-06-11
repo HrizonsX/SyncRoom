@@ -1,6 +1,6 @@
 ## Why
 
-Bili-SyncPlay already lets room members watch the same Bilibili video in sync, but users still need a separate voice tool to talk while watching. Adding built-in room voice chat keeps the watch-party experience in one place while preserving the existing room, invite, and member model.
+syncRoom already lets room members watch the same Bilibili video in sync, but users still need a separate voice tool to talk while watching. Adding built-in room voice chat keeps the watch-party experience in one place while preserving the existing room, invite, and member model.
 
 ## What Changes
 
@@ -8,7 +8,7 @@ Bili-SyncPlay already lets room members watch the same Bilibili video in sync, b
 - Restrict rooms to a maximum of 4 members for the voice-enabled experience.
 - Let room members hear other voice participants by default after joining the room.
 - Keep each user's microphone muted by default; users explicitly toggle the microphone on or off.
-- Add a server-side LiveKit token issuance flow that validates the Bili-SyncPlay room and member token before granting LiveKit access.
+- Add a server-side LiveKit token issuance flow that validates the syncRoom room and member token before granting LiveKit access.
 - Add extension UI and runtime state for voice connection, microphone permission, mute status, remote participant status, and user-visible failures.
 - Add LiveKit deployment configuration to the server config layer without exposing LiveKit API secrets to the browser extension.
 - Add protocol and runtime contracts for requesting voice access and surfacing voice status.

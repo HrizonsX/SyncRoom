@@ -1,4 +1,4 @@
-import type { PlaybackState, RoomState } from "@bili-syncplay/protocol";
+import type { PlaybackState, RoomState } from "@syncroom/protocol";
 
 export interface FestivalVideoSnapshot {
   videoId: string;

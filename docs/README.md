@@ -1,7 +1,7 @@
-# SyncRoom Documentation / SyncRoom 文档
+# syncRoom Documentation / syncRoom 文档
 
-This directory keeps SyncRoom documentation that is useful after the first README pass.
-本目录收纳 README 之外的 SyncRoom 项目文档，方便按主题查找。
+This directory keeps syncRoom documentation that is useful after the first README pass.
+本目录收纳 README 之外的 syncRoom 项目文档，方便按主题查找。
 
 ## Operations / 运维
 

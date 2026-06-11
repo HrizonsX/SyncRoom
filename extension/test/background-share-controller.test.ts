@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import { createBackgroundRuntimeState } from "../src/background/runtime-state";
 import { createShareController } from "../src/background/share-controller";
 

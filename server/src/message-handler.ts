@@ -1,4 +1,4 @@
-import type { ClientMessage } from "@bili-syncplay/protocol";
+import type { ClientMessage } from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import { performance } from "node:perf_hooks";
 import type {

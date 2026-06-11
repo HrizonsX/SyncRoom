@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 
 if (!process.env.REDIS_URL) {
   console.error(
-    "REDIS_URL must be configured for npm run test:redis -w @bili-syncplay/server",
+    "REDIS_URL must be configured for npm run test:redis -w @syncroom/server",
   );
   process.exit(1);
 }

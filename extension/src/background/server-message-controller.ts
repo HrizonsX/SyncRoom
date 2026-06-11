@@ -2,7 +2,7 @@ import type {
   AnnouncementState,
   RoomState,
   ServerMessage,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { SyncRequestController } from "./sync-request-controller";
 
 export interface ServerMessageController {

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { WebSocket, type RawData } from "ws";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import {
   createSyncServer,
   getDefaultPersistenceConfig,
@@ -1322,25 +1322,20 @@ test("admin exposes metrics and config summary", async () => {
     const token = await login(server.httpBaseUrl);
     const metrics = await requestText(server.httpBaseUrl, "/metrics");
     assert.equal(metrics.status, 200);
-    assert.equal(metrics.body.includes("bili_syncplay_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_room_created_total"), true);
+    assert.equal(metrics.body.includes("syncroom_events_total"), true);
     assert.equal(
-      metrics.body.includes("bili_syncplay_room_created_total"),
-      true,
-    );
-    assert.equal(metrics.body.includes("bili_syncplay_events_total"), true);
-    assert.equal(
-      metrics.body.includes("bili_syncplay_message_handler_duration_seconds"),
+      metrics.body.includes("syncroom_message_handler_duration_seconds"),
       true,
     );
     assert.equal(
-      metrics.body.includes(
-        "bili_syncplay_redis_runtime_store_duration_seconds",
-      ),
+      metrics.body.includes("syncroom_redis_runtime_store_duration_seconds"),
       true,
     );
     assert.equal(
       metrics.body.includes(
-        "bili_syncplay_redis_room_event_bus_publish_duration_seconds",
+        "syncroom_redis_room_event_bus_publish_duration_seconds",
       ),
       true,
     );
@@ -1541,7 +1536,7 @@ test("room node can disable admin routes while keeping health probes", async () 
 
     const metrics = await requestText(server.httpBaseUrl, "/metrics");
     assert.equal(metrics.status, 200);
-    assert.equal(metrics.body.includes("bili_syncplay_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_connections"), true);
   } finally {
     await server.close();
   }
@@ -1600,10 +1595,7 @@ test("metrics can be exposed on a dedicated port distinct from the admin server"
       "/metrics",
     );
     assert.equal(dedicatedMetrics.status, 200);
-    assert.equal(
-      dedicatedMetrics.body.includes("bili_syncplay_connections"),
-      true,
-    );
+    assert.equal(dedicatedMetrics.body.includes("syncroom_connections"), true);
 
     const dedicatedOtherPath = await requestText(
       `http://127.0.0.1:${metricsAddress.port}`,
@@ -1757,7 +1749,7 @@ test("admin auth ignores stray Cookie headers (bearer-only session policy)", asy
       method: "GET",
       headers: {
         Origin: server.httpBaseUrl,
-        Cookie: `bili-syncplay-admin-token=${token}`,
+        Cookie: `syncroom-admin-token=${token}`,
       },
     });
     assert.equal(cookieOnly.status, 401);

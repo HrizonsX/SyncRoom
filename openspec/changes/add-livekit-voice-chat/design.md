@@ -1,8 +1,8 @@
 ## Context
 
-Bili-SyncPlay is a browser extension plus Node.js WebSocket server for synchronized Bilibili playback. The existing server owns room creation, joining, member tokens, playback state, and room broadcasts. The extension owns popup interaction, background WebSocket connection, content-script playback observation, and persisted room state.
+syncRoom is a browser extension plus Node.js WebSocket server for synchronized Bilibili playback. The existing server owns room creation, joining, member tokens, playback state, and room broadcasts. The extension owns popup interaction, background WebSocket connection, content-script playback observation, and persisted room state.
 
-Voice chat introduces a media plane that the current WebSocket server should not carry. The confirmed direction is to run an operator-managed LiveKit SFU and use the Bili-SyncPlay server as the authority that decides which room members may receive LiveKit access tokens.
+Voice chat introduces a media plane that the current WebSocket server should not carry. The confirmed direction is to run an operator-managed LiveKit SFU and use the syncRoom server as the authority that decides which room members may receive LiveKit access tokens.
 
 Key constraints:
 
@@ -18,8 +18,8 @@ Key constraints:
 **Goals:**
 
 - Add room-scoped voice chat using self-hosted LiveKit SFU.
-- Keep Bili-SyncPlay as the business authority for room membership, member tokens, and voice access.
-- Add a server token issuance flow that maps a Bili-SyncPlay room to a LiveKit room and a member to a LiveKit participant.
+- Keep syncRoom as the business authority for room membership, member tokens, and voice access.
+- Add a server token issuance flow that maps a syncRoom room to a LiveKit room and a member to a LiveKit participant.
 - Add extension-side voice runtime state, LiveKit connection management, remote audio playback, and microphone controls.
 - Surface voice connection, mute, permission, and participant status in the popup.
 - Keep voice optional at deployment time: playback sync must still work when LiveKit config is absent or disabled.
@@ -35,7 +35,7 @@ Key constraints:
 
 ### Use LiveKit SFU for the media plane
 
-Use a self-hosted LiveKit deployment for audio transport. Each browser extension connects to LiveKit with a short-lived token issued by the Bili-SyncPlay server. LiveKit handles audio publish/subscribe, SFU routing, ICE/NAT behavior, and media reconnect behavior.
+Use a self-hosted LiveKit deployment for audio transport. Each browser extension connects to LiveKit with a short-lived token issued by the syncRoom server. LiveKit handles audio publish/subscribe, SFU routing, ICE/NAT behavior, and media reconnect behavior.
 
 Alternatives considered:
 
@@ -43,11 +43,11 @@ Alternatives considered:
 - Existing WebSocket audio forwarding: rejected because it would require rebuilding low-latency audio transport, jitter handling, encoding, and backpressure.
 - mediasoup: powerful but lower-level than LiveKit and heavier for this project's first voice implementation.
 
-### Keep the Bili-SyncPlay server as voice authority
+### Keep the syncRoom server as voice authority
 
 Add a server-side voice access path that accepts the current room/member token, validates membership through the existing room service, and returns `{ livekitUrl, token, roomName, participantIdentity }`. The server uses LiveKit API key/secret from the server config layer to sign access tokens.
 
-LiveKit room names should derive from the sync room code, for example `bili-syncplay:<roomCode>`. LiveKit participant identity should be the Bili-SyncPlay `memberId`, and the participant display name should follow the existing room display name.
+LiveKit room names should derive from the sync room code, for example `syncroom:<roomCode>`. LiveKit participant identity should be the syncRoom `memberId`, and the participant display name should follow the existing room display name.
 
 Alternatives considered:
 
@@ -72,7 +72,7 @@ This is a wire-shape change, so `PROTOCOL_VERSION` and `CURRENT_PROTOCOL_VERSION
 
 Alternatives considered:
 
-- Add ad hoc extension-only runtime messages without protocol types: rejected because server/client wire contracts belong in `@bili-syncplay/protocol`.
+- Add ad hoc extension-only runtime messages without protocol types: rejected because server/client wire contracts belong in `@syncroom/protocol`.
 - Use a new HTTP endpoint only for tokens: possible, but reusing the existing WebSocket session keeps room authentication, origin checks, logging, and reconnection behavior aligned with current architecture.
 
 ### Split extension voice runtime from popup rendering

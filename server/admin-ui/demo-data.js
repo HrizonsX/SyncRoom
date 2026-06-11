@@ -283,7 +283,7 @@ export function createMockApiRequest() {
     if (pathname === "/api/admin/overview") {
       return {
         service: {
-          name: "bili-syncplay-server",
+          name: "syncroom-server",
           version: "0.7.0-demo",
           instanceId: "instance-1",
           startedAt: demoData.now - 1000 * 60 * 60 * 4,

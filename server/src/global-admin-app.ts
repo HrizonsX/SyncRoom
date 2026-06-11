@@ -97,7 +97,7 @@ export async function createGlobalAdminServer(
     now,
     adminConfig: dependencies.adminConfig,
     adminUiConfig: dependencies.adminUiConfig,
-    serviceName: "bili-syncplay-global-admin",
+    serviceName: "syncroom-global-admin",
     createOverviewService: createGlobalAdminOverviewService,
     createRoomQueryService: createGlobalAdminRoomQueryService,
     serviceVersion,

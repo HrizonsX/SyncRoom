@@ -8,7 +8,7 @@ const permissionCss = readFileSync(
   "utf8",
 );
 
-test("microphone permission page uses the refined SyncRoom surface", () => {
+test("microphone permission page uses the refined syncRoom surface", () => {
   assert.match(ruleBody("body"), /display:\s*grid/);
   assert.match(ruleBody("body"), /place-items:\s*center/);
   assert.match(ruleBody(".permission-shell"), /max-width:\s*360px/);

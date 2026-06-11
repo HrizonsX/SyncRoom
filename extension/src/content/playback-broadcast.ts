@@ -1,4 +1,4 @@
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 import type { LocalPlaybackEventSource } from "./runtime-state";
 
 const EXPLICIT_SEEK_BROADCAST_GRACE_MS = 2_500;

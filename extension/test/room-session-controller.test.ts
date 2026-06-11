@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RoomState, ServerMessage } from "@bili-syncplay/protocol";
+import type { RoomState, ServerMessage } from "@syncroom/protocol";
 import { createBackgroundRuntimeState } from "../src/background/runtime-state";
 import { createRoomSessionController } from "../src/background/room-session-controller";
 import { setLocaleForTests } from "../src/shared/i18n";
@@ -190,7 +190,7 @@ test("room session controller clears stored room on unsupported_protocol_version
   assert.equal(harness.runtimeState.room.roomState, null);
   assert.equal(
     harness.runtimeState.connection.lastError,
-    "Your extension version is too old. Please update SyncRoom to the latest version.",
+    "Your extension version is too old. Please update syncRoom to the latest version.",
   );
 });
 

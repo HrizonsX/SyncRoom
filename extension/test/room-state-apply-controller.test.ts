@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 import { createContentRuntimeState } from "../src/content/runtime-state";
 import { createRoomStateApplyController } from "../src/content/room-state-apply-controller";
 
@@ -32,7 +32,7 @@ function createController(overrides: {
   remotePauseDebounceMs?: number;
   normalizeUrl?: (url: string | undefined | null) => string | null;
   rememberRemotePlaybackForSuppression?: (
-    playback: import("@bili-syncplay/protocol").PlaybackState,
+    playback: import("@syncroom/protocol").PlaybackState,
   ) => void;
   applyPendingPlaybackApplication?: (video: HTMLVideoElement) => void;
 }) {

@@ -3,8 +3,8 @@ import type {
   RoomState,
   ServerMessage,
   ClientMessage,
-} from "@bili-syncplay/protocol";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import type { BackgroundToContentMessage } from "../shared/messages";
 import {
   decideIncomingRoomState,

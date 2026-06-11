@@ -1,4 +1,4 @@
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 
 export const PENDING_LOCAL_SHARE_TIMEOUT_MS = 10000;
 

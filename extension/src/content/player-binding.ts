@@ -1,4 +1,4 @@
-import type { PlaybackState } from "@bili-syncplay/protocol";
+import type { PlaybackState } from "@syncroom/protocol";
 import {
   decidePlaybackReconcileMode,
   shouldTreatAsExplicitSeek,

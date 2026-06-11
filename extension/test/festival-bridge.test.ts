@@ -49,7 +49,7 @@ function installBridgeDomStub(details: Array<PageBridgeDetail | null>): {
       listener({
         source: windowStub,
         data: {
-          type: "bili-syncplay:festival-video",
+          type: "syncroom:festival-video",
           requestId: message.requestId,
           detail,
         },

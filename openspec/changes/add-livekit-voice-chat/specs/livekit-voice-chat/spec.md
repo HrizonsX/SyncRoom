@@ -6,7 +6,7 @@ The system SHALL provide room-scoped voice chat through an operator-managed Live
 
 #### Scenario: Voice service available for a joined room
 
-- **WHEN** a member is connected to a Bili-SyncPlay room and the server has valid LiveKit configuration
+- **WHEN** a member is connected to a syncRoom room and the server has valid LiveKit configuration
 - **THEN** the extension can obtain LiveKit connection details for that room
 
 #### Scenario: Voice service disabled
@@ -16,7 +16,7 @@ The system SHALL provide room-scoped voice chat through an operator-managed Live
 
 ### Requirement: Server issues scoped LiveKit access
 
-The server SHALL issue LiveKit access only after validating that the requester is an active member of the target Bili-SyncPlay room.
+The server SHALL issue LiveKit access only after validating that the requester is an active member of the target syncRoom room.
 
 #### Scenario: Valid member requests voice access
 
@@ -35,12 +35,12 @@ The server SHALL issue LiveKit access only after validating that the requester i
 
 ### Requirement: Voice participant identity maps to room member identity
 
-The system SHALL map each LiveKit participant to the existing Bili-SyncPlay member identity for the same room.
+The system SHALL map each LiveKit participant to the existing syncRoom member identity for the same room.
 
 #### Scenario: Token identity is generated
 
 - **WHEN** the server creates a LiveKit token for a room member
-- **THEN** the LiveKit room name is derived from the Bili-SyncPlay room code and the participant identity is the member id
+- **THEN** the LiveKit room name is derived from the syncRoom room code and the participant identity is the member id
 
 #### Scenario: Display names update
 
@@ -115,16 +115,16 @@ The popup SHALL show voice availability, connection state, local microphone stat
 
 ### Requirement: Voice lifecycle follows room lifecycle
 
-The extension SHALL align LiveKit voice connection lifecycle with Bili-SyncPlay room lifecycle.
+The extension SHALL align LiveKit voice connection lifecycle with syncRoom room lifecycle.
 
 #### Scenario: User leaves room
 
-- **WHEN** the user leaves the Bili-SyncPlay room
+- **WHEN** the user leaves the syncRoom room
 - **THEN** the extension disconnects from the LiveKit room and clears local voice state
 
 #### Scenario: Socket reconnects to same room
 
-- **WHEN** the extension reconnects to the Bili-SyncPlay server and restores the same room
+- **WHEN** the extension reconnects to the syncRoom server and restores the same room
 - **THEN** the extension refreshes voice access and reconnects to the LiveKit room if voice was available
 
 #### Scenario: Room changes
@@ -152,7 +152,7 @@ The system SHALL preserve existing synchronized playback behavior when voice cha
 
 #### Scenario: LiveKit is down
 
-- **WHEN** LiveKit is unreachable but the Bili-SyncPlay server is reachable
+- **WHEN** LiveKit is unreachable but the syncRoom server is reachable
 - **THEN** room creation, room joining, video sharing, and playback sync continue to function
 
 #### Scenario: Microphone permission denied

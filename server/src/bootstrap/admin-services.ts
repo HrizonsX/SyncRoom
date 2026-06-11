@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import type { AnnouncementState, ServerMessage } from "@bili-syncplay/protocol";
+import type { AnnouncementState, ServerMessage } from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import {
   AdminActionError,
@@ -130,7 +130,7 @@ export function createAdminServices(args: {
       : undefined;
     const overviewService = createOverviewService({
       instanceId: args.persistenceConfig.instanceId,
-      serviceName: args.serviceName ?? "bili-syncplay-server",
+      serviceName: args.serviceName ?? "syncroom-server",
       serviceVersion: args.serviceVersion,
       persistenceConfig: args.persistenceConfig,
       roomStore: args.roomStore,
@@ -274,7 +274,7 @@ export function createAdminServices(args: {
         reason?: string,
       ) => actionService.disconnectSession(actor, sessionId, reason),
       eventStore: args.eventStore,
-      serviceName: args.serviceName ?? "bili-syncplay-server",
+      serviceName: args.serviceName ?? "syncroom-server",
       now: args.now,
       writeOriginPolicy: {
         allowedOrigins: args.securityConfig.allowedOrigins,

@@ -5,6 +5,6 @@ export function createGlobalAdminOverviewService(
 ) {
   return createAdminOverviewService({
     ...options,
-    serviceName: options.serviceName || "bili-syncplay-global-admin",
+    serviceName: options.serviceName || "syncroom-global-admin",
   });
 }

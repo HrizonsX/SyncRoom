@@ -99,7 +99,7 @@ test("overview page toggles auto refresh and supports manual refresh binding", a
         return {
           service: {
             instanceId: "instance-1",
-            name: "bili-syncplay-server",
+            name: "syncroom-server",
             version: "1.0.0-test",
             uptimeMs: 12_345,
           },

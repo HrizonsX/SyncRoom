@@ -1,4 +1,4 @@
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 import { getPlayState, getVideoElement } from "./player-binding";
 import {
   createSharePayload as createPageSharePayload,

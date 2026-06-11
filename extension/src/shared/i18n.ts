@@ -1,4 +1,4 @@
-import type { ErrorCode } from "@bili-syncplay/protocol";
+import type { ErrorCode } from "@syncroom/protocol";
 
 type MessageParams = Record<string, string | number | null | undefined>;
 
@@ -6,7 +6,7 @@ type MessageCatalog = Record<string, string>;
 
 const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
   zh: {
-    popupTitle: "SyncRoom",
+    popupTitle: "syncRoom",
     popupTagline: "同频观影，好友同声",
     metricConnectionStatus: "连接状态",
     metricRoomMembers: "房间人数",
@@ -118,7 +118,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorInvalidMessage: "当前请求无效。",
     serverErrorInternal: "服务器内部错误。",
     serverErrorUnsupportedProtocolVersion:
-      "扩展版本过低，请升级 SyncRoom 到最新版本。",
+      "扩展版本过低，请升级 syncRoom 到最新版本。",
     serverErrorVoiceUnavailable: "语音服务不可用。",
     serverErrorVoiceCapacityReached: "语音房间已达到 4 人上限。",
     serverErrorVoiceTokenFailed: "语音令牌签发失败。",
@@ -131,7 +131,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     toastSharedNewVideo: "{name} 共享了新视频：{title}",
   },
   en: {
-    popupTitle: "SyncRoom",
+    popupTitle: "syncRoom",
     popupTagline: "Watch together, speak in sync",
     metricConnectionStatus: "Connection",
     metricRoomMembers: "Members",
@@ -252,7 +252,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorInvalidMessage: "The request was rejected as invalid.",
     serverErrorInternal: "Internal server error.",
     serverErrorUnsupportedProtocolVersion:
-      "Your extension version is too old. Please update SyncRoom to the latest version.",
+      "Your extension version is too old. Please update syncRoom to the latest version.",
     serverErrorVoiceUnavailable: "Voice service is unavailable.",
     serverErrorVoiceCapacityReached:
       "This voice room has reached the 4 member limit.",

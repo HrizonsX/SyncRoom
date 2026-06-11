@@ -17,7 +17,7 @@ interface Copy {
 const COPY: Record<"zh" | "en", Copy> = {
   zh: {
     title: "允许麦克风",
-    description: "SyncRoom 需要麦克风权限，才能在当前房间里开麦说话。",
+    description: "syncRoom 需要麦克风权限，才能在当前房间里开麦说话。",
     idleStatus: "点击按钮后，请在浏览器权限提示中选择允许。",
     requestingStatus: "正在请求麦克风权限...",
     grantedStatus: "麦克风权限已允许，正在返回房间语音。",
@@ -32,7 +32,7 @@ const COPY: Record<"zh" | "en", Copy> = {
   en: {
     title: "Allow microphone",
     description:
-      "SyncRoom needs microphone access before you can speak in the room.",
+      "syncRoom needs microphone access before you can speak in the room.",
     idleStatus: "Click the button, then choose Allow in the browser prompt.",
     requestingStatus: "Requesting microphone permission...",
     grantedStatus: "Microphone permission granted. Returning to room voice.",

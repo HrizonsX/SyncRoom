@@ -95,7 +95,7 @@ export async function ensureRedis(required: boolean): Promise<RedisHarness> {
   }
 
   const port = await reservePort();
-  const directory = await mkdtemp(join(tmpdir(), "bili-syncplay-bench-redis-"));
+  const directory = await mkdtemp(join(tmpdir(), "syncroom-bench-redis-"));
   const processRef = spawn(
     "redis-server",
     [

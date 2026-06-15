@@ -740,7 +740,7 @@ export function isGlobalAdminInstance(instanceId) {
 
 export function resolveConsoleContext(instanceId, serviceName = "") {
   if (
-    serviceName === "bili-syncplay-global-admin" ||
+    serviceName === "syncroom-global-admin" ||
     isGlobalAdminInstance(instanceId)
   ) {
     return {

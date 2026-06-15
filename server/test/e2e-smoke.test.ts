@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import test from "node:test";
 import { WebSocket, type RawData } from "ws";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import {
   createSyncServer,
   getDefaultPersistenceConfig,

@@ -1156,6 +1156,11 @@ button.secondary.success-button {
   box-shadow: 0 5px 14px rgba(61, 71, 88, 0.12);
 }
 
+.member-row.is-self:has(.member-state.speaking):hover .avatar {
+  transform: none;
+  box-shadow: none;
+}
+
 .member-name {
   display: block;
   min-width: 0;

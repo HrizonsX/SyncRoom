@@ -1,4 +1,4 @@
-import type { SharedVideo } from "@bili-syncplay/protocol";
+import type { SharedVideo } from "@syncroom/protocol";
 import {
   bindVideoElement,
   getVideoElement,

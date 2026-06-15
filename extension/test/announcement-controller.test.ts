@@ -1,11 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AnnouncementState } from "@bili-syncplay/protocol";
+import type { AnnouncementState } from "@syncroom/protocol";
 import {
   createAnnouncementController,
   toAnnouncementsApiUrl,
 } from "../src/background/announcement-controller";
 import { createBackgroundRuntimeState } from "../src/background/runtime-state";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
+function createAnnouncementState(id: string): AnnouncementState {
+  return {
+    version: 1,
+    updatedAt: 1_710_000_000_000,
+    items: [{ id, text: `${id} notice` }],
+  };
+}
+
+function createAnnouncementResponse(state: AnnouncementState): Response {
+  return {
+    ok: true,
+    async json() {
+      return { ok: true, data: state };
+    },
+  } as Response;
+}
 
 function installChromeLocalStorage(initial: Record<string, unknown> = {}) {
   const localBucket: Record<string, unknown> = { ...initial };
@@ -37,7 +65,7 @@ test("announcement controller loads cached storage and refreshes from the announ
     items: [{ id: "server", text: "Fresh notice" }],
   };
   const localBucket = installChromeLocalStorage({
-    "bili-syncplay-announcements": cachedState,
+    "syncroom-announcements": cachedState,
   });
   const runtimeState = createBackgroundRuntimeState();
   const fetchUrls: string[] = [];
@@ -70,8 +98,70 @@ test("announcement controller loads cached storage and refreshes from the announ
 
   assert.deepEqual(fetchUrls, ["http://localhost:8787/api/announcements"]);
   assert.deepEqual(runtimeState.announcements.current, serverState);
-  assert.deepEqual(localBucket["bili-syncplay-announcements"], serverState);
+  assert.deepEqual(localBucket["syncroom-announcements"], serverState);
   assert.equal(notifyAllCalls, 2);
+});
+
+test("announcement refresh starts a new request when the server URL changes while a previous request is in flight", async () => {
+  const localBucket = installChromeLocalStorage();
+  const runtimeState = createBackgroundRuntimeState();
+  const oldServerState = createAnnouncementState("old-server");
+  const newServerState = createAnnouncementState("new-server");
+  const fetchResponses = new Map<
+    string,
+    ReturnType<typeof createDeferred<Response>>
+  >();
+  const fetchUrls: string[] = [];
+  const logs: string[] = [];
+  let notifyAllCalls = 0;
+  let serverUrl = "ws://old.example.test/ws";
+
+  const controller = createAnnouncementController({
+    announcementState: runtimeState.announcements,
+    getServerUrl: () => serverUrl,
+    fetchImpl: async (input) => {
+      const url = String(input);
+      fetchUrls.push(url);
+      const deferred = createDeferred<Response>();
+      fetchResponses.set(url, deferred);
+      return deferred.promise;
+    },
+    log(_scope, message) {
+      logs.push(message);
+    },
+    notifyAll() {
+      notifyAllCalls += 1;
+    },
+  });
+
+  const oldRefresh = controller.refreshAnnouncements();
+  assert.deepEqual(fetchUrls, ["http://old.example.test/api/announcements"]);
+
+  serverUrl = "ws://new.example.test/ws";
+  const newRefresh = controller.refreshAnnouncements();
+  assert.deepEqual(fetchUrls, [
+    "http://old.example.test/api/announcements",
+    "http://new.example.test/api/announcements",
+  ]);
+
+  fetchResponses
+    .get("http://new.example.test/api/announcements")
+    ?.resolve(createAnnouncementResponse(newServerState));
+  await newRefresh;
+
+  assert.deepEqual(runtimeState.announcements.current, newServerState);
+  assert.equal(localBucket["syncroom-announcements"], newServerState);
+  assert.equal(notifyAllCalls, 1);
+
+  fetchResponses
+    .get("http://old.example.test/api/announcements")
+    ?.resolve(createAnnouncementResponse(oldServerState));
+  await oldRefresh;
+
+  assert.deepEqual(runtimeState.announcements.current, newServerState);
+  assert.equal(localBucket["syncroom-announcements"], newServerState);
+  assert.equal(notifyAllCalls, 1);
+  assert.ok(logs.includes("Ignored stale announcement refresh result."));
 });
 
 test("announcement API URL conversion keeps the HTTP fetch separate from the WebSocket path", () => {

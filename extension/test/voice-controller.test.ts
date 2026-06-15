@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ClientMessage, ServerMessage } from "@bili-syncplay/protocol";
+import type { ClientMessage, ServerMessage } from "@syncroom/protocol";
 import { createVoiceController } from "../src/background/voice-controller";
 import {
   VoiceRuntimeAdapterError,
@@ -67,7 +67,7 @@ const accessGrantedMessage = {
   payload: {
     livekitUrl: "wss://voice.example.com",
     token: "livekit-token-1234567890",
-    roomName: "bili-syncplay:ROOM01",
+    roomName: "syncroom:ROOM01",
     participantIdentity: "member-1",
     expiresAt: 1_710_000_000_000,
   },

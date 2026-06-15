@@ -1,4 +1,4 @@
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 
 export type AdminRole = "viewer" | "operator" | "admin";
 
@@ -139,6 +139,7 @@ export type RoomDetailMember = {
   joinedAt: number | null;
   remoteAddress: string | null;
   origin: string | null;
+  microphoneEnabled: boolean;
 };
 
 export type RoomDetail = {

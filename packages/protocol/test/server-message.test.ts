@@ -552,7 +552,7 @@ test("accepts a valid voice:access-granted message", () => {
       payload: {
         livekitUrl: "wss://voice.example.com",
         token: VALID_TOKEN,
-        roomName: "bili-syncplay:ABC123",
+        roomName: "syncroom:ABC123",
         participantIdentity: "member-1",
         expiresAt: 1_725_000_000_000,
       },
@@ -568,7 +568,7 @@ test("rejects voice:access-granted when it exposes malformed connection details"
       payload: {
         livekitUrl: "https://voice.example.com",
         token: VALID_TOKEN,
-        roomName: "bili-syncplay:ABC123",
+        roomName: "syncroom:ABC123",
         participantIdentity: "member-1",
         expiresAt: 1_725_000_000_000,
       },
@@ -581,7 +581,7 @@ test("rejects voice:access-granted when it exposes malformed connection details"
       payload: {
         livekitUrl: "wss://voice.example.com",
         token: "short-token",
-        roomName: "bili-syncplay:ABC123",
+        roomName: "syncroom:ABC123",
         participantIdentity: "member-1",
         expiresAt: 1_725_000_000_000,
       },

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createMessageController } from "../src/background/message-controller";
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 
 function createControllerHarness(
   overrides: {

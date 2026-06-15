@@ -23,7 +23,7 @@
 - [ ] Add `announcement:update` to `ServerMessage`.
 - [ ] Write failing protocol guard tests for a valid update and invalid item fields.
 - [ ] Implement bounded string and array validation.
-- [ ] Run `npm run --ignore-scripts test -w @bili-syncplay/protocol`.
+- [ ] Run `npm run --ignore-scripts test -w @syncroom/protocol`.
 
 ### Task 2: Server Announcement Store, Read API, And Push
 

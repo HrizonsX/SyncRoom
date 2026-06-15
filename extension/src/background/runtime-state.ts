@@ -3,7 +3,7 @@ import type {
   PlaybackState,
   RoomState,
   SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type {
   DebugLogEntry,
   SharedVideoToastPayload,
@@ -14,13 +14,13 @@ import {
   type VoiceRuntimeState,
 } from "../shared/voice-state";
 
-declare const __BILI_SYNCPLAY_DEFAULT_SERVER_URL__: string | undefined;
+declare const __SYNCROOM_DEFAULT_SERVER_URL__: string | undefined;
 
 const LOCALHOST_SERVER_URL = "ws://localhost:8787";
 
 export const DEFAULT_SERVER_URL =
-  typeof __BILI_SYNCPLAY_DEFAULT_SERVER_URL__ === "string"
-    ? __BILI_SYNCPLAY_DEFAULT_SERVER_URL__
+  typeof __SYNCROOM_DEFAULT_SERVER_URL__ === "string"
+    ? __SYNCROOM_DEFAULT_SERVER_URL__
     : LOCALHOST_SERVER_URL;
 export const MAX_RECONNECT_ATTEMPTS = 5;
 export const SHARE_TOAST_TTL_MS = 8000;
@@ -40,6 +40,8 @@ export interface ConnectionState {
   connected: boolean;
   lastError: string | null;
   connectProbe: Promise<void> | null;
+  connectProbeServerUrl: string | null;
+  connectProbeAbortController: AbortController | null;
   reconnectTimer: number | null;
   reconnectAttempt: number;
   reconnectDeadlineMs: number | null;
@@ -106,6 +108,8 @@ export function createBackgroundRuntimeState(): BackgroundRuntimeState {
       connected: false,
       lastError: null,
       connectProbe: null,
+      connectProbeServerUrl: null,
+      connectProbeAbortController: null,
       reconnectTimer: null,
       reconnectAttempt: 0,
       reconnectDeadlineMs: null,

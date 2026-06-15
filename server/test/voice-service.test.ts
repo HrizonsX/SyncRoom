@@ -60,7 +60,7 @@ test("voice access service issues scoped LiveKit access for a valid room member"
   assert.deepEqual(access, {
     livekitUrl: "wss://voice.example.com",
     token: "signed-livekit-token",
-    roomName: "bili-syncplay:ABC123",
+    roomName: "syncroom:ABC123",
     participantIdentity: "member-1",
     expiresAt: 1_725_000_600_000,
   });
@@ -68,7 +68,7 @@ test("voice access service issues scoped LiveKit access for a valid room member"
     {
       apiKey: "livekit-key",
       apiSecret: "livekit-secret",
-      roomName: "bili-syncplay:ABC123",
+      roomName: "syncroom:ABC123",
       participantIdentity: "member-1",
       participantName: "Alice Chen",
       ttlSeconds: 600,
@@ -145,7 +145,7 @@ test("LiveKit token signer scopes JWT grants to the voice room and participant",
   const token = await signer({
     apiKey: "livekit-key",
     apiSecret: "livekit-secret",
-    roomName: "bili-syncplay:ABC123",
+    roomName: "syncroom:ABC123",
     participantIdentity: "member-1",
     participantName: "Alice",
     ttlSeconds: 600,
@@ -173,7 +173,7 @@ test("LiveKit token signer scopes JWT grants to the voice room and participant",
   assert.equal(claims.name, "Alice");
   assert.deepEqual(claims.video, {
     roomJoin: true,
-    room: "bili-syncplay:ABC123",
+    room: "syncroom:ABC123",
     canPublish: true,
     canPublishSources: ["microphone"],
     canSubscribe: true,

@@ -1,4 +1,4 @@
-import type { PlaybackState, SharedVideo } from "@bili-syncplay/protocol";
+import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 import type { RoomListQuery } from "./admin/types.js";
 import type { ActiveRoom, PersistedRoom, RoomStoreRoomState } from "./types.js";
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RoomState, ServerMessage } from "@bili-syncplay/protocol";
+import type { RoomState, ServerMessage } from "@syncroom/protocol";
 import { createBackgroundRuntimeState } from "../src/background/runtime-state";
 import { createRoomSessionController } from "../src/background/room-session-controller";
 import { setLocaleForTests } from "../src/shared/i18n";
@@ -141,6 +141,22 @@ test("room session controller marks create pending before connecting", async () 
   assert.deepEqual(harness.sendToServerCalls, []);
 });
 
+test("room session controller skips stale create send after pending create was consumed", async () => {
+  const harness = createControllerHarness({
+    connect(state) {
+      assert.equal(state.room.pendingCreateRoom, true);
+      state.connection.connected = true;
+      state.room.pendingCreateRoom = false;
+    },
+  });
+
+  await harness.controller.requestCreateRoom();
+
+  assert.equal(harness.connectCalls, 1);
+  assert.equal(harness.runtimeState.room.pendingCreateRoom, false);
+  assert.deepEqual(harness.sendToServerCalls, []);
+});
+
 test("room session controller clears pending join on unsupported_protocol_version error", async () => {
   const harness = createControllerHarness();
   harness.runtimeState.room.pendingJoinRoomCode = "ROOM-PV";
@@ -190,7 +206,7 @@ test("room session controller clears stored room on unsupported_protocol_version
   assert.equal(harness.runtimeState.room.roomState, null);
   assert.equal(
     harness.runtimeState.connection.lastError,
-    "Your extension version is too old. Please update SyncRoom to the latest version.",
+    "Your extension version is too old. Please update syncRoom to the latest version.",
   );
 });
 
@@ -253,6 +269,32 @@ test("room session controller resolves failed join attempts and clears stale roo
   assert.equal(harness.runtimeState.room.memberToken, null);
   assert.equal(harness.runtimeState.connection.lastError, "房间不存在。");
   assert.equal(harness.persistReasons.length, 1);
+  assert.equal(harness.notifyAllCalls, 1);
+});
+
+test("room session controller logs localized server room limit errors", async () => {
+  const harness = createControllerHarness();
+  setLocaleForTests("zh-CN");
+
+  try {
+    await harness.controller.handleServerMessage({
+      type: "error",
+      payload: {
+        code: "server_room_limit_reached",
+        message: "Server node room limit reached.",
+      },
+    } satisfies ServerMessage);
+  } finally {
+    setLocaleForTests(null);
+  }
+
+  assert.equal(
+    harness.runtimeState.connection.lastError,
+    "当前服务器节点房间数已达上限，请稍后再试。",
+  );
+  assert.deepEqual(harness.logs, [
+    "server-error:server_room_limit_reached:当前服务器节点房间数已达上限，请稍后再试。",
+  ]);
   assert.equal(harness.notifyAllCalls, 1);
 });
 

@@ -5,8 +5,8 @@ import {
   type PlayerInput,
 } from "./page-bridge-detail";
 
-const REQUEST_TYPE = "bili-syncplay:get-festival-video";
-const RESPONSE_TYPE = "bili-syncplay:festival-video";
+const REQUEST_TYPE = "syncroom:get-festival-video";
+const RESPONSE_TYPE = "syncroom:festival-video";
 
 window.addEventListener("message", (event) => {
   if (event.source !== window || event.data?.type !== REQUEST_TYPE) {

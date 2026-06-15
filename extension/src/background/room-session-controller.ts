@@ -3,8 +3,8 @@ import type {
   RoomState,
   ServerMessage,
   ClientMessage,
-} from "@bili-syncplay/protocol";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import type { BackgroundToContentMessage } from "../shared/messages";
 import {
   decideIncomingRoomState,
@@ -377,11 +377,12 @@ export function createRoomSessionController(args: {
           message.payload.member,
         );
         return;
-      case "error":
+      case "error": {
         args.connectionState.lastError = localizeServerError(
           message.payload.code,
           message.payload.message,
         );
+        const localizedError = args.connectionState.lastError;
         if (
           args.roomSessionState.pendingJoinRoomCode &&
           (message.payload.code === "room_not_found" ||
@@ -414,18 +415,19 @@ export function createRoomSessionController(args: {
         ) {
           await clearCurrentRoomContext(
             `server rejected stored room context: ${message.payload.code}`,
-            args.connectionState.lastError,
+            localizedError,
           );
-          args.logServerError(message.payload.code, message.payload.message);
+          args.logServerError(message.payload.code, localizedError);
           return;
         }
         if (message.payload.code === "member_token_invalid") {
           args.roomSessionState.memberToken = null;
           await args.persistState();
         }
-        args.logServerError(message.payload.code, message.payload.message);
+        args.logServerError(message.payload.code, localizedError);
         args.notifyAll();
         return;
+      }
       case "sync:pong":
         return;
     }
@@ -613,7 +615,10 @@ export function createRoomSessionController(args: {
     await args.persistState();
     args.roomSessionState.pendingCreateRoom = true;
     await args.connect();
-    if (args.connectionState.connected) {
+    if (
+      args.connectionState.connected &&
+      args.roomSessionState.pendingCreateRoom
+    ) {
       args.roomSessionState.pendingCreateRoom = false;
       args.sendToServer({
         type: "room:create",

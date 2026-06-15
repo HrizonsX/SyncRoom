@@ -1,4 +1,4 @@
-import type { ClientMessage, RoomState } from "@bili-syncplay/protocol";
+import type { ClientMessage, RoomState } from "@syncroom/protocol";
 import {
   compensateRoomStateForClock,
   CLOCK_SYNC_INTERVAL_MS,

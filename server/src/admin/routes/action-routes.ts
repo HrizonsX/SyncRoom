@@ -33,6 +33,29 @@ export const handleActionRoutes: AdminRouteHandler = async ({
   }
 
   if (
+    request.method === "PUT" &&
+    segments.length === 4 &&
+    segments[0] === "api" &&
+    segments[1] === "admin" &&
+    segments[2] === "config" &&
+    segments[3] === "runtime-limits"
+  ) {
+    if (!helpers.requireWriteOrigin(request, response)) {
+      return true;
+    }
+    const session = await helpers.requireAdmin(request, response);
+    if (!session) {
+      return true;
+    }
+    if (!helpers.requireRole(session, "admin", response)) {
+      return true;
+    }
+    const body = await readJsonBody(request);
+    sendOk(response, await options.updateRuntimeLimits(session, body));
+    return true;
+  }
+
+  if (
     request.method === "POST" &&
     segments.length === 3 &&
     segments[0] === "api" &&

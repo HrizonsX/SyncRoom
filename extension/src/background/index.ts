@@ -1,7 +1,4 @@
-import {
-  type ClientMessage,
-  type ServerMessage,
-} from "@bili-syncplay/protocol";
+import { type ClientMessage, type ServerMessage } from "@syncroom/protocol";
 import type { BackgroundToContentMessage } from "../shared/messages";
 import { normalizeSharedVideoUrl } from "../shared/url";
 import { createAnnouncementController } from "./announcement-controller";

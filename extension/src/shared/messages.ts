@@ -5,7 +5,7 @@ import {
   type PlaybackState,
   type RoomState,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { VoiceHostEventMessage } from "./voice-host-messages";
 import type { VoiceRuntimeState } from "./voice-state";
 

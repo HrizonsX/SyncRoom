@@ -1,4 +1,4 @@
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 
 export const CLOCK_SYNC_INTERVAL_MS = 15000;
 

@@ -7,6 +7,7 @@ import {
   resolveServerRuntimeDependencies,
 } from "./bootstrap/admin-http-bootstrap.js";
 import { createInMemoryAnnouncementStore } from "./announcement-store.js";
+import { createRuntimeLimitsService } from "./admin/runtime-limits-service.js";
 import {
   createServerBootstrapContext,
   createSharedServerShutdownSteps,
@@ -63,6 +64,7 @@ export async function createGlobalAdminServer(
   } = await createServerBootstrapContext(persistenceConfig, dependencies, {
     useMirroredRuntimeStore: false,
   });
+  const runtimeLimitsService = createRuntimeLimitsService();
   const roomService = createRoomService({
     config: securityConfig,
     persistence: persistenceConfig,
@@ -85,6 +87,7 @@ export async function createGlobalAdminServer(
     runtimeStore,
     eventStore,
     roomService,
+    runtimeLimitsService,
     announcementStore,
     send() {},
     listAnnouncementPushSessions: () => Promise.resolve([]),
@@ -97,7 +100,7 @@ export async function createGlobalAdminServer(
     now,
     adminConfig: dependencies.adminConfig,
     adminUiConfig: dependencies.adminUiConfig,
-    serviceName: "bili-syncplay-global-admin",
+    serviceName: "syncroom-global-admin",
     createOverviewService: createGlobalAdminOverviewService,
     createRoomQueryService: createGlobalAdminRoomQueryService,
     serviceVersion,

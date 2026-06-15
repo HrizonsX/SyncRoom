@@ -1,4 +1,4 @@
-export const STORAGE_KEY = "bili-syncplay-admin-token";
+export const STORAGE_KEY = "syncroom-admin-token";
 export const AUTO_REFRESH_MS = 15000;
 export const DEMO_QUERY_KEY = "demo";
 export const DEMO_TOKEN = "demo-token";

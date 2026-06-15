@@ -1,4 +1,4 @@
-import type { RoomMember } from "@bili-syncplay/protocol";
+import type { RoomMember } from "@syncroom/protocol";
 import type { BackgroundPopupState } from "../shared/messages";
 import { getUiLanguage, t } from "../shared/i18n";
 import type {

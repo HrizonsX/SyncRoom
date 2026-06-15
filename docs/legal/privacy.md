@@ -1,8 +1,8 @@
-# SyncRoom Privacy Policy
+# syncRoom Privacy Policy
 
 Effective date: 2026-06-07
 
-This Privacy Policy applies to the SyncRoom browser extension (the "Extension"). It explains what information the Extension processes, how that information is used, and what controls users have over related data when using synchronized playback, optional room voice, and connection diagnostics.
+This Privacy Policy applies to the syncRoom browser extension (the "Extension"). It explains what information the Extension processes, how that information is used, and what controls users have over related data when using synchronized playback, optional room voice, and connection diagnostics.
 
 ## 1. Types of Information Processed
 

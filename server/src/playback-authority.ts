@@ -1,7 +1,7 @@
 import {
   isExplicitControlSyncIntent,
   type PlaybackState,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { PlaybackAuthority } from "./types.js";
 
 export type PlaybackAcceptanceDecision =

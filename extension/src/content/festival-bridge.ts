@@ -1,4 +1,4 @@
-import type { SharedVideo } from "@bili-syncplay/protocol";
+import type { SharedVideo } from "@syncroom/protocol";
 import {
   buildBangumiEpisodeShareUrl,
   buildBvidCidShareUrl,
@@ -40,7 +40,7 @@ export function createFestivalBridgeController(): FestivalBridgeController {
     pageUrl: string,
   ): Promise<PageVideoSnapshot | null> {
     ensureFestivalBridge();
-    const requestId = `bili-syncplay-festival-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const requestId = `syncroom-festival-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
     return await new Promise<PageVideoSnapshot | null>((resolve) => {
       const timeoutId = window.setTimeout(() => {
@@ -68,7 +68,7 @@ export function createFestivalBridgeController(): FestivalBridgeController {
           return;
         }
         if (
-          messageEvent.data?.type !== "bili-syncplay:festival-video" ||
+          messageEvent.data?.type !== "syncroom:festival-video" ||
           messageEvent.data.requestId !== requestId
         ) {
           return;
@@ -111,7 +111,7 @@ export function createFestivalBridgeController(): FestivalBridgeController {
 
       window.addEventListener("message", onSnapshot as EventListener);
       window.postMessage(
-        { type: "bili-syncplay:get-festival-video", requestId },
+        { type: "syncroom:get-festival-video", requestId },
         "*",
       );
     });

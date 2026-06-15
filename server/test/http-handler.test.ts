@@ -214,6 +214,19 @@ test("http handler returns 404 for /metrics when metrics are routed to a dedicat
   assert.equal(adminCalls.length, 0);
 });
 
+test("http handler reports the syncroom service name on the root endpoint", async () => {
+  const { handler } = createHandler();
+  const response = createResponse();
+
+  await handler(createRequest({ url: "/" }), response);
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(JSON.parse(response.body), {
+    ok: true,
+    service: "syncroom-server",
+  });
+});
+
 test("http handler preserves admin router responses without falling through to root payload", async () => {
   const { handler, adminCalls } = createHandler(true);
   const response = createResponse();

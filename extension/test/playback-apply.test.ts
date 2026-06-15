@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 import { decidePlaybackApplication } from "../src/content/playback-apply";
 
 function createRoomState(

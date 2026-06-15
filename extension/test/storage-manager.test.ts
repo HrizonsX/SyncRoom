@@ -45,7 +45,7 @@ function installChromeStorage(
 
 test("loadPersistedBackgroundSnapshot combines session room state and local profile state", async () => {
   const { sessionBucket, localBucket } = installChromeStorage();
-  sessionBucket["bili-syncplay-session"] = {
+  sessionBucket["syncroom-session"] = {
     roomCode: "ROOM01",
     joinToken: "join-token-1",
     memberToken: "member-token-1",
@@ -59,7 +59,7 @@ test("loadPersistedBackgroundSnapshot combines session room state and local prof
       updatedAt: Date.now(),
     },
   };
-  localBucket["bili-syncplay-profile"] = {
+  localBucket["syncroom-profile"] = {
     displayName: "Alice",
     serverUrl: "ws://localhost:8787",
   };
@@ -77,7 +77,7 @@ test("loadPersistedBackgroundSnapshot combines session room state and local prof
 
 test("persistBackgroundState only writes session storage", async () => {
   const { sessionBucket, localBucket } = installChromeStorage();
-  localBucket["bili-syncplay-profile"] = {
+  localBucket["syncroom-profile"] = {
     displayName: "Alice",
     serverUrl: "ws://localhost:8787",
   };
@@ -90,11 +90,11 @@ test("persistBackgroundState only writes session storage", async () => {
 
   await persistBackgroundState(state);
 
-  assert.deepEqual(localBucket["bili-syncplay-profile"], {
+  assert.deepEqual(localBucket["syncroom-profile"], {
     displayName: "Alice",
     serverUrl: "ws://localhost:8787",
   });
-  assert.deepEqual(sessionBucket["bili-syncplay-session"], {
+  assert.deepEqual(sessionBucket["syncroom-session"], {
     roomCode: "ROOM02",
     joinToken: "join-token-2",
     memberToken: "member-token-2",
@@ -105,7 +105,7 @@ test("persistBackgroundState only writes session storage", async () => {
 
 test("persistBackgroundProfile only writes local storage", async () => {
   const { sessionBucket, localBucket } = installChromeStorage();
-  sessionBucket["bili-syncplay-session"] = {
+  sessionBucket["syncroom-session"] = {
     roomCode: "ROOM03",
     joinToken: "join-token-3",
     memberToken: "member-token-3",
@@ -119,14 +119,14 @@ test("persistBackgroundProfile only writes local storage", async () => {
 
   await persistBackgroundProfile(state);
 
-  assert.deepEqual(sessionBucket["bili-syncplay-session"], {
+  assert.deepEqual(sessionBucket["syncroom-session"], {
     roomCode: "ROOM03",
     joinToken: "join-token-3",
     memberToken: "member-token-3",
     memberId: "member-3",
     roomState: null,
   });
-  assert.deepEqual(localBucket["bili-syncplay-profile"], {
+  assert.deepEqual(localBucket["syncroom-profile"], {
     displayName: "Bob",
     serverUrl: "wss://sync.example.com",
   });
@@ -136,7 +136,7 @@ test("persistBackgroundState failure does not mutate local profile storage", asy
   const { localBucket } = installChromeStorage({
     session: { failSet: true },
   });
-  localBucket["bili-syncplay-profile"] = {
+  localBucket["syncroom-profile"] = {
     displayName: "Carol",
     serverUrl: "ws://localhost:9000",
   };
@@ -146,7 +146,7 @@ test("persistBackgroundState failure does not mutate local profile storage", asy
   state.room.joinToken = "join-token-4";
 
   await assert.rejects(() => persistBackgroundState(state), /set failed/);
-  assert.deepEqual(localBucket["bili-syncplay-profile"], {
+  assert.deepEqual(localBucket["syncroom-profile"], {
     displayName: "Carol",
     serverUrl: "ws://localhost:9000",
   });

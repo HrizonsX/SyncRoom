@@ -6,6 +6,7 @@ import type { AnnouncementStore } from "../announcement-store.js";
 import type { GlobalEventStore } from "../admin/global-event-store.js";
 import { createAdminOverviewService } from "../admin/overview-service.js";
 import { createAdminRoomQueryService } from "../admin/room-query-service.js";
+import { createRuntimeLimitsService } from "../admin/runtime-limits-service.js";
 import type { MetricsCollector } from "../admin/metrics.js";
 import type { AdminCommandBus } from "../admin-command-bus.js";
 import {
@@ -56,6 +57,7 @@ export async function createSharedAdminHttpBootstrap(args: {
   runtimeStore: RuntimeStore;
   eventStore: GlobalEventStore;
   roomService: ReturnType<typeof createRoomService>;
+  runtimeLimitsService: ReturnType<typeof createRuntimeLimitsService>;
   announcementStore: AnnouncementStore;
   send: (socket: WebSocket, message: ServerMessage) => void;
   listAnnouncementPushSessions: () => Promise<Session[]>;
@@ -118,6 +120,7 @@ export async function createSharedAdminHttpBootstrap(args: {
     runtimeStore: args.runtimeStore,
     eventStore: args.eventStore,
     roomService: args.roomService,
+    runtimeLimitsService: args.runtimeLimitsService,
     announcementStore: args.announcementStore,
     send: args.send,
     listAnnouncementPushSessions: args.listAnnouncementPushSessions,

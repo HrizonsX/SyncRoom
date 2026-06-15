@@ -3,11 +3,13 @@ import type {
   PersistenceConfig,
   SecurityConfig,
 } from "../types.js";
+import type { RuntimeLimits } from "./runtime-limits-service.js";
 
 export function createAdminConfigService(options: {
   adminConfig: AdminConfig;
   persistenceConfig: PersistenceConfig;
   securityConfig: SecurityConfig;
+  getRuntimeLimits: () => RuntimeLimits;
 }) {
   return {
     getSummary() {
@@ -20,6 +22,7 @@ export function createAdminConfigService(options: {
             options.persistenceConfig.roomCleanupIntervalMs,
           redisConfigured: options.persistenceConfig.provider === "redis",
         },
+        runtimeLimits: options.getRuntimeLimits(),
         security: {
           allowedOrigins: options.securityConfig.allowedOrigins ?? [],
           allowMissingOriginInDev:

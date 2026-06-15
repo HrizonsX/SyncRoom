@@ -138,5 +138,11 @@ export function createAdminApi({
     getConfig() {
       return this.request("/api/admin/config");
     },
+    updateRuntimeLimits(payload) {
+      return this.request("/api/admin/config/runtime-limits", {
+        method: "PUT",
+        body: payload,
+      });
+    },
   };
 }

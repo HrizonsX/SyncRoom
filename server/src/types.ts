@@ -29,6 +29,10 @@ export type SessionRateLimitState = {
   syncPing: TokenBucket;
 };
 
+export type SessionVoiceState = {
+  microphoneEnabled: boolean;
+};
+
 export type SessionBase = {
   id: string;
   instanceId?: string | null;
@@ -40,6 +44,7 @@ export type SessionBase = {
   memberToken: string | null;
   protocolVersion?: number;
   joinedAt: number | null;
+  voiceState?: SessionVoiceState;
   invalidMessageCount: number;
   rateLimitState: SessionRateLimitState;
 };

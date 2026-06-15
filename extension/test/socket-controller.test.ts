@@ -165,3 +165,107 @@ test("socket controller releases pending join after final websocket error", asyn
     });
   }
 });
+
+test("socket controller starts a fresh probe when server URL changes during connection", async () => {
+  const runtimeState = createBackgroundRuntimeState();
+  runtimeState.connection.serverUrl = "ws://old.example:8787";
+  runtimeState.room.pendingCreateRoom = true;
+  const fetchCalls: string[] = [];
+  const socketUrls: string[] = [];
+  let resolveOldFetch: ((response: Response) => void) | null = null;
+  let oldFetchAborted = false;
+
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  const originalWebSocket = globalThis.WebSocket;
+  class FakeWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    readyState = FakeWebSocket.CONNECTING;
+
+    constructor(url: string) {
+      socketUrls.push(url);
+    }
+
+    addEventListener() {}
+
+    close() {}
+  }
+
+  Object.assign(globalThis, {
+    chrome: {
+      runtime: {
+        getURL() {
+          return "chrome-extension://test-extension/";
+        },
+      },
+    } as unknown as typeof chrome,
+    fetch: ((url: string, init?: RequestInit) => {
+      fetchCalls.push(url);
+      if (url.includes("old.example")) {
+        return new Promise<Response>((resolve, reject) => {
+          resolveOldFetch = resolve;
+          init?.signal?.addEventListener("abort", () => {
+            oldFetchAborted = true;
+            reject(new DOMException("Aborted", "AbortError"));
+          });
+        });
+      }
+      return Promise.resolve({ ok: true } as Response);
+    }) as typeof fetch,
+    WebSocket: FakeWebSocket as unknown as typeof WebSocket,
+  });
+
+  try {
+    const controller = createSocketController({
+      connectionState: runtimeState.connection,
+      roomSessionState: runtimeState.room,
+      maxReconnectAttempts: 5,
+      log() {},
+      logInvalidServerUrl() {},
+      logConnectionProbeFailure() {},
+      notifyAll() {},
+      stopClockSyncTimer() {},
+      syncClock() {},
+      startClockSyncTimer() {},
+      clearPendingLocalShare() {},
+      sendJoinRequest() {},
+      sendToServer() {},
+      async handleServerMessage() {},
+      buildConnectionCheckUrl() {
+        return null;
+      },
+      buildHealthcheckUrl(serverUrl) {
+        return `${serverUrl}/healthz`;
+      },
+      onOpen() {},
+      onAdminSessionReset() {},
+      formatAdminSessionResetReason(reason) {
+        return reason;
+      },
+      reconnectFailedMessage() {
+        return "Reconnect failed.";
+      },
+    });
+
+    const oldConnect = controller.connect();
+    await Promise.resolve();
+    runtimeState.connection.serverUrl = "ws://new.example:8787";
+    const newConnect = controller.connect();
+    resolveOldFetch?.({ ok: true } as Response);
+    await Promise.all([oldConnect, newConnect]);
+
+    assert.deepEqual(fetchCalls, [
+      "ws://old.example:8787/healthz",
+      "ws://new.example:8787/healthz",
+    ]);
+    assert.deepEqual(socketUrls, ["ws://new.example:8787"]);
+    assert.equal(oldFetchAborted, true);
+  } finally {
+    Object.assign(globalThis, {
+      chrome: originalChrome,
+      fetch: originalFetch,
+      WebSocket: originalWebSocket,
+    });
+  }
+});

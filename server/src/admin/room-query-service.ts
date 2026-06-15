@@ -199,6 +199,7 @@ export function createAdminRoomQueryService(options: {
           joinedAt: session.joinedAt,
           remoteAddress: session.remoteAddress,
           origin: session.origin,
+          microphoneEnabled: session.voiceState?.microphoneEnabled === true,
         })),
         recentEvents: (
           await options.eventStore.query({

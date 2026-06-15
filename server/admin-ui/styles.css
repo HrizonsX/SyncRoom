@@ -709,6 +709,62 @@ a {
   padding: 0;
 }
 
+.runtime-limits-panel {
+  grid-column: 1 / -1;
+}
+
+.runtime-limit-form {
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-limit-row {
+  display: grid;
+  grid-template-columns:
+    minmax(220px, 1fr) minmax(120px, max-content) minmax(140px, max-content)
+    auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.runtime-limit-field label,
+.runtime-limit-status span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.4;
+  text-transform: none;
+}
+
+.runtime-limit-status {
+  display: grid;
+  gap: 6px;
+  min-width: 120px;
+  align-self: stretch;
+  align-content: end;
+}
+
+.runtime-limit-status > div {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+}
+
+.runtime-limit-effective {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.runtime-limit-save {
+  min-width: 84px;
+  justify-self: end;
+}
+
 .actions {
   display: flex;
   align-items: center;
@@ -731,6 +787,10 @@ a {
   gap: 12px;
   flex-wrap: wrap;
   padding-top: 8px;
+}
+
+.filter-footer.full-width {
+  grid-column: 1 / -1;
 }
 
 .filter-footer .actions {
@@ -1357,21 +1417,24 @@ td {
 .members-table th:nth-child(1) {
   width: 12%;
 }
-.members-table th:nth-child(2),
-.members-table th:nth-child(3) {
-  width: 18%;
-}
+.members-table th:nth-child(3),
 .members-table th:nth-child(4) {
-  width: 13%;
+  width: 16%;
+}
+.members-table th:nth-child(2) {
+  width: 10%;
 }
 .members-table th:nth-child(5) {
-  width: 14%;
+  width: 12%;
 }
 .members-table th:nth-child(6) {
-  width: 13%;
+  width: 14%;
 }
 .members-table th:nth-child(7) {
   width: 12%;
+}
+.members-table th:nth-child(8) {
+  width: 10%;
 }
 
 .room-events-table th:nth-child(1) {
@@ -1489,6 +1552,20 @@ td {
 
   table {
     min-width: 720px;
+  }
+
+  .runtime-limit-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .runtime-limit-effective {
+    min-height: auto;
+  }
+
+  .runtime-limit-save {
+    width: 100%;
+    justify-self: stretch;
   }
 }
 

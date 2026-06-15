@@ -115,6 +115,8 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorNotInRoom: "请先加入房间。",
     serverErrorRateLimited: "请求过于频繁，请稍后再试。",
     serverErrorRoomFull: "房间已满。",
+    serverErrorServerRoomLimitReached:
+      "当前服务器节点房间数已达上限，请稍后再试。",
     serverErrorInvalidMessage: "当前请求无效。",
     serverErrorInternal: "服务器内部错误。",
     serverErrorUnsupportedProtocolVersion:
@@ -249,6 +251,8 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorNotInRoom: "Join a room first.",
     serverErrorRateLimited: "Too many requests. Try again later.",
     serverErrorRoomFull: "Room is full.",
+    serverErrorServerRoomLimitReached:
+      "This server node has reached its room limit. Try again later.",
     serverErrorInvalidMessage: "The request was rejected as invalid.",
     serverErrorInternal: "Internal server error.",
     serverErrorUnsupportedProtocolVersion:
@@ -327,6 +331,8 @@ export function localizeServerError(
       return t("serverErrorRateLimited");
     case "room_full":
       return t("serverErrorRoomFull");
+    case "server_room_limit_reached":
+      return t("serverErrorServerRoomLimitReached");
     case "invalid_message":
       return t("serverErrorInvalidMessage");
     case "unsupported_protocol_version":

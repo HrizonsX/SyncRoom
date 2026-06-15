@@ -139,6 +139,7 @@ export type RoomDetailMember = {
   joinedAt: number | null;
   remoteAddress: string | null;
   origin: string | null;
+  microphoneEnabled: boolean;
 };
 
 export type RoomDetail = {

@@ -98,6 +98,16 @@ export function createMessageHandler(options: {
       session: Session,
       memberToken: string,
     ) => Promise<{ roomCode: string; memberId: string; displayName: string }>;
+    updateVoiceStateForSession?: (
+      session: Session,
+      memberToken: string,
+      voiceState: { connected: boolean; muted: boolean },
+    ) => Promise<{
+      roomCode: string;
+      memberId: string;
+      displayName: string;
+      microphoneEnabled: boolean;
+    }>;
   };
   voiceService?: {
     issueAccess: (
@@ -822,15 +832,27 @@ export function createMessageHandler(options: {
           return;
         }
         case "voice:state": {
-          if (!roomService.getVoiceMemberAccessForSession) {
+          if (
+            !roomService.updateVoiceStateForSession &&
+            !roomService.getVoiceMemberAccessForSession
+          ) {
             sendError(socket, "voice_unavailable", VOICE_UNAVAILABLE_MESSAGE);
             return;
           }
 
-          const memberAccess = await roomService.getVoiceMemberAccessForSession(
-            session,
-            message.payload.memberToken,
-          );
+          const memberAccess = roomService.updateVoiceStateForSession
+            ? await roomService.updateVoiceStateForSession(
+                session,
+                message.payload.memberToken,
+                {
+                  connected: message.payload.connected,
+                  muted: message.payload.muted,
+                },
+              )
+            : await roomService.getVoiceMemberAccessForSession!(
+                session,
+                message.payload.memberToken,
+              );
           await firePublishRoomEvent(
             {
               type: "voice_state_updated",

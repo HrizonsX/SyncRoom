@@ -40,6 +40,8 @@ export interface ConnectionState {
   connected: boolean;
   lastError: string | null;
   connectProbe: Promise<void> | null;
+  connectProbeServerUrl: string | null;
+  connectProbeAbortController: AbortController | null;
   reconnectTimer: number | null;
   reconnectAttempt: number;
   reconnectDeadlineMs: number | null;
@@ -106,6 +108,8 @@ export function createBackgroundRuntimeState(): BackgroundRuntimeState {
       connected: false,
       lastError: null,
       connectProbe: null,
+      connectProbeServerUrl: null,
+      connectProbeAbortController: null,
       reconnectTimer: null,
       reconnectAttempt: 0,
       reconnectDeadlineMs: null,

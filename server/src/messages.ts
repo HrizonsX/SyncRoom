@@ -10,6 +10,8 @@ export const JOIN_TOKEN_INVALID_MESSAGE = "Join token is invalid.";
 export const MEMBER_KICKED_REJOIN_MESSAGE =
   "You were removed from the room by an admin. Rejoin the room.";
 export const ROOM_FULL_MESSAGE = "Room is full.";
+export const SERVER_ROOM_LIMIT_REACHED_MESSAGE =
+  "Server node room limit reached.";
 export const ROOM_HAS_NO_SHARED_VIDEO_MESSAGE =
   "The room does not have a shared video yet.";
 export const PLAYBACK_URL_MISMATCH_MESSAGE =

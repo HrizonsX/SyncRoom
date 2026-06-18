@@ -24,6 +24,10 @@ export function getRedisRuntimeKeyPrefix(namespace?: string): string {
   return `${normalizeNamespaceBase(namespace)}runtime:`;
 }
 
+export function getRedisVideoAuthSessionKeyPrefix(namespace?: string): string {
+  return `${normalizeNamespaceBase(namespace)}video-auth:`;
+}
+
 export function getRedisAdminSessionKeyPrefix(namespace?: string): string {
   return `${normalizeNamespaceBase(namespace)}admin:session:`;
 }

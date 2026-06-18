@@ -42,6 +42,29 @@ export type RoomEventBusMessage =
       connected: boolean;
       muted: boolean;
       speaking?: boolean;
+    }
+  | {
+      type: "room_chat_message";
+      roomCode: string;
+      sourceInstanceId: string;
+      emittedAt: number;
+      memberId: string;
+      displayName: string;
+      content: string;
+      timestamp: number;
+    }
+  | {
+      type: "room_danmaku_message";
+      roomCode: string;
+      sourceInstanceId: string;
+      emittedAt: number;
+      memberId: string;
+      displayName: string;
+      content: string;
+      videoTime: number;
+      mode: "scroll" | "top" | "bottom";
+      color: string;
+      timestamp: number;
     };
 
 export type RoomEventType = RoomEventBusMessage["type"];
@@ -58,6 +81,8 @@ export const ROOM_EVENT_TYPES = [
   "room_member_left",
   "room_deleted",
   "voice_state_updated",
+  "room_chat_message",
+  "room_danmaku_message",
 ] as const satisfies readonly RoomEventType[];
 
 type _EnsureAllRoomEventTypesCovered =

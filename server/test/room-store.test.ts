@@ -57,6 +57,8 @@ test("roomStateOf serializes persisted room state with active members", () => {
     code: "ROOM01",
     joinToken: "join-token",
     createdAt: 1,
+    ownerMemberId: "member-1",
+    ownerDisplayName: "Alice",
     sharedVideo: {
       url: "https://www.bilibili.com/video/BV1xx411c7mD",
       title: "Video",
@@ -86,6 +88,7 @@ test("roomStateOf serializes persisted room state with active members", () => {
 
   assert.deepEqual(roomStateOf(persistedRoom, activeRoom), {
     roomCode: "ROOM01",
+    hostMemberId: "member-1",
     sharedVideo: persistedRoom.sharedVideo,
     playback: persistedRoom.playback,
     members: [{ id: "member-1", name: "Alice" }],

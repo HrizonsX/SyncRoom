@@ -49,6 +49,7 @@ type SecurityConfigFile = {
     playbackUpdatePerSecond?: number;
     playbackUpdateBurst?: number;
     syncRequestPer10Seconds?: number;
+    chatMessagePer5Seconds?: number;
     syncPingPerSecond?: number;
     syncPingBurst?: number;
   };

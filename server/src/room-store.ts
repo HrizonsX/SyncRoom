@@ -24,6 +24,11 @@ export type RoomUpdateResult =
   | { ok: true; room: PersistedRoom }
   | { ok: false; reason: "not_found" | "version_conflict" };
 
+export type ExpiredRoomsDeletionResult = {
+  deletedCount: number;
+  roomCodes: string[];
+};
+
 export type RoomStore = {
   createRoom: (input: CreatePersistedRoomInput) => Promise<PersistedRoom>;
   getRoom: (code: string) => Promise<PersistedRoom | null>;
@@ -35,6 +40,9 @@ export type RoomStore = {
   ) => Promise<RoomUpdateResult>;
   deleteRoom: (code: string) => Promise<void>;
   deleteExpiredRooms: (now: number) => Promise<number>;
+  deleteExpiredRoomsWithCodes?: (
+    now: number,
+  ) => Promise<ExpiredRoomsDeletionResult>;
   listRooms: (
     query: Pick<
       RoomListQuery,
@@ -94,6 +102,22 @@ export function createInMemoryRoomStore(
 ): RoomStore {
   const rooms = new Map<string, PersistedRoom>();
   const now = options.now ?? Date.now;
+
+  function deleteExpiredRoomsWithCodes(
+    currentTime: number,
+  ): ExpiredRoomsDeletionResult {
+    const roomCodes: string[] = [];
+    for (const [code, room] of rooms.entries()) {
+      if (room.expiresAt !== null && room.expiresAt <= currentTime) {
+        rooms.delete(code);
+        roomCodes.push(code);
+      }
+    }
+    return {
+      deletedCount: roomCodes.length,
+      roomCodes,
+    };
+  }
 
   function matchesQuery(
     room: PersistedRoom,
@@ -165,14 +189,10 @@ export function createInMemoryRoomStore(
       rooms.delete(code);
     },
     async deleteExpiredRooms(currentTime): Promise<number> {
-      let deletedCount = 0;
-      for (const [code, room] of rooms.entries()) {
-        if (room.expiresAt !== null && room.expiresAt <= currentTime) {
-          rooms.delete(code);
-          deletedCount += 1;
-        }
-      }
-      return deletedCount;
+      return deleteExpiredRoomsWithCodes(currentTime).deletedCount;
+    },
+    async deleteExpiredRoomsWithCodes(currentTime) {
+      return deleteExpiredRoomsWithCodes(currentTime);
     },
     async listRooms(query) {
       const items = Array.from(rooms.values())
@@ -221,6 +241,7 @@ export function roomStateFromSessions(
 
   return {
     roomCode: room.code,
+    ...(room.ownerMemberId ? { hostMemberId: room.ownerMemberId } : {}),
     sharedVideo: room.sharedVideo,
     playback: room.playback,
     members: Array.from(members.values()),

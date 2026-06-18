@@ -25,6 +25,7 @@ export type SessionRateLimitState = {
   roomJoin: WindowCounter;
   videoShare: WindowCounter;
   syncRequest: WindowCounter;
+  chatMessage: WindowCounter;
   playbackUpdate: TokenBucket;
   syncPing: TokenBucket;
 };
@@ -167,6 +168,7 @@ export type SecurityConfig = {
     playbackUpdatePerSecond: number;
     playbackUpdateBurst: number;
     syncRequestPer10Seconds: number;
+    chatMessagePer5Seconds: number;
     syncPingPerSecond: number;
     syncPingBurst: number;
     adminLoginFailuresPerIpPerMinute: number;

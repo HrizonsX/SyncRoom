@@ -25,6 +25,7 @@ test("accepts a valid room:state message", () => {
       type: "room:state",
       payload: {
         roomCode: "ABC123",
+        hostMemberId: "member-1",
         sharedVideo: {
           videoId: "BV1xx411c7mD",
           url: "https://www.bilibili.com/video/BV1xx411c7mD?p=2",
@@ -45,6 +46,22 @@ test("accepts a valid room:state message", () => {
       },
     }),
     true,
+  );
+});
+
+test("rejects room:state when hostMemberId format is invalid", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "",
+        sharedVideo: null,
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+      },
+    }),
+    false,
   );
 });
 

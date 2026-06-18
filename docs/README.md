@@ -6,6 +6,8 @@ This directory keeps SyncRoom documentation that is useful after the first READM
 ## Operations / 运维
 
 - [Multi-node operations runbook](./runbook/multi-node-operations.zh-CN.md)
+- [Web room Bilibili proxy playback operations](./operations/web-room-bilibili-proxy.md)
+- [网页房间 Bilibili 代理播放运维说明](./operations/web-room-bilibili-proxy.zh-CN.md)
 - [LiveKit voice chat operations](./operations/livekit-voice-chat.md)
 - [Multi-node global admin migration](./operations/multi-node-global-admin-migration.md)
 - [多节点全局管理面迁移说明](./operations/multi-node-global-admin-migration.zh-CN.md)

@@ -1,0 +1,268 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  applyRemotePlaybackState,
+  bindPlaybackSyncControls,
+  createPlaybackUpdateMessage,
+  type MediaElementLike,
+} from "../src/playback-sync.js";
+
+function createMedia(
+  overrides: Partial<MediaElementLike> = {},
+): MediaElementLike & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    currentTime: 12,
+    playbackRate: 1,
+    paused: false,
+    play() {
+      calls.push("play");
+    },
+    pause() {
+      calls.push("pause");
+    },
+    calls,
+    ...overrides,
+  } as MediaElementLike & { calls: string[] };
+}
+
+test("creates playback:update messages from local player events", () => {
+  const media = createMedia({
+    currentTime: 42.5,
+    playbackRate: 1.25,
+    paused: false,
+  });
+
+  assert.deepEqual(
+    createPlaybackUpdateMessage({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+      media,
+      event: "seeked",
+      seq: 7,
+      now: () => 1_000,
+    }),
+    {
+      type: "playback:update",
+      payload: {
+        memberToken: "valid-member-token-123",
+        playback: {
+          url: "https://syncroom.example.test/video.mpd",
+          currentTime: 42.5,
+          playState: "playing",
+          syncIntent: "explicit-seek",
+          userInitiated: true,
+          playbackRate: 1.25,
+          updatedAt: 1_000,
+          serverTime: 1_000,
+          actorId: "member-1",
+          seq: 7,
+        },
+      },
+    },
+  );
+});
+
+test("binds player events to playback update dispatch", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    now: () => 2_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  listeners.get("waiting")?.forEach((listener) => listener());
+  binding.dispose();
+  listeners.get("pause")?.forEach((listener) => listener());
+
+  assert.equal(dispatched.length, 1);
+  assert.deepEqual(dispatched[0], {
+    type: "playback:update",
+    payload: {
+      memberToken: "valid-member-token-123",
+      playback: {
+        url: "https://syncroom.example.test/video.mpd",
+        currentTime: 12,
+        playState: "buffering",
+        userInitiated: false,
+        playbackRate: 1,
+        updatedAt: 2_000,
+        serverTime: 2_000,
+        actorId: "member-1",
+        seq: 1,
+      },
+    },
+  });
+});
+
+test("applies remote playback by seeking, rate changing, and playing", async () => {
+  const media = createMedia({
+    currentTime: 10,
+    playbackRate: 1,
+    paused: true,
+  });
+
+  const result = await applyRemotePlaybackState({
+    media,
+    localMemberId: "member-1",
+    currentUrl: "https://syncroom.example.test/video.mpd",
+    now: () => 1,
+    playback: {
+      url: "https://syncroom.example.test/video.mpd",
+      currentTime: 20,
+      playState: "playing",
+      playbackRate: 1.5,
+      updatedAt: 1,
+      serverTime: 1,
+      actorId: "member-2",
+      seq: 2,
+    },
+  });
+
+  assert.deepEqual(result, {
+    applied: true,
+    actions: ["seek", "ratechange", "play"],
+  });
+  assert.equal(media.currentTime, 20);
+  assert.equal(media.playbackRate, 1.5);
+  assert.deepEqual(media.calls, ["play"]);
+});
+
+test("projects remote playing time from server time before seeking", async () => {
+  const media = createMedia({
+    currentTime: 10,
+    playbackRate: 1,
+    paused: false,
+  });
+
+  const result = await applyRemotePlaybackState({
+    media,
+    localMemberId: "member-1",
+    currentUrl: "https://syncroom.example.test/video.mpd",
+    now: () => 4_000,
+    playback: {
+      url: "https://syncroom.example.test/video.mpd",
+      currentTime: 20,
+      playState: "playing",
+      playbackRate: 1.5,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-2",
+      seq: 2,
+    },
+  });
+
+  assert.deepEqual(result, {
+    applied: true,
+    actions: ["seek", "ratechange"],
+  });
+  assert.equal(media.currentTime, 24.5);
+  assert.equal(media.playbackRate, 1.5);
+});
+
+test("applies remote pause and skips local echo or mismatched urls", async () => {
+  const media = createMedia({ currentTime: 10, paused: false });
+
+  assert.deepEqual(
+    await applyRemotePlaybackState({
+      media,
+      localMemberId: "member-1",
+      currentUrl: "https://syncroom.example.test/video.mpd",
+      playback: {
+        url: "https://syncroom.example.test/video.mpd",
+        currentTime: 10.2,
+        playState: "paused",
+        playbackRate: 1,
+        updatedAt: 1,
+        serverTime: 1,
+        actorId: "member-2",
+        seq: 2,
+      },
+    }),
+    { applied: true, actions: ["pause"] },
+  );
+
+  assert.deepEqual(media.calls, ["pause"]);
+  assert.deepEqual(
+    await applyRemotePlaybackState({
+      media,
+      localMemberId: "member-1",
+      currentUrl: "https://syncroom.example.test/video.mpd",
+      playback: {
+        url: "https://syncroom.example.test/video.mpd",
+        currentTime: 50,
+        playState: "playing",
+        playbackRate: 1,
+        updatedAt: 1,
+        serverTime: 1,
+        actorId: "member-1",
+        seq: 3,
+      },
+    }),
+    { applied: false, actions: [], reason: "local_echo" },
+  );
+  media.paused = true;
+  assert.deepEqual(
+    await applyRemotePlaybackState({
+      media,
+      localMemberId: "member-1",
+      currentUrl: "https://syncroom.example.test/video.mpd",
+      allowLocalEcho: true,
+      now: () => 1,
+      playback: {
+        url: "https://syncroom.example.test/video.mpd",
+        currentTime: 50,
+        playState: "playing",
+        playbackRate: 1,
+        updatedAt: 1,
+        serverTime: 1,
+        actorId: "member-1",
+        seq: 4,
+      },
+    }),
+    { applied: true, actions: ["seek", "play"] },
+  );
+  assert.deepEqual(
+    await applyRemotePlaybackState({
+      media,
+      localMemberId: "member-1",
+      currentUrl: "https://syncroom.example.test/other.mpd",
+      playback: {
+        url: "https://syncroom.example.test/video.mpd",
+        currentTime: 50,
+        playState: "playing",
+        playbackRate: 1,
+        updatedAt: 1,
+        serverTime: 1,
+        actorId: "member-2",
+        seq: 5,
+      },
+    }),
+    { applied: false, actions: [], reason: "url_mismatch" },
+  );
+});

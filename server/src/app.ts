@@ -18,6 +18,12 @@ import { createRoomEventConsumer } from "./room-event-consumer.js";
 import { type RoomStore } from "./room-store.js";
 import { createRoomReaper } from "./room-reaper.js";
 import { createRoomService } from "./room-service.js";
+import { createPlaybackProxyController } from "./playback-proxy/controller.js";
+import { createPlaybackProxyRouter } from "./playback-proxy/router.js";
+import { createPlaybackProxyService } from "./playback-proxy/service.js";
+import { createBilibiliProvider } from "./providers/bilibili-provider.js";
+import { createVideoProviderRegistry } from "./providers/video-provider.js";
+import { createVideoProviderRouter } from "./providers/video-provider-router.js";
 import { getDefaultVoiceConfig } from "./config/voice-config.js";
 import { createLiveKitTokenSigner } from "./livekit-token.js";
 import { applyVoiceRoomCapacity } from "./voice-capacity.js";
@@ -25,6 +31,11 @@ import {
   createVoiceAccessService,
   type LiveKitTokenSigner,
 } from "./voice-service.js";
+import type { VideoAuthSessionStore } from "./video-auth-session.js";
+import {
+  DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS,
+  createVideoAuthSessionService,
+} from "./video-auth-session.js";
 import type { RoomEventBusMessage } from "./room-event-bus.js";
 import { type RuntimeStore } from "./runtime-store.js";
 import { hasAttachedSocket } from "./types.js";
@@ -85,6 +96,7 @@ export type SyncServerDependencies = {
   logSampling?: Record<string, number>;
   metricsPort?: number;
   adminSessionStoreOverride?: AdminSessionStore;
+  videoAuthSessionStore?: VideoAuthSessionStore;
   voiceConfig?: VoiceConfig;
   voiceTokenSigner?: LiveKitTokenSigner;
 };
@@ -109,6 +121,7 @@ export async function createSyncServer(
     adminCommandBus,
     roomEventBus,
     eventStore,
+    videoAuthSessionStore,
     logEvent,
     metricsCollector,
   } = await createServerBootstrapContext(persistenceConfig, dependencies, {
@@ -155,6 +168,11 @@ export async function createSyncServer(
       },
     },
   });
+  const videoAuthService = createVideoAuthSessionService({
+    store: videoAuthSessionStore,
+    defaultTtlMs: DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS,
+    now,
+  });
 
   const roomService = createRoomService({
     config: roomSecurityConfig,
@@ -178,6 +196,11 @@ export async function createSyncServer(
     generateToken,
     logEvent,
     now,
+    videoAuthLifecycle: {
+      clearRoom: videoAuthService.clearRoom,
+      clearOwner: videoAuthService.clearOwner,
+      pruneExpired: videoAuthService.pruneExpired,
+    },
   });
   const voiceService = createVoiceAccessService({
     config: voiceConfig,
@@ -187,6 +210,28 @@ export async function createSyncServer(
     now,
   });
   const announcementStore = createInMemoryAnnouncementStore({ now });
+  const playbackProxyService = createPlaybackProxyService({
+    metricsCollector,
+    logEvent,
+  });
+  const playbackProxyRouter = createPlaybackProxyRouter({
+    controller: createPlaybackProxyController({
+      service: playbackProxyService,
+    }),
+  });
+  const videoProviderRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: createVideoProviderRegistry([
+      createBilibiliProvider({
+        authSessions: videoAuthService,
+        logEvent,
+        now,
+      }),
+    ]),
+    authService: videoAuthService,
+    playbackProxyService,
+  });
 
   async function publishRoomEvent(message: RoomEventBusMessage): Promise<void> {
     try {
@@ -313,6 +358,8 @@ export async function createSyncServer(
     now,
     adminConfig: dependencies.adminConfig,
     adminUiConfig: dependencies.adminUiConfig,
+    playbackProxyRouter,
+    videoProviderRouter,
     serviceVersion,
     metricsPort: dependencies.metricsPort,
     adminSessionStoreOverride: dependencies.adminSessionStoreOverride,
@@ -466,6 +513,7 @@ export async function createSyncServer(
             eventStore,
             runtimeStore: maybeClosableRuntimeStore,
             runtimeStoreStepName: "close_shared_runtime_store",
+            videoAuthSessionStore,
             adminCommandBus,
             roomEventBus,
             closeAdminServices,

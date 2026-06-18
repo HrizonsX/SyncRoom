@@ -25,7 +25,9 @@ import {
   type RoomStore,
 } from "./room-store.js";
 import type { RuntimeStore } from "./runtime-store.js";
+import { redactSensitiveText } from "./sensitive-redaction.js";
 import { hasAttachedSocket } from "./types.js";
+import type { VideoAuthLifecycle } from "./video-auth-session.js";
 import type {
   ActiveRoom,
   LogEvent,
@@ -86,6 +88,161 @@ type PersistJoinedRoomResult = {
   joinTargetState: JoinTargetState;
 };
 
+type ProviderPlaybackDescriptor = NonNullable<SharedVideo["provider"]>;
+
+type SafeProviderSourceSummary = {
+  sourceId: string;
+  itemId: string;
+  defaultCandidateId?: string;
+  sourceType?: string;
+};
+
+type HostProviderAuditEvent = {
+  event: string;
+  data: Record<string, unknown>;
+};
+
+function getDefaultProviderCandidate(provider: ProviderPlaybackDescriptor) {
+  return (
+    provider.candidates.find(
+      (candidate) => candidate.id === provider.defaultCandidateId,
+    ) ??
+    provider.candidates.find((candidate) => candidate.default === true) ??
+    provider.candidates[0] ??
+    null
+  );
+}
+
+function summarizeProviderSource(
+  provider: ProviderPlaybackDescriptor,
+): SafeProviderSourceSummary {
+  const candidate = getDefaultProviderCandidate(provider);
+  return {
+    sourceId: provider.sourceId,
+    itemId: provider.item.itemId,
+    ...(candidate?.id ? { defaultCandidateId: candidate.id } : {}),
+    ...(candidate?.sourceType ? { sourceType: candidate.sourceType } : {}),
+  };
+}
+
+function providerSourceChanged(
+  previous: SafeProviderSourceSummary,
+  next: SafeProviderSourceSummary,
+): boolean {
+  return (
+    previous.sourceId !== next.sourceId ||
+    previous.itemId !== next.itemId ||
+    previous.defaultCandidateId !== next.defaultCandidateId ||
+    previous.sourceType !== next.sourceType
+  );
+}
+
+function providerPolicyChanged(
+  previous: ProviderPlaybackDescriptor["policy"],
+  next: ProviderPlaybackDescriptor["policy"],
+): boolean {
+  return previous.proxy !== next.proxy || previous.shared !== next.shared;
+}
+
+function buildHostProviderAuditEvents(input: {
+  roomCode: string;
+  session: Session;
+  previousVideo: SharedVideo | null;
+  nextVideo: SharedVideo;
+}): HostProviderAuditEvent[] {
+  const nextProvider = input.nextVideo.provider;
+  if (!nextProvider) {
+    return [];
+  }
+
+  const nextSource = summarizeProviderSource(nextProvider);
+  const candidate = getDefaultProviderCandidate(nextProvider);
+  const actorId = input.session.memberId ?? input.session.id;
+  const actorBase = {
+    roomCode: input.roomCode,
+    actorId,
+    actorDisplayName: input.session.displayName,
+    providerId: nextProvider.providerId,
+  };
+  const events: HostProviderAuditEvent[] = [
+    {
+      event: "host_video_selected",
+      data: {
+        ...actorBase,
+        sourceId: nextProvider.sourceId,
+        itemId: nextProvider.item.itemId,
+        itemKind: nextProvider.item.kind,
+        itemTitle: nextProvider.item.title,
+        ...(candidate?.id ? { defaultCandidateId: candidate.id } : {}),
+        ...(candidate?.sourceType ? { sourceType: candidate.sourceType } : {}),
+        policy: {
+          proxy: nextProvider.policy.proxy,
+          shared: nextProvider.policy.shared,
+        },
+        result: "ok",
+      },
+    },
+  ];
+
+  const previousProvider = input.previousVideo?.provider;
+  if (
+    !previousProvider ||
+    previousProvider.providerId !== nextProvider.providerId
+  ) {
+    return events;
+  }
+
+  if (providerPolicyChanged(previousProvider.policy, nextProvider.policy)) {
+    events.push({
+      event: "host_playback_policy_changed",
+      data: {
+        ...actorBase,
+        previousPolicy: {
+          proxy: previousProvider.policy.proxy,
+          shared: previousProvider.policy.shared,
+        },
+        nextPolicy: {
+          proxy: nextProvider.policy.proxy,
+          shared: nextProvider.policy.shared,
+        },
+        result: "ok",
+      },
+    });
+  }
+
+  const previousSource = summarizeProviderSource(previousProvider);
+  if (providerSourceChanged(previousSource, nextSource)) {
+    events.push({
+      event: "host_playback_source_changed",
+      data: {
+        ...actorBase,
+        previousSource,
+        nextSource,
+        result: "ok",
+      },
+    });
+  }
+
+  return events;
+}
+
+function createProviderShareDedupIdentity(video: SharedVideo): string {
+  const provider = video.provider;
+  if (!provider) {
+    return "legacy";
+  }
+  const source = summarizeProviderSource(provider);
+  return [
+    provider.providerId,
+    source.sourceId,
+    source.itemId,
+    source.defaultCandidateId ?? "",
+    source.sourceType ?? "",
+    provider.policy.proxy ? "proxy" : "direct",
+    provider.policy.shared ? "shared" : "private",
+  ].join(":");
+}
+
 type JoinAdmissionLock = {
   token: string;
   expiresAt: number;
@@ -100,6 +257,10 @@ type JoinedSessionSnapshot = {
   memberId: string;
   memberToken: string;
   joinedAt: number | null;
+};
+
+export type LeaveRoomOptions = {
+  reason?: "disconnect" | "explicit";
 };
 
 export function createRoomService(options: {
@@ -122,6 +283,7 @@ export function createRoomService(options: {
     memberToken: string,
     currentTime: number,
   ) => Promise<boolean>;
+  videoAuthLifecycle?: VideoAuthLifecycle;
 }): {
   createRoomForSession: (
     session: Session,
@@ -134,7 +296,10 @@ export function createRoomService(options: {
     displayName?: string,
     previousMemberToken?: string,
   ) => Promise<{ room: PersistedRoom; memberToken: string }>;
-  leaveRoomForSession: (session: Session) => Promise<{
+  leaveRoomForSession: (
+    session: Session,
+    options?: LeaveRoomOptions,
+  ) => Promise<{
     room: PersistedRoom | null;
     notifyRoom?: boolean;
     memberRemoved?: boolean;
@@ -172,6 +337,7 @@ export function createRoomService(options: {
   deleteExpiredRooms: (currentTime?: number) => Promise<number>;
 } {
   const { config, persistence, roomStore, generateToken, logEvent } = options;
+  const videoAuthLifecycle = options.videoAuthLifecycle;
   const runtimeStoreOption = options.runtimeStore ?? options.activeRooms;
   const now = options.now ?? Date.now;
   const nextRoomCode = options.createRoomCode ?? createRoomCode;
@@ -195,6 +361,100 @@ export function createRoomService(options: {
         runtimeStore.isMemberTokenBlocked(roomCode, memberToken, currentTime),
       ));
   const roomJoinLocks = new Map<string, Promise<void>>();
+
+  async function clearVideoAuthRoom(
+    roomCode: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const deletedCount =
+        (await videoAuthLifecycle?.clearRoom?.(roomCode)) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          roomCode,
+          scope: "room",
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        roomCode,
+        scope: "room",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function clearVideoAuthOwner(args: {
+    roomCode: string;
+    ownerMemberId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const deletedCount =
+        (await videoAuthLifecycle?.clearOwner?.({
+          roomCode: args.roomCode,
+          ownerMemberId: args.ownerMemberId,
+        })) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          roomCode: args.roomCode,
+          ownerMemberId: args.ownerMemberId,
+          scope: "owner",
+          deletedCount,
+          reason: args.reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        roomCode: args.roomCode,
+        ownerMemberId: args.ownerMemberId,
+        scope: "owner",
+        reason: args.reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function pruneExpiredVideoAuthSessions(reason: string): Promise<void> {
+    try {
+      const deletedCount = (await videoAuthLifecycle?.pruneExpired?.()) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          scope: "expired",
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        scope: "expired",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function deleteExpiredRoomsWithCodes(currentTime: number): Promise<{
+    deletedCount: number;
+    roomCodes: string[];
+  }> {
+    if (roomStore.deleteExpiredRoomsWithCodes) {
+      return await roomStore.deleteExpiredRoomsWithCodes(currentTime);
+    }
+    return {
+      deletedCount: await roomStore.deleteExpiredRooms(currentTime),
+      roomCodes: [],
+    };
+  }
 
   async function acquireDistributedJoinLock(
     roomCode: string,
@@ -397,6 +657,8 @@ export function createRoomService(options: {
     if (room.expiresAt !== null && room.expiresAt <= now()) {
       await roomStore.deleteRoom(code);
       runtimeStore.deleteRoom(code);
+      playbackAuthorityByRoom.delete(code);
+      await clearVideoAuthRoom(code, "room_expired");
       return null;
     }
     return room;
@@ -773,7 +1035,10 @@ export function createRoomService(options: {
     return readyState === OPEN;
   }
 
-  async function leaveCurrentRoom(session: Session): Promise<{
+  async function leaveCurrentRoom(
+    session: Session,
+    options: LeaveRoomOptions = {},
+  ): Promise<{
     room: PersistedRoom | null;
     notifyRoom?: boolean;
     memberRemoved?: boolean;
@@ -800,6 +1065,18 @@ export function createRoomService(options: {
       const persistedRoom = await resolveRoom(roomCode);
       if (!persistedRoom) {
         return { room: null };
+      }
+      if (
+        options.reason === "explicit" &&
+        removal.removed &&
+        persistedRoom.ownerMemberId &&
+        persistedRoom.ownerMemberId === leavingMemberId
+      ) {
+        await clearVideoAuthOwner({
+          roomCode,
+          ownerMemberId: leavingMemberId,
+          reason: "owner_left",
+        });
       }
 
       if (!removal.roomEmpty) {
@@ -1121,7 +1398,7 @@ export function createRoomService(options: {
       );
       const currentTime = now();
       const actorId = session.memberId ?? session.id;
-      const shareDedupKey = `share:${actorId}:${video.url}:${playback?.seq ?? 0}`;
+      const shareDedupKey = `share:${actorId}:${video.url}:${playback?.seq ?? 0}:${createProviderShareDedupIdentity(video)}`;
       if (
         !(await runtimeStore.tryClaimMessageSlot(
           access.persistedRoom.code,
@@ -1138,6 +1415,7 @@ export function createRoomService(options: {
       }
 
       let room: PersistedRoom | null;
+      let hostAuditEvents: HostProviderAuditEvent[] = [];
       try {
         room = await withVersionRetry(
           access.persistedRoom.code,
@@ -1177,6 +1455,12 @@ export function createRoomService(options: {
             if (!result.ok) {
               return null;
             }
+            hostAuditEvents = buildHostProviderAuditEvents({
+              roomCode: currentRoom.code,
+              session,
+              previousVideo: currentRoom.sharedVideo,
+              nextVideo: video,
+            });
             recordPlaybackAuthority({
               roomCode: currentRoom.code,
               actorId: nextPlayback.actorId,
@@ -1225,6 +1509,9 @@ export function createRoomService(options: {
         playbackRate: room.playback?.playbackRate ?? null,
         result: "ok",
       });
+      for (const event of hostAuditEvents) {
+        logEvent(event.event, event.data);
+      }
 
       return { room };
     },
@@ -1521,7 +1808,14 @@ export function createRoomService(options: {
     },
 
     async deleteExpiredRooms(currentTime = now()) {
-      return await roomStore.deleteExpiredRooms(currentTime);
+      const result = await deleteExpiredRoomsWithCodes(currentTime);
+      for (const roomCode of result.roomCodes) {
+        runtimeStore.deleteRoom(roomCode);
+        playbackAuthorityByRoom.delete(roomCode);
+        await clearVideoAuthRoom(roomCode, "room_expired");
+      }
+      await pruneExpiredVideoAuthSessions("owner_offline_ttl_expired");
+      return result.deletedCount;
     },
   };
 }

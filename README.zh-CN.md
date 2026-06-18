@@ -158,6 +158,7 @@ SyncRoom/
 ## 📚 文档入口
 
 - [文档索引](./docs/README.md)
+- [网页房间 Bilibili 代理播放运维说明](./docs/operations/web-room-bilibili-proxy.zh-CN.md)
 - [LiveKit 语音聊天运维说明](./docs/operations/livekit-voice-chat.md)
 - [多节点运维 Runbook](./docs/runbook/multi-node-operations.zh-CN.md)
 - [多节点全局管理面迁移说明](./docs/operations/multi-node-global-admin-migration.zh-CN.md)

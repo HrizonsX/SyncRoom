@@ -1,5 +1,14 @@
 import type { RoomCode } from "./common.js";
-import type { PlaybackState, SharedVideo } from "./domain.js";
+import type {
+  DanmakuMode,
+  PlaybackState,
+  SharedVideo,
+  VideoProviderId,
+  WebPlaybackBrowserLabel,
+  WebPlaybackReportEvent,
+  WebPlaybackSystemLabel,
+  WebPlayerErrorStage,
+} from "./domain.js";
 
 export interface ClientHelloPayload {
   displayName?: string;
@@ -85,6 +94,39 @@ export interface ClientVoiceStateMessage {
   };
 }
 
+export interface ChatMessage {
+  type: "chat:message";
+  payload: {
+    memberToken: string;
+    roomCode?: RoomCode;
+    content: string;
+  };
+}
+
+export interface DanmakuMessage {
+  type: "danmaku:message";
+  payload: {
+    memberToken: string;
+    roomCode?: RoomCode;
+    content: string;
+    videoTime: number;
+    mode?: DanmakuMode;
+    color?: string;
+  };
+}
+
+export interface PlaybackReportMessage {
+  type: "playback:report";
+  payload: {
+    memberToken: string;
+    event: WebPlaybackReportEvent;
+    providerId?: VideoProviderId;
+    stage?: WebPlayerErrorStage;
+    browser?: WebPlaybackBrowserLabel;
+    system?: WebPlaybackSystemLabel;
+  };
+}
+
 export type ClientMessage =
   | CreateRoomMessage
   | JoinRoomMessage
@@ -95,4 +137,7 @@ export type ClientMessage =
   | SyncRequestMessage
   | SyncPingMessage
   | VoiceAccessMessage
-  | ClientVoiceStateMessage;
+  | ClientVoiceStateMessage
+  | ChatMessage
+  | DanmakuMessage
+  | PlaybackReportMessage;

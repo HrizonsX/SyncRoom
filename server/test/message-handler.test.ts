@@ -98,6 +98,141 @@ test("message handler rejects detached sessions before processing", async () => 
   );
 });
 
+test("message handler records low-cardinality playback reports without broadcasting", async () => {
+  const session = createSession("web-member", {
+    roomCode: "ROOM01",
+    memberId: "member-1",
+    memberToken: "valid-member-token-123",
+  });
+  const startupFailures: unknown[] = [];
+  const directLinkOutcomes: unknown[] = [];
+  const playerErrors: unknown[] = [];
+  let publishedCount = 0;
+  const errors: unknown[] = [];
+
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        return { room: null };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession(receivedSession, memberToken, messageType) {
+        assert.equal(receivedSession.id, session.id);
+        assert.equal(memberToken, "valid-member-token-123");
+        assert.equal(messageType, "playback:report");
+        return {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "Alice" }],
+        };
+      },
+    },
+    logEvent() {},
+    send() {},
+    sendError(_socket, code, message) {
+      errors.push({ code, message });
+    },
+    async publishRoomEvent() {
+      publishedCount += 1;
+    },
+    instanceId: "node-a",
+    metricsCollector: {
+      observeMessageHandlerDuration() {},
+      recordRoomEventPublishDropped() {},
+      recordPlaybackStartupFailure(input: unknown) {
+        startupFailures.push(input);
+      },
+      recordDirectLinkPlaybackOutcome(input: unknown) {
+        directLinkOutcomes.push(input);
+      },
+      recordMemberPlayerError(input: unknown) {
+        playerErrors.push(input);
+      },
+    },
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "startup_failure",
+      providerId: "bilibili",
+      stage: "manifest",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "direct_link_success",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "direct_link_failure",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "proxy_fallback",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "player_error",
+      providerId: "bilibili",
+      stage: "decode",
+      browser: "chrome",
+      system: "windows",
+    },
+  });
+
+  assert.deepEqual(startupFailures, [
+    { roomCode: "ROOM01", providerId: "bilibili", stage: "manifest" },
+  ]);
+  assert.deepEqual(directLinkOutcomes, [
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "success" },
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "failure" },
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "proxy_fallback" },
+  ]);
+  assert.deepEqual(playerErrors, [
+    {
+      roomCode: "ROOM01",
+      providerId: "bilibili",
+      stage: "decode",
+      browser: "chrome",
+      system: "windows",
+    },
+  ]);
+  assert.equal(publishedCount, 0);
+  assert.deepEqual(errors, []);
+});
+
 test("message handler includes retry hints when sync request is rate limited", async () => {
   const config = {
     ...CONFIG,

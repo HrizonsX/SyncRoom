@@ -58,6 +58,53 @@ function createGenericSharedVideo(url = "https://example.com/watch?v=abc") {
   } satisfies SharedVideo;
 }
 
+function createProviderSharedVideo(
+  overrides: {
+    itemId?: string;
+    itemTitle?: string;
+    sourceId?: string;
+    candidateId?: string;
+    policy?: { proxy: boolean; shared: boolean };
+  } = {},
+): SharedVideo {
+  const itemId = overrides.itemId ?? "BV1xx411c7mD:cid-1";
+  const itemTitle = overrides.itemTitle ?? "Part 1";
+  const sourceId = overrides.sourceId ?? "BV1xx411c7mD";
+  const candidateId = overrides.candidateId ?? "dash-avc-1080p";
+  return {
+    videoId: "BV1xx411c7mD",
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: itemTitle,
+    provider: {
+      providerId: "bilibili",
+      sourceId,
+      sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+      title: itemTitle,
+      item: {
+        itemId,
+        title: itemTitle,
+        kind: "part",
+        bvid: "BV1xx411c7mD",
+        cid: itemId.split(":").at(-1),
+      },
+      policy: overrides.policy ?? {
+        proxy: false,
+        shared: true,
+      },
+      candidates: [
+        {
+          id: candidateId,
+          sourceType: "mpd",
+          url: "https://cdn.example.test/video.m4s?SESSDATA=secret",
+          qualityLabel: "1080P",
+          default: true,
+        },
+      ],
+      defaultCandidateId: candidateId,
+    },
+  };
+}
+
 function createPlayback(
   actorId: string,
   overrides: Partial<PlaybackState> = {},
@@ -117,6 +164,54 @@ test("room service keeps empty rooms for TTL and allows rejoin before expiry", a
   );
   assert.equal(joined.room.expiresAt, null);
   assert.ok(joiner.memberToken);
+});
+
+test("room service restores owner identity when the owner refreshes during empty-room TTL", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: {
+      ...getDefaultPersistenceConfig(),
+      emptyRoomTtlMs: 5_000,
+    },
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "OWNER1",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const ownerMemberId = owner.memberId;
+  const ownerMemberToken = created.memberToken;
+
+  await service.leaveRoomForSession(owner);
+
+  currentTime = 3_000;
+  const refreshedOwner = createSession("owner-refresh");
+  const rejoined = await service.joinRoomForSession(
+    refreshedOwner,
+    created.room.code,
+    created.room.joinToken,
+    "Alice",
+    ownerMemberToken,
+  );
+  const state = await service.getRoomStateForSession(
+    refreshedOwner,
+    rejoined.memberToken,
+    "sync:request",
+  );
+
+  assert.equal(rejoined.memberToken, ownerMemberToken);
+  assert.equal(refreshedOwner.memberId, ownerMemberId);
+  assert.equal(state.hostMemberId, ownerMemberId);
+  assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
 });
 
 test("room service validates voice access with existing room member tokens", async () => {
@@ -635,10 +730,10 @@ test("room service skips leave recovery when socket is already closed", async ()
   assert.equal(owner.roomCode, null);
   assert.equal(owner.memberId, null);
   assert.equal(owner.memberToken, null);
-  // With the last member removed, the in-memory room entry should stay
-  // deleted — restoreLeaveState must not resurrect it and leave a zombie
-  // member that `unregisterSession` cannot clean up.
-  assert.equal(activeRooms.getRoom(created.room.code), null);
+  // With the last member removed, restoreLeaveState must not resurrect a
+  // zombie online member that `unregisterSession` cannot clean up. The token
+  // binding may stay through the empty-room TTL for refresh rejoin.
+  assert.equal(activeRooms.getRoom(created.room.code)?.members.size ?? 0, 0);
   assert.ok(!events.some((entry) => entry.event === "room_leave_recovered"));
   assert.ok(
     events.some(
@@ -3138,6 +3233,110 @@ test("shareVideoForSession rejects client-supplied sharedByDisplayName", async (
     "Alice",
     "server must overwrite client-supplied sharedByDisplayName with session.displayName",
   );
+});
+
+test("shareVideoForSession emits safe host provider audit events", async () => {
+  const currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const events: { event: string; data: Record<string, unknown> }[] = [];
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(() => currentTime),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent(event, data) {
+      events.push({ event, data });
+    },
+    now: () => currentTime,
+    createRoomCode: () => "ROOM22",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo(),
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo({
+      policy: { proxy: true, shared: true },
+    }),
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo({
+      itemId: "BV1xx411c7mD:cid-2",
+      itemTitle: "Part 2",
+      candidateId: "dash-avc-720p",
+      policy: { proxy: true, shared: true },
+    }),
+  );
+
+  const hostAuditEvents = events.filter((item) =>
+    item.event.startsWith("host_"),
+  );
+  assert.deepEqual(
+    hostAuditEvents.map((item) => item.event),
+    [
+      "host_video_selected",
+      "host_video_selected",
+      "host_playback_policy_changed",
+      "host_video_selected",
+      "host_playback_source_changed",
+    ],
+  );
+  assert.deepEqual(hostAuditEvents[0]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    sourceId: "BV1xx411c7mD",
+    itemId: "BV1xx411c7mD:cid-1",
+    itemKind: "part",
+    itemTitle: "Part 1",
+    defaultCandidateId: "dash-avc-1080p",
+    sourceType: "mpd",
+    policy: { proxy: false, shared: true },
+    result: "ok",
+  });
+  assert.deepEqual(hostAuditEvents[2]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    previousPolicy: { proxy: false, shared: true },
+    nextPolicy: { proxy: true, shared: true },
+    result: "ok",
+  });
+  assert.deepEqual(hostAuditEvents[4]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    previousSource: {
+      sourceId: "BV1xx411c7mD",
+      itemId: "BV1xx411c7mD:cid-1",
+      defaultCandidateId: "dash-avc-1080p",
+      sourceType: "mpd",
+    },
+    nextSource: {
+      sourceId: "BV1xx411c7mD",
+      itemId: "BV1xx411c7mD:cid-2",
+      defaultCandidateId: "dash-avc-720p",
+      sourceType: "mpd",
+    },
+    result: "ok",
+  });
+  const serializedAudit = JSON.stringify(hostAuditEvents);
+  assert.doesNotMatch(serializedAudit, /SESSDATA|Cookie|https:\/\/cdn/i);
 });
 
 test("playback_update_applied skips steady timeupdate ticks but logs user actions", async () => {

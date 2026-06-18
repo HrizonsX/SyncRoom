@@ -3,6 +3,8 @@ export const INVALID_CLIENT_MESSAGE_MESSAGE = "Invalid client message payload.";
 export const INTERNAL_SERVER_ERROR_MESSAGE = "Internal server error.";
 export const INVALID_JSON_REQUEST_BODY_MESSAGE = "Invalid JSON request body.";
 export const RATE_LIMITED_MESSAGE = "Too many requests.";
+export const CHAT_RATE_LIMITED_MESSAGE =
+  "Chat messages are limited to one message every 5 seconds.";
 export const MEMBER_TOKEN_INVALID_MESSAGE = "Member token is invalid.";
 export const NOT_IN_ROOM_MESSAGE = "Join a room first.";
 export const ROOM_NOT_FOUND_MESSAGE = "Room not found.";

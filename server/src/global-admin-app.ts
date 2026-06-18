@@ -17,6 +17,7 @@ import {
 import { type RoomStore } from "./room-store.js";
 import { createRoomService } from "./room-service.js";
 import type { RoomEventBusMessage } from "./room-event-bus.js";
+import type { VideoAuthSessionStore } from "./video-auth-session.js";
 import type {
   AdminConfig,
   AdminUiConfig,
@@ -43,6 +44,7 @@ export type GlobalAdminServerDependencies = {
   logLevel?: LogLevel;
   logSampling?: Record<string, number>;
   metricsPort?: number;
+  videoAuthSessionStore?: VideoAuthSessionStore;
 };
 
 export async function createGlobalAdminServer(
@@ -58,6 +60,7 @@ export async function createGlobalAdminServer(
     adminCommandBus,
     roomEventBus,
     eventStore,
+    videoAuthSessionStore,
     logEvent,
     metricsCollector,
   } = await createServerBootstrapContext(persistenceConfig, dependencies, {
@@ -122,6 +125,7 @@ export async function createGlobalAdminServer(
             roomStore,
             eventStore,
             runtimeStore,
+            videoAuthSessionStore,
             adminCommandBus,
             roomEventBus,
             closeAdminServices,

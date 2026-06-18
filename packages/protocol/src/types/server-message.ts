@@ -1,6 +1,11 @@
 import type { ErrorCode, RoomCode } from "./common.js";
 import type { ClientMessage } from "./client-message.js";
-import type { AnnouncementState, RoomMember, RoomState } from "./domain.js";
+import type {
+  AnnouncementState,
+  DanmakuMode,
+  RoomMember,
+  RoomState,
+} from "./domain.js";
 
 export interface RoomCreatedMessage {
   type: "room:created";
@@ -90,6 +95,31 @@ export interface AnnouncementUpdateMessage {
   payload: AnnouncementState;
 }
 
+export interface ServerChatMessage {
+  type: "chat:message";
+  payload: {
+    roomCode: RoomCode;
+    memberId: string;
+    displayName: string;
+    content: string;
+    timestamp: number;
+  };
+}
+
+export interface ServerDanmakuMessage {
+  type: "danmaku:message";
+  payload: {
+    roomCode: RoomCode;
+    memberId: string;
+    displayName: string;
+    content: string;
+    videoTime: number;
+    mode: DanmakuMode;
+    color: string;
+    timestamp: number;
+  };
+}
+
 export type ServerMessage =
   | RoomCreatedMessage
   | RoomJoinedMessage
@@ -100,4 +130,6 @@ export type ServerMessage =
   | SyncPongMessage
   | VoiceAccessGrantedMessage
   | ServerVoiceStateMessage
-  | AnnouncementUpdateMessage;
+  | AnnouncementUpdateMessage
+  | ServerChatMessage
+  | ServerDanmakuMessage;

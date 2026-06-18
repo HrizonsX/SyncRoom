@@ -27,6 +27,8 @@ import {
   getRedisRoomEventChannel,
   getRedisRuntimeKeyPrefix,
 } from "../redis-namespace.js";
+import { createVideoAuthSessionStoreForPersistence } from "../video-auth-store-factory.js";
+import type { VideoAuthSessionStore } from "../video-auth-session.js";
 import {
   createInMemoryRoomEventBus,
   createNoopRoomEventBus,
@@ -67,6 +69,7 @@ export type ShutdownStep = {
 
 export type ServerBootstrapDependencies = {
   roomStore?: RoomStore;
+  videoAuthSessionStore?: VideoAuthSessionStore;
   logEvent?: LogEvent;
   now?: () => number;
   adminConfig?: AdminConfig;
@@ -109,6 +112,7 @@ export type ServerBootstrapContext = {
   adminCommandBus: AdminCommandBus;
   roomEventBus: RoomEventBus;
   eventStore: GlobalEventStore;
+  videoAuthSessionStore: VideoAuthSessionStore;
   logEvent: LogEvent;
   metricsCollector: MetricsCollector;
 };
@@ -218,6 +222,7 @@ export function getDefaultSecurityConfig(): SecurityConfig {
       playbackUpdatePerSecond: 8,
       playbackUpdateBurst: 12,
       syncRequestPer10Seconds: 6,
+      chatMessagePer5Seconds: 1,
       syncPingPerSecond: 1,
       syncPingBurst: 2,
       adminLoginFailuresPerIpPerMinute: 10,
@@ -274,6 +279,9 @@ export async function createServerBootstrapContext(
       ? createMirroredRuntimeStore(localRuntimeStore, sharedRuntimeStore)
       : sharedRuntimeStore;
   metricsCollector.bindRuntimeStore(runtimeStore);
+  const videoAuthSessionStore =
+    dependencies.videoAuthSessionStore ??
+    (await createVideoAuthSessionStoreForPersistence(persistenceConfig));
   const adminCommandBus =
     persistenceConfig.adminCommandBusProvider === "redis"
       ? await createRedisAdminCommandBus(persistenceConfig.redisUrl, {
@@ -365,6 +373,7 @@ export async function createServerBootstrapContext(
     adminCommandBus,
     roomEventBus,
     eventStore,
+    videoAuthSessionStore,
     logEvent,
     metricsCollector,
   };
@@ -375,6 +384,7 @@ export function createSharedServerShutdownSteps(args: {
   eventStore: GlobalEventStore;
   runtimeStore?: RuntimeStore | null;
   runtimeStoreStepName?: string;
+  videoAuthSessionStore?: VideoAuthSessionStore | null;
   adminCommandBus: AdminCommandBus;
   roomEventBus: RoomEventBus;
   closeAdminServices: () => Promise<void>;
@@ -397,6 +407,16 @@ export function createSharedServerShutdownSteps(args: {
       name: args.runtimeStoreStepName ?? "close_runtime_store",
       run: () =>
         hasClose(args.runtimeStore) ? args.runtimeStore.close() : undefined,
+    });
+  }
+
+  if (args.videoAuthSessionStore) {
+    steps.push({
+      name: "close_video_auth_session_store",
+      run: () =>
+        hasClose(args.videoAuthSessionStore)
+          ? args.videoAuthSessionStore.close()
+          : undefined,
     });
   }
 

@@ -131,6 +131,11 @@ export const SERVER_CONFIG_FIELDS = [
     "positiveInteger",
   ),
   createField(
+    ["security", "rateLimits", "chatMessagePer5Seconds"],
+    "RATE_LIMIT_CHAT_MESSAGE_PER_5_SECONDS",
+    "positiveInteger",
+  ),
+  createField(
     ["security", "rateLimits", "syncPingPerSecond"],
     "RATE_LIMIT_SYNC_PING_PER_SECOND",
     "positiveInteger",

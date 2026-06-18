@@ -3,6 +3,7 @@ import type { RoomListQuery } from "./admin/types.js";
 import { getRedisRoomStoreKeys } from "./redis-namespace.js";
 import {
   createPersistedRoom,
+  type ExpiredRoomsDeletionResult,
   type RoomStore,
   type RoomUpdateResult,
 } from "./room-store.js";
@@ -10,10 +11,12 @@ import type { PersistedRoom } from "./types.js";
 
 const DELETE_EXPIRED_ROOMS_LUA = `
 local expiryKey = KEYS[1]
+local roomIndexKey = KEYS[2]
 local roomKeyPrefix = ARGV[1]
 local now = tonumber(ARGV[2])
 local expiredCodes = redis.call("ZRANGEBYSCORE", expiryKey, 0, now)
 local deletedCount = 0
+local deletedCodes = {}
 
 for _, code in ipairs(expiredCodes) do
   local key = roomKeyPrefix .. code
@@ -24,16 +27,19 @@ for _, code in ipairs(expiredCodes) do
     if ok and room and room["expiresAt"] ~= cjson.null and room["expiresAt"] ~= nil and tonumber(room["expiresAt"]) ~= nil and tonumber(room["expiresAt"]) <= now then
       redis.call("DEL", key)
       redis.call("ZREM", expiryKey, code)
+      redis.call("ZREM", roomIndexKey, code)
       deletedCount = deletedCount + 1
+      table.insert(deletedCodes, code)
     elseif ok and room and (room["expiresAt"] == cjson.null or room["expiresAt"] == nil) then
       redis.call("ZREM", expiryKey, code)
     end
   else
     redis.call("ZREM", expiryKey, code)
+    redis.call("ZREM", roomIndexKey, code)
   end
 end
 
-return deletedCount
+return { deletedCount, deletedCodes }
 `;
 
 function serializeRoom(room: PersistedRoom): string {
@@ -45,6 +51,22 @@ function parseRoom(value: string | null): PersistedRoom | null {
     return null;
   }
   return JSON.parse(value) as PersistedRoom;
+}
+
+function parseDeleteExpiredRoomsResult(
+  value: unknown,
+): ExpiredRoomsDeletionResult {
+  if (!Array.isArray(value)) {
+    return {
+      deletedCount: Number(value),
+      roomCodes: [],
+    };
+  }
+  const [deletedCount, roomCodes] = value;
+  return {
+    deletedCount: Number(deletedCount),
+    roomCodes: Array.isArray(roomCodes) ? roomCodes.map(String) : [],
+  };
 }
 
 function matchesQuery(
@@ -95,6 +117,20 @@ export async function createRedisRoomStore(
 
   function roomKey(code: string): string {
     return `${roomKeyPrefix}${code}`;
+  }
+
+  async function deleteExpiredRoomsWithCodes(
+    now: number,
+  ): Promise<ExpiredRoomsDeletionResult> {
+    const result = await redis.eval(
+      DELETE_EXPIRED_ROOMS_LUA,
+      2,
+      roomExpiryKey,
+      roomIndexKey,
+      roomKeyPrefix,
+      String(now),
+    );
+    return parseDeleteExpiredRoomsResult(result);
   }
 
   await redis.connect();
@@ -206,14 +242,10 @@ export async function createRedisRoomStore(
       await transaction.exec();
     },
     async deleteExpiredRooms(now) {
-      const deletedCount = await redis.eval(
-        DELETE_EXPIRED_ROOMS_LUA,
-        1,
-        roomExpiryKey,
-        roomKeyPrefix,
-        String(now),
-      );
-      return Number(deletedCount);
+      return (await deleteExpiredRoomsWithCodes(now)).deletedCount;
+    },
+    async deleteExpiredRoomsWithCodes(now) {
+      return await deleteExpiredRoomsWithCodes(now);
     },
     async listRooms(
       query: Pick<

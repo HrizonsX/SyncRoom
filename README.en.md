@@ -158,6 +158,7 @@ SyncRoom/
 ## 📚 Documentation
 
 - [Documentation index](./docs/README.md)
+- [Web room Bilibili proxy playback operations](./docs/operations/web-room-bilibili-proxy.md)
 - [LiveKit voice chat operations](./docs/operations/livekit-voice-chat.md)
 - [Multi-node operations runbook](./docs/runbook/multi-node-operations.zh-CN.md)
 - [Multi-node global admin migration](./docs/operations/multi-node-global-admin-migration.md)

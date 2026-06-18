@@ -607,7 +607,7 @@ export function createPageLoaders(options) {
                     <tr>
                       <th>房间号</th>
                       <th>状态</th>
-                      <th>创建者</th>
+                      <th>房主</th>
                       <th>成员</th>
                       <th>视频</th>
                       <th>播放状态</th>
@@ -925,6 +925,7 @@ export function createPageLoaders(options) {
       try {
         const detail = await api.getRoomDetail(roomCode);
         const playbackSummary = getRoomPlaybackSummary(detail.room);
+        const ownerSummary = getRoomOwnerSummary(detail.room);
         return {
           meta: {
             title: `房间 ${detail.room.roomCode}`,
@@ -973,6 +974,7 @@ export function createPageLoaders(options) {
                   <div class="section-header"><h3>房间摘要</h3></div>
                   <dl class="kv">
                     <dt>房间号</dt><dd><strong>${escapeHtml(detail.room.roomCode)}</strong></dd>
+                    <dt>房主</dt><dd>${renderDataPair(escapeHtml(ownerSummary.primary), escapeHtml(ownerSummary.secondary))}</dd>
                     <dt>实例</dt><dd>${escapeHtml(detail.room.instanceId || "—")}</dd>
                     <dt>在线状态</dt><dd>${renderStatus(detail.room.isActive ? "success" : "neutral", detail.room.isActive ? "active" : "idle")}</dd>
                     <dt>成员数</dt><dd>${detail.room.memberCount}</dd>

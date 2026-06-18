@@ -3,6 +3,7 @@ import type {
   PlaybackState,
   ProviderPlaybackDescriptor,
 } from "@bili-syncplay/protocol";
+import { formatRoomJoinInvite } from "./actions.js";
 import type { PlaybackSource } from "./playback-adapter.js";
 import type { WebRoomVoiceState } from "./voice-state.js";
 
@@ -29,7 +30,15 @@ export type WebRoomMember = {
   name: string;
 };
 
+export type WebRoomSystemChatEventType =
+  | "member_joined"
+  | "member_left"
+  | "voice_unmuted"
+  | "voice_muted";
+
 export type WebRoomChatMessage = {
+  kind?: "user" | "system";
+  systemEventType?: WebRoomSystemChatEventType;
   memberId: string;
   displayName: string;
   content: string;
@@ -577,6 +586,12 @@ function getEntryRoomInviteValue(state: WebRoomEntryState): string {
   if (state.roomInvite) {
     return state.roomInvite;
   }
+  if (state.roomCode && state.joinToken) {
+    return formatRoomJoinInvite({
+      roomCode: state.roomCode,
+      joinToken: state.joinToken,
+    });
+  }
   return [state.roomCode, state.joinToken].filter(Boolean).join(" ");
 }
 
@@ -938,6 +953,23 @@ function renderChatMessages(state: WebRoomJoinedState): string {
 
   return state.chatMessages
     .map((message) => {
+      const timestamp = new Date(message.timestamp).toLocaleTimeString(
+        "zh-CN",
+        {
+          hour: "2-digit",
+          minute: "2-digit",
+        },
+      );
+
+      if (message.kind === "system") {
+        return `
+        <article class="chat-system-message" data-chat-author="system" data-chat-system-event="${escapeHtml(message.systemEventType ?? "system")}">
+          <time datetime="${message.timestamp}">${timestamp}</time>
+          <span>${escapeHtml(message.content)}</span>
+        </article>
+      `;
+      }
+
       const author =
         message.memberId === state.currentMemberId ? "self" : "other";
 
@@ -945,12 +977,7 @@ function renderChatMessages(state: WebRoomJoinedState): string {
         <article class="chat-message is-${author}" data-chat-author="${author}">
           <div class="chat-meta">
             <span>${escapeHtml(message.displayName)}</span>
-            <time datetime="${message.timestamp}">${new Date(
-              message.timestamp,
-            ).toLocaleTimeString("zh-CN", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}</time>
+            <time datetime="${message.timestamp}">${timestamp}</time>
           </div>
           <p>${escapeHtml(message.content)}</p>
         </article>

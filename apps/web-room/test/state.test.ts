@@ -198,6 +198,164 @@ test("applies announcement updates and chat broadcasts", () => {
   assert.equal(withChat.chatMessages[0]?.content, "收到");
 });
 
+test("adds centered system chat messages for room member lifecycle events", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const withJoined = applyServerMessage(
+    state,
+    {
+      type: "room:member-joined",
+      payload: {
+        roomCode: "ABC123",
+        member: { id: "member-2", name: "Bob" },
+      },
+    },
+    { now: () => 12_000 },
+  );
+  const withLeft = applyServerMessage(
+    withJoined,
+    {
+      type: "room:member-left",
+      payload: {
+        roomCode: "ABC123",
+        member: { id: "member-2", name: "Bob" },
+      },
+    },
+    { now: () => 13_000 },
+  );
+  const messages = withLeft.chatMessages as Array<{
+    kind?: string;
+    systemEventType?: string;
+    content: string;
+    timestamp: number;
+  }>;
+
+  assert.deepEqual(
+    messages.map((message) => ({
+      kind: message.kind,
+      systemEventType: message.systemEventType,
+      content: message.content,
+      timestamp: message.timestamp,
+    })),
+    [
+      {
+        kind: "system",
+        systemEventType: "member_joined",
+        content: "Bob 加入了房间",
+        timestamp: 12_000,
+      },
+      {
+        kind: "system",
+        systemEventType: "member_left",
+        content: "Bob 离开了房间",
+        timestamp: 13_000,
+      },
+    ],
+  );
+});
+
+test("adds voice system chat messages only when microphone mute state changes", () => {
+  const baseState = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+  const state = {
+    ...baseState,
+    members: [
+      { id: "member-1", name: "Alice" },
+      { id: "member-2", name: "Bob" },
+    ],
+    voice: {
+      ...baseState.voice,
+      participants: {
+        "member-2": {
+          memberId: "member-2",
+          connected: true,
+          muted: true,
+          speaking: false,
+        },
+      },
+    },
+  };
+
+  const withOpenMic = applyServerMessage(
+    state,
+    {
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: false,
+        speaking: false,
+      },
+    },
+    { now: () => 14_000 },
+  );
+  const withDuplicateOpenMic = applyServerMessage(
+    withOpenMic,
+    {
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: false,
+        speaking: true,
+      },
+    },
+    { now: () => 15_000 },
+  );
+  const withCloseMic = applyServerMessage(
+    withDuplicateOpenMic,
+    {
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: true,
+        speaking: false,
+      },
+    },
+    { now: () => 16_000 },
+  );
+  const messages = withCloseMic.chatMessages as Array<{
+    kind?: string;
+    systemEventType?: string;
+    content: string;
+    timestamp: number;
+  }>;
+
+  assert.deepEqual(
+    messages.map((message) => ({
+      kind: message.kind,
+      systemEventType: message.systemEventType,
+      content: message.content,
+      timestamp: message.timestamp,
+    })),
+    [
+      {
+        kind: "system",
+        systemEventType: "voice_unmuted",
+        content: "Bob 开启了麦克风",
+        timestamp: 14_000,
+      },
+      {
+        kind: "system",
+        systemEventType: "voice_muted",
+        content: "Bob 关闭了麦克风",
+        timestamp: 16_000,
+      },
+    ],
+  );
+});
+
 test("applies private room danmaku broadcasts as ephemeral joined-state messages", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",

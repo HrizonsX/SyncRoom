@@ -1,7 +1,9 @@
 import type { PlaybackState } from "@bili-syncplay/protocol";
 import type {
+  WebRoomChatMessage,
   WebRoomJoinedState,
   WebRoomProviderPlaybackStatus,
+  WebRoomSystemChatEventType,
 } from "./render.js";
 import {
   choosePreferredPlaybackCandidate,
@@ -38,6 +40,76 @@ function getFiniteNumber(value: unknown): number | undefined {
 
 function appendDiagnostic(state: WebRoomJoinedState, item: string): string[] {
   return [...state.diagnostics, item].slice(-80);
+}
+
+function appendChatMessage(
+  state: WebRoomJoinedState,
+  message: WebRoomChatMessage,
+): WebRoomChatMessage[] {
+  return [...state.chatMessages, message].slice(-200);
+}
+
+const SYSTEM_CHAT_SUFFIX: Record<WebRoomSystemChatEventType, string> = {
+  member_joined: "加入了房间",
+  member_left: "离开了房间",
+  voice_unmuted: "开启了麦克风",
+  voice_muted: "关闭了麦克风",
+};
+
+function getSystemChatDisplayName(
+  state: WebRoomJoinedState,
+  memberId: string,
+  fallback?: string,
+): string {
+  const fallbackName = fallback?.trim();
+  if (fallbackName) {
+    return fallbackName;
+  }
+
+  const memberName = state.members.find(
+    (member) => member.id === memberId,
+  )?.name;
+  if (memberName?.trim()) {
+    return memberName;
+  }
+
+  if (memberId === state.currentMemberId && state.displayName.trim()) {
+    return state.displayName;
+  }
+
+  return "匿名成员";
+}
+
+export function appendSystemChatMessage(
+  state: WebRoomJoinedState,
+  input: {
+    memberId: string;
+    displayName?: string;
+    eventType: WebRoomSystemChatEventType;
+    timestamp: number;
+  },
+): WebRoomJoinedState {
+  if (input.memberId.length === 0) {
+    return state;
+  }
+
+  const displayName = getSystemChatDisplayName(
+    state,
+    input.memberId,
+    input.displayName,
+  );
+
+  return {
+    ...state,
+    chatMessages: appendChatMessage(state, {
+      kind: "system",
+      systemEventType: input.eventType,
+      memberId: input.memberId,
+      displayName,
+      content: `${displayName} ${SYSTEM_CHAT_SUFFIX[input.eventType]}`,
+      timestamp: input.timestamp,
+    }),
+  };
 }
 
 function readPlaybackState(value: unknown): PlaybackState | undefined {
@@ -111,6 +183,7 @@ export function createInitialJoinedState(
 function applyMemberJoined(
   state: WebRoomJoinedState,
   payload: RecordLike,
+  currentTime: number,
 ): WebRoomJoinedState {
   const member = isRecord(payload.member) ? payload.member : null;
   const memberId = getString(member?.id);
@@ -122,7 +195,7 @@ function applyMemberJoined(
     id: memberId,
     name: getString(member.name, "匿名成员"),
   };
-  return {
+  const nextState = {
     ...state,
     members: [
       ...state.members.filter((item) => item.id !== nextMember.id),
@@ -130,19 +203,31 @@ function applyMemberJoined(
     ],
     diagnostics: appendDiagnostic(state, "room:member-joined applied"),
   };
+  return appendSystemChatMessage(nextState, {
+    memberId: nextMember.id,
+    displayName: nextMember.name,
+    eventType: "member_joined",
+    timestamp: currentTime,
+  });
 }
 
 function applyMemberLeft(
   state: WebRoomJoinedState,
   payload: RecordLike,
+  currentTime: number,
 ): WebRoomJoinedState {
   const member = isRecord(payload.member) ? payload.member : null;
   const leftMemberId = getString(member?.id);
   if (leftMemberId.length === 0) {
     return state;
   }
+  const displayName = getSystemChatDisplayName(
+    state,
+    leftMemberId,
+    getString(member?.name),
+  );
 
-  return {
+  const nextState = {
     ...state,
     voice: {
       ...state.voice,
@@ -155,6 +240,12 @@ function applyMemberLeft(
     members: state.members.filter((item) => item.id !== leftMemberId),
     diagnostics: appendDiagnostic(state, "room:member-left applied"),
   };
+  return appendSystemChatMessage(nextState, {
+    memberId: leftMemberId,
+    displayName,
+    eventType: "member_left",
+    timestamp: currentTime,
+  });
 }
 
 function getProviderPlaybackStatus(
@@ -312,19 +403,16 @@ function applyChatMessage(
 ): WebRoomJoinedState {
   return {
     ...state,
-    chatMessages: [
-      ...state.chatMessages,
-      {
-        memberId: getString(payload.memberId),
-        displayName: getString(payload.displayName, "匿名成员"),
-        content: getString(payload.content),
-        timestamp:
-          typeof payload.timestamp === "number" &&
-          Number.isFinite(payload.timestamp)
-            ? payload.timestamp
-            : Date.now(),
-      },
-    ].slice(-200),
+    chatMessages: appendChatMessage(state, {
+      memberId: getString(payload.memberId),
+      displayName: getString(payload.displayName, "匿名成员"),
+      content: getString(payload.content),
+      timestamp:
+        typeof payload.timestamp === "number" &&
+        Number.isFinite(payload.timestamp)
+          ? payload.timestamp
+          : Date.now(),
+    }),
     diagnostics: appendDiagnostic(state, "chat:message applied"),
   };
 }
@@ -375,6 +463,7 @@ function applyDanmakuMessage(
 function applyVoiceState(
   state: WebRoomJoinedState,
   payload: RecordLike,
+  currentTime: number,
 ): WebRoomJoinedState {
   const memberId = getString(payload.memberId);
   if (memberId.length === 0) {
@@ -391,7 +480,8 @@ function applyVoiceState(
     muted,
     speaking,
   };
-  return {
+  const previousParticipant = state.voice.participants[memberId];
+  const nextState = {
     ...state,
     voice: {
       ...state.voice,
@@ -405,6 +495,20 @@ function applyVoiceState(
     },
     diagnostics: appendDiagnostic(state, "voice:state received"),
   };
+
+  if (
+    connected &&
+    previousParticipant?.connected === true &&
+    previousParticipant.muted !== muted
+  ) {
+    return appendSystemChatMessage(nextState, {
+      memberId,
+      eventType: muted ? "voice_muted" : "voice_unmuted",
+      timestamp: currentTime,
+    });
+  }
+
+  return nextState;
 }
 
 function applyError(
@@ -452,11 +556,11 @@ export function applyServerMessage(
     case "danmaku:message":
       return applyDanmakuMessage(state, payload);
     case "room:member-joined":
-      return applyMemberJoined(state, payload);
+      return applyMemberJoined(state, payload, options.now?.() ?? Date.now());
     case "room:member-left":
-      return applyMemberLeft(state, payload);
+      return applyMemberLeft(state, payload, options.now?.() ?? Date.now());
     case "voice:state":
-      return applyVoiceState(state, payload);
+      return applyVoiceState(state, payload, options.now?.() ?? Date.now());
     case "voice:access-granted":
     case "error":
       return message.type === "error"

@@ -1010,6 +1010,34 @@ input:focus {
   background: rgba(234, 245, 248, 0.88);
 }
 
+.chat-system-message {
+  display: inline-flex;
+  align-self: center;
+  max-width: 90%;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(237, 242, 247, 0.74);
+  color: var(--text-subtle);
+  font-size: 11px;
+  font-weight: 780;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.chat-system-message time {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.82;
+}
+
+.chat-system-message span {
+  min-width: 0;
+}
+
 .chat-empty-state {
   margin: auto;
   align-self: center;

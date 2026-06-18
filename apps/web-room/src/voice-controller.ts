@@ -33,6 +33,10 @@ export function createWebRoomVoiceController(args: {
     muted: boolean;
     speaking?: boolean;
   }) => void;
+  onLocalMicrophoneStateChange?: (input: {
+    memberId: string;
+    muted: boolean;
+  }) => void;
   log: (message: string) => void;
 }): WebRoomVoiceController {
   function updateVoiceState(
@@ -198,9 +202,10 @@ export function createWebRoomVoiceController(args: {
     const enabled = voice.muted;
     try {
       await args.runtime.setMicrophoneEnabled(enabled);
+      const memberId =
+        args.getSession()?.memberId ?? voice.participantIdentity ?? "";
       updateParticipantState({
-        memberId:
-          args.getSession()?.memberId ?? voice.participantIdentity ?? "",
+        memberId,
         connected: true,
         muted: !enabled,
         speaking: voice.speaking,
@@ -210,6 +215,10 @@ export function createWebRoomVoiceController(args: {
         muted: !enabled,
         error: null,
       }));
+      args.onLocalMicrophoneStateChange?.({
+        memberId,
+        muted: !enabled,
+      });
       sendCurrentVoiceState({ connected: true, muted: !enabled });
       args.log(enabled ? "voice microphone enabled" : "voice microphone muted");
     } catch (error) {

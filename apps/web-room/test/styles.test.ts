@@ -159,6 +159,10 @@ test("styles chat messages as directional bubbles", () => {
     styles,
     /\.chat-panel\s*{[^}]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto;[^}]*overflow:\s*hidden;[^}]*}/s,
   );
+  assert.match(
+    styles,
+    /\.chat-system-message\s*{[^}]*align-self:\s*center;[^}]*max-width:\s*90%;[^}]*text-align:\s*center;[^}]*}/s,
+  );
 });
 
 test("styles web room icons and member avatars", () => {

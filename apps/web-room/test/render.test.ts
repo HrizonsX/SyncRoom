@@ -93,6 +93,20 @@ test("renders a room-first entry screen without marketing hero content", () => {
   assert.doesNotMatch(actionsHtml, /name="displayName"/);
 });
 
+test("renders entry room invite with colon-delimited room and token", () => {
+  const html = renderWebRoomApp({
+    view: "entry",
+    connectionState: "disconnected",
+    roomCode: "ABC123",
+    joinToken: "valid-join-token-123",
+  });
+
+  assert.match(
+    html,
+    /name="roomInvite"[^>]*value="ABC123:valid-join-token-123"/,
+  );
+});
+
 test("renders the supplied joined-room desktop layout regions", () => {
   const html = renderWebRoomApp(joinedRoomState);
 
@@ -356,6 +370,38 @@ test("renders chat messages as directional bubbles with timestamps", () => {
   assert.match(html, /data-chat-author="other"/);
   assert.match(html, /<time datetime="1725000000000">/);
   assert.match(html, /<time datetime="1725000060000">/);
+});
+
+test("renders system chat messages centered in chronological chat flow", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    chatMessages: [
+      {
+        kind: "system",
+        systemEventType: "member_joined",
+        memberId: "member-2",
+        displayName: "Bob",
+        content: "Bob 加入了房间",
+        timestamp: 1_725_000_000_000,
+      },
+      {
+        memberId: "member-host",
+        displayName: "Alice",
+        content: "欢迎",
+        timestamp: 1_725_000_060_000,
+      },
+    ],
+  } as WebRoomState);
+  const systemIndex = html.indexOf('class="chat-system-message"');
+  const userIndex = html.indexOf('class="chat-message is-self"');
+
+  assert.ok(systemIndex >= 0);
+  assert.ok(userIndex > systemIndex);
+  assert.match(html, /data-chat-author="system"/);
+  assert.match(html, /data-chat-system-event="member_joined"/);
+  assert.match(html, />Bob 加入了房间</);
+  assert.match(html, /<time datetime="1725000000000">/);
+  assert.doesNotMatch(html, /class="chat-message is-other"[^]*Bob 加入了房间/);
 });
 
 test("renders voice controls inside the chat room instead of settings", () => {

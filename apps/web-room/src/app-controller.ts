@@ -13,7 +13,12 @@ import type {
   WebRoomProviderPickerState,
   WebRoomState,
 } from "./render.js";
-import { applyServerMessage, createInitialJoinedState } from "./state.js";
+import { formatRoomJoinInvite } from "./actions.js";
+import {
+  appendSystemChatMessage,
+  applyServerMessage,
+  createInitialJoinedState,
+} from "./state.js";
 import {
   clearWebRoomSession,
   createWebRoomSocketClient,
@@ -289,9 +294,13 @@ function createEntryState(
   serverUrl: string,
   input: Partial<JoinRoomInput> = {},
 ): WebRoomState {
-  const roomInvite = [input.roomCode, input.joinToken]
-    .filter(Boolean)
-    .join(" ");
+  const roomInvite =
+    input.roomCode && input.joinToken
+      ? formatRoomJoinInvite({
+          roomCode: input.roomCode,
+          joinToken: input.joinToken,
+        })
+      : [input.roomCode, input.joinToken].filter(Boolean).join(" ");
   return {
     view: "entry",
     connectionState: "disconnected",
@@ -558,6 +567,18 @@ export function createWebRoomAppController(
     runtime: voiceRuntime,
     sendVoiceAccess: (memberToken) => client?.requestVoiceAccess(memberToken),
     sendVoiceState: (input) => client?.updateVoiceState(input),
+    onLocalMicrophoneStateChange: (input) => {
+      if (state.view !== "joined") {
+        return;
+      }
+      emit(
+        appendSystemChatMessage(state, {
+          memberId: input.memberId,
+          eventType: input.muted ? "voice_muted" : "voice_unmuted",
+          timestamp: options.now?.() ?? Date.now(),
+        }),
+      );
+    },
     log: appendDiagnostic,
   });
 
@@ -978,6 +999,13 @@ export function createWebRoomAppController(
     }
 
     if (isVoiceServerMessage(message)) {
+      if (message.type === "voice:state" && state.view === "joined") {
+        emit(
+          applyServerMessage(state, message, {
+            now: options.now,
+          }),
+        );
+      }
       void voiceController.handleServerMessage(message);
       return;
     }
@@ -1141,6 +1169,13 @@ export function createWebRoomAppController(
   }
 
   function leaveRoom(): void {
+    const previousRoomInvite =
+      state.view === "joined"
+        ? {
+            roomCode: state.roomCode,
+            joinToken: state.joinToken,
+          }
+        : {};
     resetBilibiliAuthPolling();
     void voiceController.disconnect("leave room requested");
     if (client && activeSession) {
@@ -1156,6 +1191,7 @@ export function createWebRoomAppController(
     emit(
       createEntryState(state.serverUrl ?? defaultServerUrl, {
         displayName: getBrowserDisplayName(storage, random),
+        ...previousRoomInvite,
       }),
     );
   }

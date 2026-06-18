@@ -258,6 +258,7 @@ test("reuses the browser web nickname after leaving a room", () => {
   const state = controller.getState();
   assert.equal(state.view, "entry");
   assert.equal(state.displayName, initialDisplayName);
+  assert.equal(state.roomInvite, "ABC123:valid-join-token-123");
   assert.match(
     storage.getItem(WEB_ROOM_IDENTITY_STORAGE_KEY) ?? "",
     new RegExp(initialDisplayName),
@@ -1277,6 +1278,7 @@ test("toggles the LiveKit microphone after voice is connected", async () => {
   const controller = createWebRoomAppController({
     socketFactory: recorder.factory,
     voiceRuntime: runtime,
+    now: () => 14_000,
   });
 
   controller.createRoom({
@@ -1337,6 +1339,88 @@ test("toggles the LiveKit microphone after voice is connected", async () => {
     muted: false,
     speaking: false,
   });
+  assert.deepEqual(
+    state.chatMessages.filter((message) => message.kind === "system"),
+    [
+      {
+        kind: "system",
+        systemEventType: "voice_unmuted",
+        memberId: "member-host",
+        displayName: "Alice",
+        content: "Alice 开启了麦克风",
+        timestamp: 14_000,
+      },
+    ],
+  );
+});
+
+test("adds system chat messages from actual voice state websocket events", () => {
+  let now = 14_000;
+  const { controller, recorder } = createJoinedHostController({
+    now: () => now,
+  });
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: null,
+        playback: null,
+        members: [
+          { id: "member-host", name: "Alice" },
+          { id: "member-2", name: "Bob" },
+        ],
+      },
+    }),
+  );
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: true,
+        speaking: false,
+      },
+    }),
+  );
+  now = 15_000;
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: false,
+        speaking: false,
+      },
+    }),
+  );
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  const systemMessages = state.chatMessages.filter(
+    (message) => message.kind === "system",
+  );
+  assert.deepEqual(systemMessages, [
+    {
+      kind: "system",
+      systemEventType: "voice_unmuted",
+      memberId: "member-2",
+      displayName: "Bob",
+      content: "Bob 开启了麦克风",
+      timestamp: 15_000,
+    },
+  ]);
 });
 
 test("releases chat send cooldown after the server retry window", () => {

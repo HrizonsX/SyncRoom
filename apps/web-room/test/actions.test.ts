@@ -54,9 +54,7 @@ test("formats copied room invite as room code plus join token", () => {
     joinToken: "valid-join-token-123",
   });
 
-  assert.equal(invite.includes("\n"), false);
-  assert.match(invite, /ABC123/);
-  assert.match(invite, /valid-join-token-123/);
+  assert.equal(invite, "ABC123:valid-join-token-123");
   assert.deepEqual(parseRoomJoinInvite(invite), {
     roomCode: "ABC123",
     joinToken: "valid-join-token-123",
@@ -64,11 +62,8 @@ test("formats copied room invite as room code plus join token", () => {
 });
 
 test("parses a pasted room invite into join fields", () => {
-  assert.deepEqual(
-    parseRoomJoinInvite("房间号：abc123\n口令：valid-join-token-123"),
-    {
-      roomCode: "ABC123",
-      joinToken: "valid-join-token-123",
-    },
-  );
+  assert.deepEqual(parseRoomJoinInvite("abc123:valid-join-token-123"), {
+    roomCode: "ABC123",
+    joinToken: "valid-join-token-123",
+  });
 });

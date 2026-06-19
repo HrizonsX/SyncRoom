@@ -41,7 +41,7 @@ function createOffscreenVoiceRuntimeAdapter(
           url: OFFSCREEN_DOCUMENT_URL,
           reasons: ["AUDIO_PLAYBACK", "USER_MEDIA", "WEB_RTC"],
           justification:
-            "SyncRoom uses LiveKit voice chat for room audio playback and microphone capture.",
+            "syncRoom uses LiveKit voice chat for room audio playback and microphone capture.",
         })
         .finally(() => {
           createDocumentPromise = null;

@@ -1,10 +1,20 @@
-# SyncRoom
+# syncRoom
 
 简体中文 | [English](./README.en.md)
 
 > 同频观影，好友同声。
 
-SyncRoom 是一个“浏览器扩展 + WebSocket 服务端”的网页视频同步房间项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 `<video>` 页面，并在房间成员之间同步播放、暂停、跳转和播放速率。当前源码还支持可选的 LiveKit 房间语音、管理后台和 IP 小黑屋。
+syncRoom 是一个“浏览器扩展 + WebSocket 服务端”的网页视频同步房间项目。用户可以创建或加入房间，分享当前 B 站视频或通用 HTML5 `<video>` 页面，并在房间成员之间同步播放、暂停、跳转和播放速率。当前源码还支持可选的 LiveKit 房间语音、管理后台和 IP 小黑屋。
+
+## 🌐 在线体验
+
+> 体验服务器地址：`ws://8.163.88.33:8787`
+
+在扩展的高级设置中将服务器地址切换为上方地址，即可连接体验服务器。
+
+## 📸 插件界面
+
+![SyncRoom 浏览器插件截图](./docs/assets/syncroom-extension-popup.png)
 
 ## ✨ 功能概览
 
@@ -19,16 +29,16 @@ SyncRoom 是一个“浏览器扩展 + WebSocket 服务端”的网页视频同�
 
 ## 🧭 一眼看懂
 
-| 项目             | 说明                                   |
-| ---------------- | -------------------------------------- |
-| 邀请格式         | `roomCode:joinToken`                   |
-| 默认本地服务地址 | `ws://localhost:8787`                  |
-| 生产环境建议地址 | `wss://<你的域名>`                     |
-| 扩展展示名       | SyncRoom                               |
-| 主要目录         | `extension/`、`server/`、`packages/`   |
-| 历史兼容标识     | 部分包名、环境变量、指标名仍保留旧前缀 |
+| 项目             | 说明                                                             |
+| ---------------- | ---------------------------------------------------------------- |
+| 邀请格式         | `roomCode:joinToken`                                             |
+| 默认本地服务地址 | `ws://localhost:8787`                                            |
+| 生产环境建议地址 | `wss://<你的域名>`                                               |
+| 扩展展示名       | syncRoom                                                         |
+| 主要目录         | `extension/`、`server/`、`packages/`                             |
+| 命名约定         | 展示名 `syncRoom`，包名和运行标识使用 `syncroom` / `@syncroom/*` |
 
-> 历史兼容说明：当前项目名和扩展展示名是 SyncRoom。为了避免破坏已有脚本、包导入、监控和部署配置，部分 npm workspace 包名、环境变量、release 文件名、Prometheus 指标名和健康检查字段仍保留 `bili-syncplay` / `@bili-syncplay/*` 等历史标识。
+> 命名说明：项目展示名统一为 syncRoom；npm workspace 包名、环境变量、Prometheus 指标、存储 key 和内部通道使用对应的 `syncroom` / `@syncroom/*` / `SYNCROOM_*` 标识。
 
 ## 🚀 快速开始
 
@@ -146,7 +156,7 @@ Bilibili 专用支持：
 ## 📁 项目结构
 
 ```text
-SyncRoom/
+syncRoom/
   extension/            浏览器扩展（Chrome/Edge/Firefox）
   server/               WebSocket 房间服务器
   packages/protocol/    共享协议类型
@@ -402,11 +412,11 @@ npm run build
 使用固定的 Chrome 扩展 ID 构建扩展：
 
 ```powershell
-$env:BILI_SYNCPLAY_EXTENSION_KEY="<chrome-web-store-public-key>"
-npm run build -w @bili-syncplay/extension
+$env:SYNCROOM_EXTENSION_KEY="<chrome-web-store-public-key>"
+npm run build -w @syncroom/extension
 ```
 
-如果设置了 `BILI_SYNCPLAY_EXTENSION_KEY`，构建会把它写入 `extension/dist/manifest.json` 的 `manifest.key`。这里应使用与你在 Chrome Web Store 发布项对应的同一个公钥，这样本地加载的扩展才能和已发布版本保持相同的扩展 ID。
+如果设置了 `SYNCROOM_EXTENSION_KEY`，构建会把它写入 `extension/dist/manifest.json` 的 `manifest.key`。这里应使用与你在 Chrome Web Store 发布项对应的同一个公钥，这样本地加载的扩展才能和已发布版本保持相同的扩展 ID。
 
 运行自动化测试：
 
@@ -423,16 +433,16 @@ npm test
 也可以使用 workspace 级测试命令：
 
 ```bash
-npm run test -w @bili-syncplay/protocol
-npm run test -w @bili-syncplay/server
-npm run test:redis -w @bili-syncplay/server
-npm run test -w @bili-syncplay/extension
+npm run test -w @syncroom/protocol
+npm run test -w @syncroom/server
+npm run test:redis -w @syncroom/server
+npm run test -w @syncroom/extension
 ```
 
 Redis 集成测试说明：
 
-- `npm run test -w @bili-syncplay/server` 会保留 Redis 专项测试为可选项；未配置 `REDIS_URL` 时可能跳过
-- `npm run test:redis -w @bili-syncplay/server` 是显式的 Redis 回归测试入口
+- `npm run test -w @syncroom/server` 会保留 Redis 专项测试为可选项；未配置 `REDIS_URL` 时可能跳过
+- `npm run test:redis -w @syncroom/server` 是显式的 Redis 回归测试入口
 - 在仓库根目录也可以运行 `npm run test:server:redis`
 - 这些显式 Redis 测试命令要求设置 `REDIS_URL`，缺失时会直接失败
 
@@ -501,7 +511,7 @@ ws://localhost:8787
 
 开发说明：
 
-- `@bili-syncplay/server` 依赖 `@bili-syncplay/protocol` 的构建产物
+- `@syncroom/server` 依赖 `@syncroom/protocol` 的构建产物
 - 对于全新本地环境，优先使用 `npm run build`，而不是单独构建 `server`
 - 扩展默认不会永久保持 socket 连接；只有在会话状态中已存在房间，或用户创建 / 加入房间时才会建立连接
 - 重新进入已有房间现在需要保存的 `joinToken`；断开连接后，旧的 `memberToken` 会被丢弃
@@ -553,12 +563,12 @@ Chrome 显示的扩展版本来自 `extension/dist/manifest.json`。
 wss://sync.example.com
 ```
 
-扩展的服务器地址只接受 `ws://` 和 `wss://`；空输入会回退到当前构建内置的默认值。未设置 `BILI_SYNCPLAY_DEFAULT_SERVER_URL` 时，该默认值是 `ws://localhost:8787`。
+扩展的服务器地址只接受 `ws://` 和 `wss://`；空输入会回退到当前构建内置的默认值。未设置 `SYNCROOM_DEFAULT_SERVER_URL` 时，该默认值是 `ws://localhost:8787`。
 
-如果你希望 Chrome 应用商店提交包内置公共服务器地址、而 GitHub 源码继续保持 `ws://localhost:8787`，构建扩展时设置环境变量 `BILI_SYNCPLAY_DEFAULT_SERVER_URL` 即可，例如在 PowerShell 中：
+如果你希望 Chrome 应用商店提交包内置公共服务器地址、而 GitHub 源码继续保持 `ws://localhost:8787`，构建扩展时设置环境变量 `SYNCROOM_DEFAULT_SERVER_URL` 即可，例如在 PowerShell 中：
 
 ```powershell
-$env:BILI_SYNCPLAY_DEFAULT_SERVER_URL="wss://sync.example.com"
+$env:SYNCROOM_DEFAULT_SERVER_URL="wss://sync.example.com"
 npm run build:release
 ```
 
@@ -569,7 +579,7 @@ npm run build:release
 服务端现在也支持可选的 JSON 配置文件。加载优先级为：
 
 - 内置默认值
-- 当前工作目录下的 `server.config.json`，或 `BILI_SYNCPLAY_CONFIG` 指定的文件
+- 当前工作目录下的 `server.config.json`，或 `SYNCROOM_CONFIG` 指定的文件
 - 环境变量
 
 这样可以在保持现有纯环境变量启动方式完全兼容的前提下，把生产环境里稳定的非敏感配置收敛到文件中。
@@ -622,7 +632,7 @@ npm run build:release
 
 - 监听 `PORT` 或 `server.config.json` 中的 `port`，默认值为 `8787`
 - 在同一个端口上同时提供 WebSocket 流量和简单健康检查
-- 对 `GET /` 返回 `{"ok":true,"service":"bili-syncplay-server"}`
+- 对 `GET /` 返回 `{"ok":true,"service":"syncroom-server"}`
 - 在同一个端口上暴露管理控制面板和后台接口：`/admin`、`/healthz`、`/readyz`、`/api/admin/*`
 - 支持 `memory` 和 `redis` 两种房间存储实现
 - 当 `ROOM_STORE_PROVIDER=redis` 时会持久化房间基础状态
@@ -676,7 +686,7 @@ npm run build:release
 Room Node 示例：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -689,7 +699,7 @@ node server/dist/index.js
 独立 Global Admin 示例：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 ADMIN_SESSION_STORE_PROVIDER=redis \
@@ -762,7 +772,7 @@ node server/dist/global-admin-index.js
 服务器 1 的 Room Node 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-a \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -781,7 +791,7 @@ node server/dist/index.js
 服务器 2 的 Room Node 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 PORT=8787 \
 INSTANCE_ID=room-node-b \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -800,7 +810,7 @@ node server/dist/index.js
 服务器 1 的 Global Admin 环境变量示意：
 
 ```bash
-BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json \
+SYNCROOM_CONFIG=/etc/syncroom/server.config.json \
 GLOBAL_ADMIN_PORT=8788 \
 INSTANCE_ID=global-admin \
 REDIS_URL=redis://10.0.0.11:6379 \
@@ -834,7 +844,7 @@ node server/dist/global-admin-index.js
 
 服务器支持以下环境变量。虽然内置了安全默认值，但生产环境应显式设置：
 
-- `BILI_SYNCPLAY_CONFIG`：可选的 JSON 配置文件路径；未设置时会优先查找当前工作目录下的 `server.config.json`
+- `SYNCROOM_CONFIG`：可选的 JSON 配置文件路径；未设置时会优先查找当前工作目录下的 `server.config.json`
 - `ALLOWED_ORIGINS`：逗号分隔的 WebSocket `Origin` 白名单
 - 如果 `ALLOWED_ORIGINS` 为空，服务器默认拒绝所有显式 `Origin`
 - `ALLOW_MISSING_ORIGIN_IN_DEV`：设为 `true` 时允许缺失 `Origin` 头
@@ -999,7 +1009,7 @@ npm run build
 如果你只想构建服务器包：
 
 ```bash
-npm run build -w @bili-syncplay/server
+npm run build -w @syncroom/server
 ```
 
 仅当 `packages/protocol` 已经构建且未变化时再使用这个命令。
@@ -1040,7 +1050,7 @@ curl http://127.0.0.1:8787/
 预期响应：
 
 ```json
-{ "ok": true, "service": "bili-syncplay-server" }
+{ "ok": true, "service": "syncroom-server" }
 ```
 
 ### 3. 创建 systemd 服务
@@ -1056,7 +1066,7 @@ sudo chown -R syncroom:syncroom /opt/syncroom
 
 ```ini
 [Unit]
-Description=SyncRoom room node A
+Description=syncRoom room node A
 After=network.target
 
 [Service]
@@ -1064,7 +1074,7 @@ Type=simple
 User=syncroom
 Group=syncroom
 WorkingDirectory=/opt/syncroom
-Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
+Environment=SYNCROOM_CONFIG=/etc/syncroom/server.config.json
 Environment=PORT=8787
 Environment=INSTANCE_ID=room-node-a
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1092,7 +1102,7 @@ WantedBy=multi-user.target
 
 ```ini
 [Unit]
-Description=SyncRoom global admin
+Description=syncRoom global admin
 After=network.target
 
 [Service]
@@ -1100,7 +1110,7 @@ Type=simple
 User=syncroom
 Group=syncroom
 WorkingDirectory=/opt/syncroom
-Environment=BILI_SYNCPLAY_CONFIG=/etc/syncroom/server.config.json
+Environment=SYNCROOM_CONFIG=/etc/syncroom/server.config.json
 Environment=GLOBAL_ADMIN_PORT=8788
 Environment=INSTANCE_ID=global-admin
 Environment=REDIS_URL=redis://127.0.0.1:6379
@@ -1238,13 +1248,13 @@ limit_conn_zone $binary_remote_addr zone=conn_per_ip:10m;
 limit_req_zone $binary_remote_addr zone=req_per_ip:10m rate=20r/m;
 limit_req_zone $binary_remote_addr zone=admin_req_per_ip:10m rate=5r/s;
 
-upstream bili_syncplay_ws {
+upstream syncroom_ws {
     least_conn;
     server 127.0.0.1:8787;
     server 10.0.0.12:8787;
 }
 
-upstream bili_syncplay_admin {
+upstream syncroom_admin {
     server 127.0.0.1:8788;
 }
 
@@ -1253,7 +1263,7 @@ server {
     server_name sync.example.com;
 
     location ^~ /admin {
-        proxy_pass http://bili_syncplay_admin;
+        proxy_pass http://syncroom_admin;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1262,7 +1272,7 @@ server {
 
     location ^~ /api/admin/ {
         limit_req zone=admin_req_per_ip burst=20 nodelay;
-        proxy_pass http://bili_syncplay_admin;
+        proxy_pass http://syncroom_admin;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1272,7 +1282,7 @@ server {
     location / {
         limit_conn conn_per_ip 10;
         limit_req zone=req_per_ip burst=10 nodelay;
-        proxy_pass http://bili_syncplay_ws;
+        proxy_pass http://syncroom_ws;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -1350,7 +1360,7 @@ npm run build
 如果你确认只有 `server/` 发生变化，且 `packages/protocol` 没有变化，也可以只构建服务端：
 
 ```bash
-npm run build -w @bili-syncplay/server
+npm run build -w @syncroom/server
 ```
 
 单机 / 单进程部署重启方式：
@@ -1415,19 +1425,19 @@ sudo systemctl restart syncroom-global-admin
 curl http://127.0.0.1:8787/
 
 # 服务器测试
-npm run test -w @bili-syncplay/server
+npm run test -w @syncroom/server
 
 # Redis 集成回归
-REDIS_URL=redis://127.0.0.1:6379 npm run test:redis -w @bili-syncplay/server
+REDIS_URL=redis://127.0.0.1:6379 npm run test:redis -w @syncroom/server
 
 # 完整多节点回归
 REDIS_URL=redis://127.0.0.1:6379 npx tsx --test server/test/multi-node-*.test.ts
 
 # 协议测试
-npm run test -w @bili-syncplay/protocol
+npm run test -w @syncroom/protocol
 
 # 扩展测试
-npm run test -w @bili-syncplay/extension
+npm run test -w @syncroom/extension
 ```
 
 Chrome 侧调试建议：
@@ -1462,10 +1472,10 @@ npm run build:release
 输出：
 
 ```text
-release/bili-syncplay-extension-v<version>.zip
+release/syncroom-extension-v<version>.zip
 ```
 
-> 该文件名是发布脚本中的历史兼容产物名；发布包内的扩展展示名仍为 SyncRoom。
+> 发布包内的扩展展示名为 syncRoom。
 
 ### 自动化 GitHub Release
 

@@ -8,7 +8,7 @@ import type {
   WebPlaybackReportEvent,
   WebPlaybackSystemLabel,
   WebPlayerErrorStage,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 
 const WEB_ROOM_PROTOCOL_VERSION = 3;
 export const WEB_ROOM_SESSION_STORAGE_KEY = "syncroom:web-room-session";

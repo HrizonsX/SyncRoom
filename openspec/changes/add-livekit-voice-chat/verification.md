@@ -4,7 +4,7 @@ Date: 2026-06-02
 
 ### Passed
 
-- Focused protocol tests: `npm run --ignore-scripts test -w @bili-syncplay/protocol`
+- Focused protocol tests: `npm run --ignore-scripts test -w @syncroom/protocol`
   - Result: passed, 81 tests.
 - Focused server voice and related lifecycle tests:
   - `npx tsx --test server/test/voice-service.test.ts server/test/voice-capacity.test.ts server/test/message-validation.ts server/test/room-event-consumer.test.ts server/test/config-env.test.ts server/test/runtime-config.test.ts server/test/room-service.test.ts`
@@ -24,7 +24,7 @@ Date: 2026-06-02
 - Focused microphone permission window regression tests:
   - `npx tsx --test extension/test/microphone-permission-controller.test.ts extension/test/message-controller.test.ts extension/test/voice-controller.test.ts extension/test/popup-save-server-url.test.ts extension/test/popup-render.test.ts`
   - Result: passed, 32 tests.
-- Extension typecheck after microphone permission-window change: `npm run typecheck -w @bili-syncplay/extension`
+- Extension typecheck after microphone permission-window change: `npm run typecheck -w @syncroom/extension`
   - Result: passed.
 - Chrome extension build after microphone permission-window change: `npm run build:extension`
   - Result: passed.
@@ -32,8 +32,8 @@ Date: 2026-06-02
 - External LiveKit backend smoke against the user-provided LiveKit endpoint
   - Result: passed.
   - Verified LiveKit server API authentication with `RoomServiceClient.listRooms`.
-  - Started a temporary local Bili-SyncPlay server with voice enabled.
-  - Created a room through WebSocket, joined a second member, requested `voice:access` for both members, and verified participant identities map to Bili-SyncPlay member ids.
+  - Started a temporary local syncRoom server with voice enabled.
+  - Created a room through WebSocket, joined a second member, requested `voice:access` for both members, and verified participant identities map to syncRoom member ids.
   - Verified the issued LiveKit token can open the LiveKit `/rtc` WebSocket handshake.
   - Verified `voice:state` from one member is broadcast to the other room member.
 
@@ -43,7 +43,7 @@ The real browser-side LiveKit integration smoke was not run in this local sessio
 
 Required setup before running the skipped smoke:
 
-- Start the Bili-SyncPlay server with:
+- Start the syncRoom server with:
   - `VOICE_ENABLED=true`
   - `LIVEKIT_URL=wss://<livekit-host>`
   - `LIVEKIT_API_KEY=$LIVEKIT_API_KEY`

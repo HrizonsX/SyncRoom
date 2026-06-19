@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server as HttpServer } from "node:http";
-import type { ServerMessage } from "@bili-syncplay/protocol";
+import type { ServerMessage } from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import type { AnnouncementStore } from "../announcement-store.js";
 import type { GlobalEventStore } from "../admin/global-event-store.js";
 import { createAdminOverviewService } from "../admin/overview-service.js";
 import { createAdminRoomQueryService } from "../admin/room-query-service.js";
+import { createRuntimeLimitsService } from "../admin/runtime-limits-service.js";
 import type { MetricsCollector } from "../admin/metrics.js";
 import type { AdminCommandBus } from "../admin-command-bus.js";
 import {
@@ -58,6 +59,7 @@ export async function createSharedAdminHttpBootstrap(args: {
   runtimeStore: RuntimeStore;
   eventStore: GlobalEventStore;
   roomService: ReturnType<typeof createRoomService>;
+  runtimeLimitsService: ReturnType<typeof createRuntimeLimitsService>;
   announcementStore: AnnouncementStore;
   send: (socket: WebSocket, message: ServerMessage) => void;
   listAnnouncementPushSessions: () => Promise<Session[]>;
@@ -122,6 +124,7 @@ export async function createSharedAdminHttpBootstrap(args: {
     runtimeStore: args.runtimeStore,
     eventStore: args.eventStore,
     roomService: args.roomService,
+    runtimeLimitsService: args.runtimeLimitsService,
     announcementStore: args.announcementStore,
     send: args.send,
     listAnnouncementPushSessions: args.listAnnouncementPushSessions,

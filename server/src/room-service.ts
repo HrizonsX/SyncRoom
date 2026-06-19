@@ -5,7 +5,7 @@ import {
   type ErrorCode,
   type PlaybackState,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import {
   INTERNAL_SERVER_ERROR_MESSAGE,
   JOIN_TOKEN_INVALID_MESSAGE,
@@ -16,6 +16,7 @@ import {
   ROOM_FULL_MESSAGE,
   ROOM_HAS_NO_SHARED_VIDEO_MESSAGE,
   ROOM_NOT_FOUND_MESSAGE,
+  SERVER_ROOM_LIMIT_REACHED_MESSAGE,
 } from "./messages.js";
 import { decidePlaybackAcceptance } from "./playback-authority.js";
 import {
@@ -52,6 +53,7 @@ type ServiceErrorReason =
   | "member_token_invalid"
   | "not_in_room"
   | "room_full"
+  | "server_room_limit_reached"
   | "invalid_message"
   | "internal_error";
 
@@ -278,6 +280,7 @@ export function createRoomService(options: {
     roomCode: string,
     memberToken: string,
   ) => Promise<string | null>;
+  getMaxActiveRoomsPerNode?: () => number | null;
   resolveBlockedMemberToken?: (
     roomCode: string,
     memberToken: string,
@@ -329,6 +332,16 @@ export function createRoomService(options: {
     session: Session,
     memberToken: string,
   ) => Promise<{ roomCode: string; memberId: string; displayName: string }>;
+  updateVoiceStateForSession: (
+    session: Session,
+    memberToken: string,
+    voiceState: { connected: boolean; muted: boolean },
+  ) => Promise<{
+    roomCode: string;
+    memberId: string;
+    displayName: string;
+    microphoneEnabled: boolean;
+  }>;
   getActiveRoom: (roomCode: string) => ReturnType<RuntimeStore["getRoom"]>;
   getPlaybackAuthority: (roomCode: string) => PlaybackAuthority | null;
   getRoomStateByCode: (
@@ -361,6 +374,7 @@ export function createRoomService(options: {
         runtimeStore.isMemberTokenBlocked(roomCode, memberToken, currentTime),
       ));
   const roomJoinLocks = new Map<string, Promise<void>>();
+  let roomCreateAdmissionQueue: Promise<void> = Promise.resolve();
 
   async function clearVideoAuthRoom(
     roomCode: string,
@@ -564,6 +578,52 @@ export function createRoomService(options: {
     }
   }
 
+  async function withRoomCreateAdmission<T>(
+    action: () => Promise<T>,
+  ): Promise<T> {
+    const previous = roomCreateAdmissionQueue.catch(() => undefined);
+    let releaseNext: () => void = () => undefined;
+    const next = new Promise<void>((resolve) => {
+      releaseNext = resolve;
+    });
+    roomCreateAdmissionQueue = previous.then(() => next);
+
+    await previous;
+    try {
+      return await action();
+    } finally {
+      releaseNext();
+    }
+  }
+
+  function ensureRoomCreateAllowed(session: Session): void {
+    const maxActiveRoomsPerNode = options.getMaxActiveRoomsPerNode?.() ?? null;
+    if (maxActiveRoomsPerNode === null) {
+      return;
+    }
+
+    const activeRoomCount = runtimeStore.getActiveRoomCount();
+    if (activeRoomCount < maxActiveRoomsPerNode) {
+      return;
+    }
+
+    logEvent("room_create_rejected", {
+      sessionId: session.id,
+      remoteAddress: session.remoteAddress,
+      origin: session.origin,
+      activeRoomCount,
+      maxActiveRoomsPerNode,
+      result: "rejected",
+      reason: "server_room_limit_reached",
+    });
+    throw new RoomServiceError(
+      "server_room_limit_reached",
+      SERVER_ROOM_LIMIT_REACHED_MESSAGE,
+      "server_room_limit_reached",
+      { activeRoomCount, maxActiveRoomsPerNode },
+    );
+  }
+
   function setSessionDisplayName(
     session: Session,
     displayName?: string,
@@ -590,6 +650,7 @@ export function createRoomService(options: {
     session.memberId = null;
     session.memberToken = null;
     session.joinedAt = null;
+    session.voiceState = { microphoneEnabled: false };
   }
 
   function snapshotJoinedSession(
@@ -1006,6 +1067,7 @@ export function createRoomService(options: {
     args.session.roomCode = args.roomCode;
     args.session.memberToken = args.joinIdentity.memberToken;
     args.session.joinedAt = args.joinedAt;
+    args.session.voiceState = { microphoneEnabled: false };
   }
 
   function disconnectReplacedSession(
@@ -1235,55 +1297,64 @@ export function createRoomService(options: {
 
   return {
     async createRoomForSession(session, displayName) {
-      setSessionDisplayName(session, displayName);
-      await leaveCurrentRoom(session);
+      return withRoomCreateAdmission(async () => {
+        setSessionDisplayName(session, displayName);
+        await leaveCurrentRoom(session);
+        ensureRoomCreateAllowed(session);
 
-      const createdAt = now();
-      let room: PersistedRoom | null = null;
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const roomCode = nextRoomCode();
-        try {
-          room = await roomStore.createRoom({
-            code: roomCode,
-            joinToken: generateToken(),
-            createdAt,
-            ownerMemberId: session.id,
-            ownerDisplayName: session.displayName,
-          });
-          break;
-        } catch {
-          room = null;
+        const createdAt = now();
+        let room: PersistedRoom | null = null;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const roomCode = nextRoomCode();
+          try {
+            room = await roomStore.createRoom({
+              code: roomCode,
+              joinToken: generateToken(),
+              createdAt,
+              ownerMemberId: session.id,
+              ownerDisplayName: session.displayName,
+            });
+            break;
+          } catch {
+            room = null;
+          }
         }
-      }
-      if (!room) {
-        logEvent("room_persist_failed", {
-          sessionId: session.id,
-          result: "error",
-          reason: "room_create_conflict",
-        });
-        throw new RoomServiceError(
-          "internal_error",
-          INTERNAL_SERVER_ERROR_MESSAGE,
-          "internal_error",
+        if (!room) {
+          logEvent("room_persist_failed", {
+            sessionId: session.id,
+            result: "error",
+            reason: "room_create_conflict",
+          });
+          throw new RoomServiceError(
+            "internal_error",
+            INTERNAL_SERVER_ERROR_MESSAGE,
+            "internal_error",
+          );
+        }
+
+        const memberToken = generateToken();
+        session.memberId = session.id;
+        runtimeStore.addMember(
+          room.code,
+          session.memberId,
+          session,
+          memberToken,
         );
-      }
+        session.roomCode = room.code;
+        session.memberToken = memberToken;
+        session.joinedAt = createdAt;
+        session.voiceState = { microphoneEnabled: false };
 
-      const memberToken = generateToken();
-      session.memberId = session.id;
-      runtimeStore.addMember(room.code, session.memberId, session, memberToken);
-      session.roomCode = room.code;
-      session.memberToken = memberToken;
-      session.joinedAt = createdAt;
+        logEvent("room_persisted", {
+          roomCode: room.code,
+          version: room.version,
+          sessionId: session.id,
+          provider: persistence.provider,
+          result: "ok",
+        });
 
-      logEvent("room_persisted", {
-        roomCode: room.code,
-        version: room.version,
-        sessionId: session.id,
-        provider: persistence.provider,
-        result: "ok",
+        return { room, memberToken };
       });
-
-      return { room, memberToken };
     },
 
     async joinRoomForSession(
@@ -1785,6 +1856,24 @@ export function createRoomService(options: {
         roomCode: access.persistedRoom.code,
         memberId: session.memberId ?? session.id,
         displayName: session.displayName,
+      };
+    },
+
+    async updateVoiceStateForSession(session, memberToken, voiceState) {
+      const access = await requireJoinedRoomSession(
+        session,
+        memberToken,
+        "voice:state",
+      );
+      const microphoneEnabled = voiceState.connected && !voiceState.muted;
+      session.voiceState = { microphoneEnabled };
+      runtimeStore.registerSession(session);
+      await runtimeStore.flush?.();
+      return {
+        roomCode: access.persistedRoom.code,
+        memberId: session.memberId ?? session.id,
+        displayName: session.displayName,
+        microphoneEnabled,
       };
     },
 

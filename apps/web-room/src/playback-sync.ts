@@ -1,4 +1,4 @@
-import type { ClientMessage, PlaybackState } from "@bili-syncplay/protocol";
+import type { ClientMessage, PlaybackState } from "@syncroom/protocol";
 
 export type MediaElementLike = {
   currentTime: number;

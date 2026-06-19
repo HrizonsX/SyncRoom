@@ -35,8 +35,8 @@ for (const packagePath of packagePaths) {
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
   packageJson.version = nextVersion;
 
-  if (packageJson.dependencies?.["@bili-syncplay/protocol"]) {
-    packageJson.dependencies["@bili-syncplay/protocol"] = nextVersion;
+  if (packageJson.dependencies?.["@syncroom/protocol"]) {
+    packageJson.dependencies["@syncroom/protocol"] = nextVersion;
   }
 
   await writeFile(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);

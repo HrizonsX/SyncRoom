@@ -8,7 +8,7 @@
 
 ```bash
 npm install
-npm --workspace @bili-syncplay/web-room run build
+npm --workspace @syncroom/web-room run build
 ```
 
 也可以运行根构建：

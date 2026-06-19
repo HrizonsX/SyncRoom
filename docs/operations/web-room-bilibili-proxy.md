@@ -8,7 +8,7 @@ The web room is a standalone static app. Source lives in `apps/web-room/`, and b
 
 ```bash
 npm install
-npm --workspace @bili-syncplay/web-room run build
+npm --workspace @syncroom/web-room run build
 ```
 
 The root build also includes the web room:

@@ -2,7 +2,7 @@ import type {
   DanmakuMode,
   PlaybackState,
   ProviderPlaybackDescriptor,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import { formatRoomJoinInvite } from "./actions.js";
 import type { PlaybackSource } from "./playback-adapter.js";
 import type { WebRoomVoiceState } from "./voice-state.js";

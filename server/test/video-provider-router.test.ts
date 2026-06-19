@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import type { PlaybackProxyPolicy } from "@bili-syncplay/protocol";
+import type { PlaybackProxyPolicy } from "@syncroom/protocol";
 import { createPlaybackProxyController } from "../src/playback-proxy/controller.js";
 import { createPlaybackProxyRouter } from "../src/playback-proxy/router.js";
 import { createPlaybackProxyService } from "../src/playback-proxy/service.js";

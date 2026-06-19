@@ -3,7 +3,7 @@ import type {
   PlaybackState,
   RoomState,
   SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { SharedVideoToastPayload } from "../shared/messages";
 
 export function createPendingShareToast(args: {

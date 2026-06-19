@@ -1,8 +1,8 @@
-# SyncRoom Privacy Policy
+# syncRoom Privacy Policy
 
 Effective date: 2026-06-07
 
-This Privacy Policy applies to the SyncRoom browser extension and web room client (the "Project Clients"). It explains what information the Project Clients process, how that information is used, and what controls users have over related data when using synchronized playback, web rooms, optional room voice, temporary Bilibili authorization, and connection diagnostics.
+This Privacy Policy applies to the syncRoom browser extension and web room client (the "Project Clients"). It explains what information the Project Clients process, how that information is used, and what controls users have over related data when using synchronized playback, web rooms, optional room voice, temporary Bilibili authorization, and connection diagnostics.
 
 ## 1. Types of Information Processed
 

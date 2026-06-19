@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { WebSocket, type RawData } from "ws";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import {
   createSyncServer,
   getDefaultPersistenceConfig,
@@ -1322,25 +1322,20 @@ test("admin exposes metrics and config summary", async () => {
     const token = await login(server.httpBaseUrl);
     const metrics = await requestText(server.httpBaseUrl, "/metrics");
     assert.equal(metrics.status, 200);
-    assert.equal(metrics.body.includes("bili_syncplay_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_room_created_total"), true);
+    assert.equal(metrics.body.includes("syncroom_events_total"), true);
     assert.equal(
-      metrics.body.includes("bili_syncplay_room_created_total"),
-      true,
-    );
-    assert.equal(metrics.body.includes("bili_syncplay_events_total"), true);
-    assert.equal(
-      metrics.body.includes("bili_syncplay_message_handler_duration_seconds"),
+      metrics.body.includes("syncroom_message_handler_duration_seconds"),
       true,
     );
     assert.equal(
-      metrics.body.includes(
-        "bili_syncplay_redis_runtime_store_duration_seconds",
-      ),
+      metrics.body.includes("syncroom_redis_runtime_store_duration_seconds"),
       true,
     );
     assert.equal(
       metrics.body.includes(
-        "bili_syncplay_redis_room_event_bus_publish_duration_seconds",
+        "syncroom_redis_room_event_bus_publish_duration_seconds",
       ),
       true,
     );
@@ -1352,6 +1347,7 @@ test("admin exposes metrics and config summary", async () => {
     const configData = config.body.data as {
       instanceId: string;
       persistence: { provider: string; redisConfigured: boolean };
+      runtimeLimits: { maxActiveRoomsPerNode: number | null };
       security: {
         allowedOrigins: string[];
         trustedProxyAddresses: string[];
@@ -1361,12 +1357,89 @@ test("admin exposes metrics and config summary", async () => {
     assert.equal(configData.instanceId, "instance-1");
     assert.equal(configData.persistence.provider, "memory");
     assert.equal(configData.persistence.redisConfigured, false);
+    assert.equal(configData.runtimeLimits.maxActiveRoomsPerNode, null);
     assert.deepEqual(configData.security.allowedOrigins, [ALLOWED_ORIGIN]);
     assert.deepEqual(configData.security.trustedProxyAddresses, []);
     assert.equal(configData.admin.configured, true);
     assert.equal(configData.admin.username, "admin");
     assert.equal(configData.admin.role, "admin");
   } finally {
+    await server.close();
+  }
+});
+
+test("admin can update per-node active room limit without restarting", async () => {
+  const server = await startAdminServer(adminDependencies("admin"));
+  const sockets: WebSocket[] = [];
+
+  try {
+    const token = await login(server.httpBaseUrl);
+    const limitToOne = await requestJson(
+      server.httpBaseUrl,
+      "/api/admin/config/runtime-limits",
+      {
+        method: "PUT",
+        token,
+        body: { maxActiveRoomsPerNode: 1 },
+      },
+    );
+    assert.equal(limitToOne.status, 200);
+    assert.equal(
+      (
+        limitToOne.body.data as {
+          maxActiveRoomsPerNode: number | null;
+        }
+      ).maxActiveRoomsPerNode,
+      1,
+    );
+
+    const first = await connectClient(server.wsUrl);
+    sockets.push(first);
+    const firstCollector = createMessageCollector(first);
+    first.send(
+      JSON.stringify({
+        type: "room:create",
+        payload: { displayName: "Alice", protocolVersion: PROTOCOL_VERSION },
+      }),
+    );
+    await firstCollector.next("room:created");
+    await firstCollector.next("room:state");
+
+    const second = await connectClient(server.wsUrl);
+    sockets.push(second);
+    const secondCollector = createMessageCollector(second);
+    second.send(
+      JSON.stringify({
+        type: "room:create",
+        payload: { displayName: "Bob", protocolVersion: PROTOCOL_VERSION },
+      }),
+    );
+    const rejected = await secondCollector.next("error");
+    assert.deepEqual(rejected.payload, {
+      code: "server_room_limit_reached",
+      message: "Server node room limit reached.",
+    });
+
+    const limitToTwo = await requestJson(
+      server.httpBaseUrl,
+      "/api/admin/config/runtime-limits",
+      {
+        method: "PUT",
+        token,
+        body: { maxActiveRoomsPerNode: 2 },
+      },
+    );
+    assert.equal(limitToTwo.status, 200);
+
+    second.send(
+      JSON.stringify({
+        type: "room:create",
+        payload: { displayName: "Bob", protocolVersion: PROTOCOL_VERSION },
+      }),
+    );
+    await secondCollector.next("room:created");
+  } finally {
+    await Promise.all(sockets.map((socket) => closeClient(socket)));
     await server.close();
   }
 });
@@ -1541,7 +1614,7 @@ test("room node can disable admin routes while keeping health probes", async () 
 
     const metrics = await requestText(server.httpBaseUrl, "/metrics");
     assert.equal(metrics.status, 200);
-    assert.equal(metrics.body.includes("bili_syncplay_connections"), true);
+    assert.equal(metrics.body.includes("syncroom_connections"), true);
   } finally {
     await server.close();
   }
@@ -1600,10 +1673,7 @@ test("metrics can be exposed on a dedicated port distinct from the admin server"
       "/metrics",
     );
     assert.equal(dedicatedMetrics.status, 200);
-    assert.equal(
-      dedicatedMetrics.body.includes("bili_syncplay_connections"),
-      true,
-    );
+    assert.equal(dedicatedMetrics.body.includes("syncroom_connections"), true);
 
     const dedicatedOtherPath = await requestText(
       `http://127.0.0.1:${metricsAddress.port}`,
@@ -1757,7 +1827,7 @@ test("admin auth ignores stray Cookie headers (bearer-only session policy)", asy
       method: "GET",
       headers: {
         Origin: server.httpBaseUrl,
-        Cookie: `bili-syncplay-admin-token=${token}`,
+        Cookie: `syncroom-admin-token=${token}`,
       },
     });
     assert.equal(cookieOnly.status, 401);

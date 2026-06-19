@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import { PROTOCOL_VERSION } from "@syncroom/protocol";
 import {
   createSyncServer,
   getDefaultPersistenceConfig,

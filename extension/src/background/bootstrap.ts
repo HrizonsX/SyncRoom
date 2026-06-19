@@ -1,4 +1,4 @@
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 import type { DebugLogEntry } from "../shared/messages";
 import { resolvePersistedServerUrl } from "./server-url";
 import type { PersistedBackgroundSnapshot } from "./storage-manager";

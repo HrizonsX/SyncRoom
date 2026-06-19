@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   isClientMessage,
   type ProviderPlaybackDescriptor,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import {
   createWebRoomSocketClient,
   loadWebRoomSession,

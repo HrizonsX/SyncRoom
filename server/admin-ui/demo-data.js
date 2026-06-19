@@ -66,6 +66,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 28,
         remoteAddress: "203.0.113.10",
         origin: "chrome-extension://demo-extension",
+        microphoneEnabled: true,
       },
       {
         displayName: "Bob",
@@ -74,6 +75,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 18,
         remoteAddress: "198.51.100.42",
         origin: "https://www.bilibili.com",
+        microphoneEnabled: false,
       },
       {
         displayName: "Carol",
@@ -82,6 +84,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 11,
         remoteAddress: "198.51.100.77",
         origin: "http://localhost:5173",
+        microphoneEnabled: false,
       },
       {
         displayName: "Dave",
@@ -90,6 +93,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 4,
         remoteAddress: null,
         origin: "",
+        microphoneEnabled: true,
       },
     ],
     ROOM2B: [
@@ -100,6 +104,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 14,
         remoteAddress: "192.0.2.15",
         origin: "https://www.bilibili.com",
+        microphoneEnabled: false,
       },
       {
         displayName: "Foxtrot",
@@ -108,6 +113,7 @@ export function createDemoData() {
         joinedAt: now - 1000 * 60 * 6,
         remoteAddress: "192.0.2.18",
         origin: "chrome-extension://demo-extension",
+        microphoneEnabled: true,
       },
     ],
     ARCH9C: [],
@@ -249,6 +255,9 @@ export function createDemoData() {
     auditLogs,
     ipBlocks,
     announcements,
+    runtimeLimits: {
+      maxActiveRoomsPerNode: 32,
+    },
   };
 }
 
@@ -283,7 +292,7 @@ export function createMockApiRequest() {
     if (pathname === "/api/admin/overview") {
       return {
         service: {
-          name: "bili-syncplay-server",
+          name: "syncroom-server",
           version: "0.7.0-demo",
           instanceId: "instance-1",
           startedAt: demoData.now - 1000 * 60 * 60 * 4,
@@ -554,6 +563,7 @@ export function createMockApiRequest() {
           roomCleanupIntervalMs: 60000,
           redisConfigured: true,
         },
+        runtimeLimits: { ...demoData.runtimeLimits },
         admin: {
           configured: true,
           username: "demo-admin",
@@ -579,6 +589,15 @@ export function createMockApiRequest() {
           },
         },
       };
+    }
+    if (pathname === "/api/admin/config/runtime-limits" && method === "PUT") {
+      demoData.runtimeLimits = {
+        maxActiveRoomsPerNode:
+          options.body?.maxActiveRoomsPerNode === undefined
+            ? demoData.runtimeLimits.maxActiveRoomsPerNode
+            : options.body.maxActiveRoomsPerNode,
+      };
+      return { ...demoData.runtimeLimits };
     }
     if (
       pathname.includes("/close") ||

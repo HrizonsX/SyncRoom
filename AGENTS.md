@@ -11,7 +11,7 @@
 
 ## Project Overview
 
-SyncRoom is a monorepo for synchronized web video playback across multiple users. It supports Bilibili-specific pages and generic pages that expose a standard HTML5 `<video>` element. It consists of:
+syncRoom is a monorepo for synchronized web video playback across multiple users. It supports Bilibili-specific pages and generic pages that expose a standard HTML5 `<video>` element. It consists of:
 
 - **`packages/protocol/`** — Shared TypeScript types, type guards, and URL normalization utilities
 - **`extension/`** — Chrome/Edge browser extension (service worker + content scripts + popup)
@@ -99,7 +99,7 @@ Single source of truth for `ClientMessage`, `ServerMessage`, domain types (`Room
 - Do not combine templates, DOM updates, business rules, and message dispatch in one file.
 - Separate popup rendering, actions, and state management.
 - URL normalization must stay centralized (`normalizeSharedVideoUrl`).
-- Protocol types/guards must stay in `@bili-syncplay/protocol`.
+- Protocol types/guards must stay in `@syncroom/protocol`.
 - Server env parsing must stay in the server config layer.
 
 ## Engineering Constraints

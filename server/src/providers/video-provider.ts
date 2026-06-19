@@ -5,7 +5,7 @@ import type {
   ProviderPlaybackCandidate,
   ProviderPlaybackDescriptor,
   VideoProviderId,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type {
   VideoAuthCredentials,
   VideoAuthProfile,

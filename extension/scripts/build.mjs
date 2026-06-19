@@ -15,7 +15,7 @@ const distDir = path.join(rootDir, distDirName(targetBrowser));
 const packageJsonPath = path.join(workspaceRootDir, "package.json");
 const manifestPath = path.join(rootDir, "public", "manifest.json");
 const defaultServerUrl = resolveDefaultServerUrl(
-  process.env.BILI_SYNCPLAY_DEFAULT_SERVER_URL,
+  process.env.SYNCROOM_DEFAULT_SERVER_URL,
 );
 
 await rm(distDir, { recursive: true, force: true });
@@ -32,7 +32,7 @@ if (targetBrowser === "firefox") {
   delete manifest.key;
   manifest.browser_specific_settings = {
     gecko: {
-      id: "bili-syncplay@bilibili-tools.local",
+      id: "syncroom@bilibili-tools.local",
       strict_min_version: "121.0",
       // Firefox 新规：新扩展须声明数据收集/传输（与目的地无关，发往
       // 用户自建服务端也算）。本扩展把同步的 B 站视频 URL
@@ -71,7 +71,7 @@ if (targetBrowser === "firefox") {
   };
 } else {
   const extensionKey = normalizeExtensionKey(
-    process.env.BILI_SYNCPLAY_EXTENSION_KEY,
+    process.env.SYNCROOM_EXTENSION_KEY,
   );
 
   if (extensionKey) {
@@ -97,7 +97,7 @@ await Promise.all([
     outdir: distDir,
     sourcemap: true,
     define: {
-      __BILI_SYNCPLAY_DEFAULT_SERVER_URL__: JSON.stringify(defaultServerUrl),
+      __SYNCROOM_DEFAULT_SERVER_URL__: JSON.stringify(defaultServerUrl),
     },
   }),
   writeFile(
@@ -154,7 +154,7 @@ function normalizeExtensionKey(rawValue) {
 
   if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) {
     throw new Error(
-      "BILI_SYNCPLAY_EXTENSION_KEY must be a Chrome extension public key body or a PEM-formatted public key.",
+      "SYNCROOM_EXTENSION_KEY must be a Chrome extension public key body or a PEM-formatted public key.",
     );
   }
 
@@ -172,14 +172,12 @@ function resolveDefaultServerUrl(rawValue) {
     parsedUrl = new URL(trimmed);
   } catch {
     throw new Error(
-      "BILI_SYNCPLAY_DEFAULT_SERVER_URL must be a valid ws:// or wss:// URL.",
+      "SYNCROOM_DEFAULT_SERVER_URL must be a valid ws:// or wss:// URL.",
     );
   }
 
   if (parsedUrl.protocol !== "ws:" && parsedUrl.protocol !== "wss:") {
-    throw new Error(
-      "BILI_SYNCPLAY_DEFAULT_SERVER_URL must use ws:// or wss://.",
-    );
+    throw new Error("SYNCROOM_DEFAULT_SERVER_URL must use ws:// or wss://.");
   }
 
   return parsedUrl.toString();

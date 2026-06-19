@@ -126,7 +126,7 @@ test("bootstrap redirects authenticated login route to overview", async () => {
       "/api/admin/overview": {
         service: {
           instanceId: "instance-1",
-          name: "bili-syncplay-server",
+          name: "syncroom-server",
           version: "1.0.0-test",
           uptimeMs: 1000,
         },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ProviderPlaybackDescriptor } from "@bili-syncplay/protocol";
+import type { ProviderPlaybackDescriptor } from "@syncroom/protocol";
 import {
   createWebRoomAppController,
   DEFAULT_WEB_ROOM_SERVER_URL,

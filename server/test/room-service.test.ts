@@ -4,7 +4,7 @@ import {
   parseSharedVideoRef,
   type PlaybackState,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import { createActiveRoomRegistry } from "../src/active-room-registry.js";
 import {
@@ -18,6 +18,8 @@ import {
   createInMemoryRuntimeStore,
   type RuntimeStore,
 } from "../src/runtime-store.js";
+import { createAdminRoomQueryService } from "../src/admin/room-query-service.js";
+import type { GlobalEventStore } from "../src/admin/global-event-store.js";
 import type { LogEvent, Session } from "../src/types.js";
 
 function createSession(id: string): Session {
@@ -119,6 +121,23 @@ function createPlayback(
     actorId,
     seq: 1,
     ...overrides,
+  };
+}
+
+function createEmptyEventStore(): GlobalEventStore {
+  return {
+    append() {
+      throw new Error("unreachable");
+    },
+    query() {
+      return { items: [], total: 0 };
+    },
+    totalCountsByEvent() {
+      return {};
+    },
+    countsByEventInWindow() {
+      return {};
+    },
   };
 }
 
@@ -263,6 +282,91 @@ test("room service validates voice access with existing room member tokens", asy
     (error) =>
       error instanceof RoomServiceError && error.code === "not_in_room",
   );
+});
+
+test("admin room details show member microphone open or closed from voice state", async () => {
+  const roomStore = createInMemoryRoomStore();
+  const runtimeStore = createInMemoryRuntimeStore();
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    runtimeStore,
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => "VOICE2",
+  });
+  const roomQueryService = createAdminRoomQueryService({
+    instanceId: "node-a",
+    roomStore,
+    runtimeStore,
+    eventStore: createEmptyEventStore(),
+  });
+
+  const owner = createSession("owner");
+  const { room, memberToken } = await service.createRoomForSession(
+    owner,
+    "Alice",
+  );
+  runtimeStore.registerSession(owner);
+  runtimeStore.markSessionJoinedRoom(owner.id, room.code);
+
+  await service.updateVoiceStateForSession(owner, memberToken, {
+    connected: true,
+    muted: false,
+  });
+  const openDetail = await roomQueryService.getRoomDetail(room.code);
+  assert.equal(openDetail?.members[0]?.microphoneEnabled, true);
+
+  await service.updateVoiceStateForSession(owner, memberToken, {
+    connected: true,
+    muted: true,
+  });
+  const closedDetail = await roomQueryService.getRoomDetail(room.code);
+  assert.equal(closedDetail?.members[0]?.microphoneEnabled, false);
+});
+
+test("room service applies dynamic per-node active room limit without restart", async () => {
+  const runtimeStore = createInMemoryRuntimeStore();
+  let maxActiveRoomsPerNode = 1;
+  let nextRoomId = 0;
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore(),
+    runtimeStore,
+    getMaxActiveRoomsPerNode: () => maxActiveRoomsPerNode,
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => `NODE${++nextRoomId}`.padEnd(6, "0"),
+  } as Parameters<typeof createRoomService>[0] & {
+    getMaxActiveRoomsPerNode: () => number | null;
+  });
+
+  const firstOwner = createSession("owner-1");
+  const firstRoom = await service.createRoomForSession(firstOwner, "Alice");
+  runtimeStore.registerSession(firstOwner);
+  runtimeStore.markSessionJoinedRoom(firstOwner.id, firstRoom.room.code);
+
+  await assert.rejects(
+    () => service.createRoomForSession(createSession("owner-2"), "Bob"),
+    (error) =>
+      error instanceof RoomServiceError &&
+      error.code === "server_room_limit_reached",
+  );
+
+  maxActiveRoomsPerNode = 2;
+  const created = await service.createRoomForSession(
+    createSession("owner-2"),
+    "Bob",
+  );
+  assert.equal(created.room.code, "NODE20");
 });
 
 test("room service skips lastActiveAt persistence for reconnect joins within refresh window", async () => {

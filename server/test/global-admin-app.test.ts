@@ -97,7 +97,7 @@ test("global admin server starts without websocket runtime and serves admin endp
     assert.equal(overview.status, 200);
     assert.equal(
       (overview.body.data as { service: { name: string } }).service.name,
-      "bili-syncplay-global-admin",
+      "syncroom-global-admin",
     );
 
     const health = await requestJson(baseUrl, "/healthz");

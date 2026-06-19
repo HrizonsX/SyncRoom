@@ -1,6 +1,6 @@
 ## Context
 
-SyncRoom 当前是 `packages/protocol/`、`server/`、`extension/` 组成的 npm workspace。共享线协议、房间状态、播放状态和 URL 规范化由 `@bili-syncplay/protocol` 负责；服务端通过 WebSocket session 处理 `room:create`、`room:join`、`video:share`、`playback:update`、`sync:request`、`voice:access` 和 `voice:state`；扩展端将 popup、background、content script、offscreen voice host 分开。
+SyncRoom 当前是 `packages/protocol/`、`server/`、`extension/` 组成的 npm workspace。共享线协议、房间状态、播放状态和 URL 规范化由 `@syncroom/protocol` 负责；服务端通过 WebSocket session 处理 `room:create`、`room:join`、`video:share`、`playback:update`、`sync:request`、`voice:access` 和 `voice:state`；扩展端将 popup、background、content script、offscreen voice host 分开。
 
 本变更新增网页端入口，但不能重建第二套房间系统。网页端必须接入现有 room/session/memberToken 模型，复用 LiveKit 语音 token 发行逻辑，并通过共享协议让扩展端和网页端保持兼容。新增 Bilibili 解析、临时授权和 proxy/shared 播放链路时，后端需要保持模块化，避免把 provider、授权、manifest 改写、segment 代理和 HTTP route 混在一个 controller 中。
 

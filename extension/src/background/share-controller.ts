@@ -3,7 +3,7 @@ import {
   type PlaybackState,
   PROTOCOL_VERSION,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import { t } from "../shared/i18n";
 import {
   createPendingLocalShareExpiry,

@@ -11,10 +11,14 @@ import type {
   IpBlockListResult,
   RoomListQuery,
 } from "./types.js";
-import type { AnnouncementState } from "@bili-syncplay/protocol";
+import type { AnnouncementState } from "@syncroom/protocol";
 
 export type AdminRouterOptions = {
   getConfigSummary: () => unknown;
+  updateRuntimeLimits: (
+    actor: AdminSession,
+    input: unknown,
+  ) => Promise<unknown>;
   getMetrics: () => Promise<string>;
   authService?: AdminAuthService;
   roomStoreReady: () => Promise<boolean>;

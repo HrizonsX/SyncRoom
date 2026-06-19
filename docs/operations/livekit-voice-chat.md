@@ -5,7 +5,7 @@ This guide covers the optional room voice feature backed by a self-hosted LiveKi
 ## Scope
 
 - Voice is optional. Playback sync continues when voice is disabled or misconfigured.
-- SyncRoom issues room-scoped LiveKit tokens after validating the existing `memberToken`.
+- syncRoom issues room-scoped LiveKit tokens after validating the existing `memberToken`.
 - LiveKit API key and secret are server-side only. Never put them in extension builds, JSON config files, docs examples with real values, or client logs.
 - When voice is enabled, the effective room capacity is capped at 4 members, even if `MAX_MEMBERS_PER_ROOM` is higher.
 
@@ -45,7 +45,7 @@ VOICE_MAX_MEMBERS=4
 
 ## Local Smoke Checklist
 
-1. Start LiveKit and the SyncRoom server with placeholder-free environment variables.
+1. Start LiveKit and the syncRoom server with placeholder-free environment variables.
 2. Build both browser targets:
 
 ```bash

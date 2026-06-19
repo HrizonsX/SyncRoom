@@ -5,7 +5,7 @@ import type {
   AnnouncementState,
   RoomState,
   ServerMessage,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 
 function createRoomState(roomCode = "ROOM01"): RoomState {
   return {

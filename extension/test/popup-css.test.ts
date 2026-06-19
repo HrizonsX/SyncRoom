@@ -70,6 +70,16 @@ test("premium popup cards and member list use the prototype surface styles", () 
   assert.doesNotMatch(popupCss, /@keyframes\s+avatar-spin-once/);
 });
 
+test("current speaking member hover does not rotate the avatar", () => {
+  const rule = ruleBody(
+    ".member-row.is-self:has(.member-state.speaking):hover .avatar",
+  );
+
+  assert.match(rule, /transform:\s*none/);
+  assert.doesNotMatch(rule, /rotate/);
+  assert.doesNotMatch(rule, /animation/);
+});
+
 test("popup window scrollbar is narrow and visually subdued", () => {
   assert.match(popupCss, /html,\s*body\s*\{[\s\S]*scrollbar-width:\s*thin/);
   assert.match(exactRuleBody("::-webkit-scrollbar"), /width:\s*5px/);

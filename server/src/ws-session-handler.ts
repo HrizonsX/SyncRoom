@@ -8,7 +8,7 @@ import {
   type ErrorCode,
   type ErrorMessage,
   type ServerMessage,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import { createSessionRateLimitState } from "./rate-limit.js";
 import { hasAttachedSocket } from "./types.js";
 import type { LogEvent, SecurityConfig, Session } from "./types.js";

@@ -1,4 +1,4 @@
-import type { ClientMessage } from "@bili-syncplay/protocol";
+import type { ClientMessage } from "@syncroom/protocol";
 import {
   loadShakaPlayer as defaultLoadShakaPlayer,
   type PlaybackSource,

@@ -1,4 +1,4 @@
-import type { RoomState } from "@bili-syncplay/protocol";
+import type { RoomState } from "@syncroom/protocol";
 import {
   loadState,
   saveProfileState,

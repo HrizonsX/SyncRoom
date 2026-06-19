@@ -5,7 +5,7 @@ import {
   type ServerMessage,
   type SharedVideo,
   type WebPlaybackReportEvent,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type {
   WebRoomAuthMethod,
   WebRoomPlaybackErrorStage,

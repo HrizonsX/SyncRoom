@@ -6,7 +6,7 @@ import {
   type ProviderPlaybackCandidate,
   type ProviderPlaybackDescriptor,
   type VideoProviderId,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import {
   JsonBodyParseError,
   getPathSegments,

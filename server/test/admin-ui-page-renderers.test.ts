@@ -53,6 +53,101 @@ function countOccurrences(value: string, pattern: string): number {
   return value.split(pattern).length - 1;
 }
 
+function createAnnouncementEditorDocumentStub() {
+  const listeners = new Map<string, (event?: unknown) => unknown>();
+  const indexNode = { textContent: "" };
+  const idInput = {
+    name: "announcement-id-0",
+    placeholder: "",
+    value: "notice-1",
+  };
+  const textInput = {
+    name: "announcement-text-0",
+    value: "Last notice",
+  };
+  let rowRemoved = false;
+  const row = {
+    setAttribute() {},
+    querySelector(selector: string) {
+      if (selector === "[data-announcement-row-index]") {
+        return indexNode;
+      }
+      if (selector === 'input[name^="announcement-id-"]') {
+        return idInput;
+      }
+      if (selector === 'textarea[name^="announcement-text-"]') {
+        return textInput;
+      }
+      return null;
+    },
+    remove() {
+      rowRemoved = true;
+    },
+  };
+  const deleteButton = {
+    closest(selector: string) {
+      if (selector === "[data-delete-announcement]") {
+        return this;
+      }
+      if (selector === "[data-announcement-item]") {
+        return row;
+      }
+      return null;
+    },
+  };
+  const list = {
+    querySelectorAll(selector: string) {
+      if (selector !== "[data-announcement-item]" || rowRemoved) {
+        return [];
+      }
+      return [row];
+    },
+    contains(value: unknown) {
+      return value === deleteButton;
+    },
+    insertAdjacentHTML() {},
+    addEventListener(type: string, handler: (event?: unknown) => unknown) {
+      listeners.set(`list:${type}`, handler);
+    },
+  };
+  const form = {
+    addEventListener(type: string, handler: (event?: unknown) => unknown) {
+      listeners.set(`form:${type}`, handler);
+    },
+  };
+  const addButton = {
+    disabled: false,
+    addEventListener(type: string, handler: (event?: unknown) => unknown) {
+      listeners.set(`add:${type}`, handler);
+    },
+  };
+  const emptyState = { hidden: true };
+  const refreshButton = {
+    addEventListener(type: string, handler: (event?: unknown) => unknown) {
+      listeners.set(`refresh:${type}`, handler);
+    },
+  };
+
+  return {
+    deleteButton,
+    emptyState,
+    document: createDocumentStub({
+      single: {
+        "[data-refresh-announcements]": refreshButton,
+        "#announcements-form": form,
+        "[data-announcement-list]": list,
+        "[data-add-announcement]": addButton,
+        "[data-announcement-empty]": emptyState,
+      },
+    }),
+    async clickDelete() {
+      await listeners.get("list:click")?.({
+        target: deleteButton,
+      });
+    },
+  };
+}
+
 function ruleBody(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = new RegExp(`${escaped}\\s*\\{([\\s\\S]*?)\\}`).exec(
@@ -63,6 +158,10 @@ function ruleBody(selector: string): string {
 }
 
 test("filter footer button groups align to the right edge", () => {
+  assert.match(
+    ruleBody(".filter-footer.full-width"),
+    /grid-column:\s*1\s*\/\s*-1/,
+  );
   assert.match(ruleBody(".filter-footer .actions"), /margin-left:\s*auto/);
   assert.match(
     ruleBody(".filter-footer .actions"),
@@ -73,6 +172,13 @@ test("filter footer button groups align to the right edge", () => {
 test("announcement intro copy stays on a single line without an English kicker", () => {
   assert.match(ruleBody(".announcement-intro-text"), /white-space:\s*nowrap/);
   assert.match(ruleBody(".announcement-intro-text"), /max-width:\s*none/);
+});
+
+test("runtime room limit controls use a dedicated aligned row", () => {
+  assert.match(ruleBody(".runtime-limits-panel"), /grid-column:\s*1\s*\/\s*-1/);
+  assert.match(ruleBody(".runtime-limit-row"), /display:\s*grid/);
+  assert.match(ruleBody(".runtime-limit-row"), /grid-template-columns:/);
+  assert.match(ruleBody(".runtime-limit-save"), /justify-self:\s*end/);
 });
 
 test("overview page toggles auto refresh and supports manual refresh binding", async () => {
@@ -99,7 +205,7 @@ test("overview page toggles auto refresh and supports manual refresh binding", a
         return {
           service: {
             instanceId: "instance-1",
-            name: "bili-syncplay-server",
+            name: "syncroom-server",
             version: "1.0.0-test",
             uptimeMs: 12_345,
           },
@@ -509,6 +615,60 @@ test("announcements page renders only published items with add and delete contro
   assert.equal(page.html.includes('data-action="save-announcements"'), true);
 });
 
+test("announcements page publishes an empty list when deleting the last announcement row", async () => {
+  const editor = createAnnouncementEditorDocumentStub();
+  const updates: unknown[] = [];
+  let rerenderCount = 0;
+  const pageLoaders = createPageLoaders({
+    document: editor.document,
+    location: { search: "" },
+    history: { replaceState() {} },
+    state: {
+      overviewAutoRefresh: true,
+      lastOverviewData: { instanceId: "instance-1" },
+    },
+    api: {
+      async getAnnouncements() {
+        return {
+          version: 1,
+          updatedAt: 1_710_000_000_000,
+          items: [{ id: "notice-1", text: "Last notice" }],
+        };
+      },
+      async updateAnnouncements(items: unknown) {
+        updates.push(items);
+      },
+    },
+    routeHref(path: string) {
+      return `/admin${path}`;
+    },
+    withDemoQuery(url: string) {
+      return url;
+    },
+    serializeQuery() {
+      return "";
+    },
+    navigate() {},
+    navigateToUrl() {},
+    rerender() {
+      rerenderCount += 1;
+    },
+    canManage() {
+      return true;
+    },
+    confirmAction() {},
+    openReasonDialog() {},
+  });
+
+  const page = await pageLoaders.renderAnnouncementsPage();
+  page.bind();
+  await editor.clickDelete();
+
+  assert.deepEqual(updates, [[]]);
+  assert.equal(editor.emptyState.hidden, false);
+  assert.equal(rerenderCount, 1);
+});
+
 test("member action buttons include blacklist action only when member has an IP", () => {
   const withIp = memberActionButtons(
     "ROOM8A",
@@ -533,6 +693,77 @@ test("member action buttons include blacklist action only when member has an IP"
     true,
   );
   assert.equal(withoutIp.includes("加入黑名单"), false);
+});
+
+test("room detail renders member microphone open and closed states", async () => {
+  const pageLoaders = createPageLoaders({
+    document: createDocumentStub(),
+    location: { search: "" },
+    history: { replaceState() {} },
+    state: {},
+    api: {
+      async getRoomDetail() {
+        return {
+          instanceId: "instance-1",
+          room: {
+            roomCode: "ROOM8A",
+            isActive: true,
+            memberCount: 2,
+            instanceId: "instance-1",
+            createdAt: Date.now(),
+            lastActiveAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            sharedVideo: null,
+            playback: null,
+          },
+          members: [
+            {
+              displayName: "Alice",
+              memberId: "member-alice",
+              sessionId: "session-alice",
+              joinedAt: Date.now(),
+              remoteAddress: "203.0.113.4",
+              origin: "chrome-extension://allowed-extension",
+              microphoneEnabled: true,
+            },
+            {
+              displayName: "Bob",
+              memberId: "member-bob",
+              sessionId: "session-bob",
+              joinedAt: Date.now(),
+              remoteAddress: null,
+              origin: null,
+              microphoneEnabled: false,
+            },
+          ],
+          recentEvents: [],
+        };
+      },
+    },
+    routeHref(path: string) {
+      return `/admin${path}`;
+    },
+    withDemoQuery(url: string) {
+      return url;
+    },
+    serializeQuery() {
+      return "";
+    },
+    navigate() {},
+    navigateToUrl() {},
+    rerender() {},
+    canManage() {
+      return true;
+    },
+    confirmAction() {},
+    openReasonDialog() {},
+  });
+
+  const page = await pageLoaders.renderRoomDetailPage("ROOM8A");
+
+  assert.equal(page.html.includes("<th>语音状态</th>"), true);
+  assert.equal(page.html.includes("开麦"), true);
+  assert.equal(page.html.includes("关麦"), true);
 });
 
 test("room detail renders playback position as media timestamp", async () => {
@@ -695,6 +926,75 @@ test("room pages mark stale playback snapshots instead of presenting them as liv
   assert.equal(roomsPage.html.includes("上次同步 3 小时前"), true);
   assert.equal(detailPage.html.includes("播放中（已陈旧）"), true);
   assert.equal(detailPage.html.includes("<dt>上次同步</dt>"), true);
+});
+
+test("config page renders editable runtime room limit", async () => {
+  const pageLoaders = createPageLoaders({
+    document: createDocumentStub(),
+    location: { search: "" },
+    history: { replaceState() {} },
+    state: {},
+    api: {
+      async getConfig() {
+        return {
+          instanceId: "instance-1",
+          persistence: {
+            provider: "memory",
+            emptyRoomTtlMs: 900_000,
+            roomCleanupIntervalMs: 60_000,
+            redisConfigured: false,
+          },
+          runtimeLimits: {
+            maxActiveRoomsPerNode: 3,
+          },
+          admin: {
+            configured: true,
+            username: "admin",
+            role: "admin",
+            sessionTtlMs: 60_000,
+          },
+          security: {
+            allowedOrigins: [],
+            allowMissingOriginInDev: false,
+            allowAnyOriginInDev: false,
+            trustedProxyAddresses: [],
+            maxConnectionsPerIp: 10,
+            connectionAttemptsPerMinute: 20,
+            maxMembersPerRoom: 8,
+            maxMessageBytes: 8192,
+            invalidMessageCloseThreshold: 3,
+            rateLimits: {},
+          },
+        };
+      },
+    },
+    routeHref(path: string) {
+      return `/admin${path}`;
+    },
+    withDemoQuery(url: string) {
+      return url;
+    },
+    serializeQuery() {
+      return "";
+    },
+    navigate() {},
+    navigateToUrl() {},
+    rerender() {},
+    canManage() {
+      return true;
+    },
+    confirmAction() {},
+    openReasonDialog() {},
+  });
+
+  const page = await pageLoaders.renderConfigPage();
+
+  assert.equal(page.html.includes("data-runtime-limits-form"), true);
+  assert.equal(page.html.includes("runtime-limits-panel"), true);
+  assert.equal(page.html.includes("runtime-limit-row"), true);
+  assert.equal(page.html.includes("runtime-limit-status"), true);
+  assert.equal(page.html.includes('name="maxActiveRoomsPerNode"'), true);
+  assert.equal(page.html.includes('value="3"'), true);
 });
 
 test("danger room actions require confirmed config before execution", async () => {

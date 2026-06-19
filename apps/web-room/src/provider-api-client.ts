@@ -1,7 +1,7 @@
 import type {
   PlaybackProxyPolicy,
   ProviderPlaybackDescriptor,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import type { WebRoomAuthMethod, WebRoomProviderPickerItem } from "./render.js";
 
 type JsonObject = Record<string, unknown>;

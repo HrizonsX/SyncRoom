@@ -12,6 +12,8 @@ export const JOIN_TOKEN_INVALID_MESSAGE = "Join token is invalid.";
 export const MEMBER_KICKED_REJOIN_MESSAGE =
   "You were removed from the room by an admin. Rejoin the room.";
 export const ROOM_FULL_MESSAGE = "Room is full.";
+export const SERVER_ROOM_LIMIT_REACHED_MESSAGE =
+  "Server node room limit reached.";
 export const ROOM_HAS_NO_SHARED_VIDEO_MESSAGE =
   "The room does not have a shared video yet.";
 export const PLAYBACK_URL_MISMATCH_MESSAGE =
@@ -31,7 +33,7 @@ export const MEMBER_NOT_FOUND_MESSAGE = "Member not found.";
 export const SESSION_NOT_FOUND_MESSAGE = "Session not found.";
 export const INVALID_IP_ADDRESS_MESSAGE = "Invalid IP address.";
 export const UNSUPPORTED_PROTOCOL_VERSION_MESSAGE =
-  "Your extension version is too old. Please update SyncRoom to the latest version.";
+  "Your extension version is too old. Please update syncRoom to the latest version.";
 export const VOICE_UNAVAILABLE_MESSAGE = "Voice chat is unavailable.";
 export const VOICE_TOKEN_FAILED_MESSAGE = "Voice token issuance failed.";
 

@@ -12,6 +12,7 @@ import {
   runShutdownSteps,
 } from "./bootstrap/server-bootstrap.js";
 import { createAdminCommandConsumer } from "./admin-command-consumer.js";
+import { createRuntimeLimitsService } from "./admin/runtime-limits-service.js";
 import { createMessageHandler } from "./message-handler.js";
 import { createNodeHeartbeat } from "./node-heartbeat.js";
 import { createRoomEventConsumer } from "./room-event-consumer.js";
@@ -174,11 +175,14 @@ export async function createSyncServer(
     now,
   });
 
+  const runtimeLimitsService = createRuntimeLimitsService();
   const roomService = createRoomService({
     config: roomSecurityConfig,
     persistence: persistenceConfig,
     roomStore,
     runtimeStore,
+    getMaxActiveRoomsPerNode: () =>
+      runtimeLimitsService.getMaxActiveRoomsPerNode(),
     resolveActiveRoom: (roomCode) =>
       Promise.resolve(sharedRuntimeStore.getRoom(roomCode)),
     resolveMemberIdByToken: (roomCode, memberToken) =>
@@ -346,6 +350,7 @@ export async function createSyncServer(
     runtimeStore,
     eventStore,
     roomService,
+    runtimeLimitsService,
     announcementStore,
     send,
     listAnnouncementPushSessions: () =>

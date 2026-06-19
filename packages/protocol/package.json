@@ -1,5 +1,5 @@
 {
-  "name": "@bili-syncplay/protocol",
+  "name": "@syncroom/protocol",
   "version": "0.3.1",
   "private": true,
   "type": "module",

@@ -3,7 +3,7 @@ import {
   parseSharedVideoRef,
   type PlaybackState,
   type SharedVideo,
-} from "@bili-syncplay/protocol";
+} from "@syncroom/protocol";
 import { isMovieEditionLabel } from "./title-utils";
 
 export interface PageVideoSource {

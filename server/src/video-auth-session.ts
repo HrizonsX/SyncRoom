@@ -1,4 +1,4 @@
-import type { ErrorCode, VideoProviderId } from "@bili-syncplay/protocol";
+import type { ErrorCode, VideoProviderId } from "@syncroom/protocol";
 import { MEMBER_TOKEN_INVALID_MESSAGE } from "./messages.js";
 import type { PersistedRoom, Session } from "./types.js";
 

@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type {
-  PlaybackState,
-  RoomState,
-  SharedVideo,
-} from "@bili-syncplay/protocol";
+import type { PlaybackState, RoomState, SharedVideo } from "@syncroom/protocol";
 import { createContentRuntimeState } from "../src/content/runtime-state";
 import { createSyncController } from "../src/content/sync-controller";
 

@@ -13,6 +13,7 @@ export const ERROR_CODES = [
   "invalid_message",
   "payload_too_large",
   "room_full",
+  "server_room_limit_reached",
   "unsupported_protocol_version",
   "voice_unavailable",
   "voice_capacity_reached",

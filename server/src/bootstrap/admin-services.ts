@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import type { AnnouncementState, ServerMessage } from "@bili-syncplay/protocol";
+import type { AnnouncementState, ServerMessage } from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import {
   AdminActionError,
@@ -15,6 +15,10 @@ import { createInMemoryAdminSessionStore } from "../admin/auth-store.js";
 import { createAdminAuthService } from "../admin/auth-service.js";
 import { createAdminConfigService } from "../admin/config-service.js";
 import { createAdminLoginRateLimiter } from "../admin/login-rate-limit.js";
+import {
+  RuntimeLimitsValidationError,
+  createRuntimeLimitsService,
+} from "../admin/runtime-limits-service.js";
 import type { IpBlockStore } from "../admin/ip-block-store.js";
 import type { GlobalAuditStore } from "../admin/global-audit-store.js";
 import type { GlobalEventStore } from "../admin/global-event-store.js";
@@ -51,6 +55,7 @@ export function createAdminServices(args: {
   eventStore: GlobalEventStore;
   roomService: ReturnType<typeof createRoomService>;
   announcementStore: AnnouncementStore;
+  runtimeLimitsService: ReturnType<typeof createRuntimeLimitsService>;
   send: (socket: WebSocket, message: ServerMessage) => void;
   listAnnouncementPushSessions: () => Promise<Session[]>;
   publishRoomEvent: (message: RoomEventBusMessage) => Promise<void>;
@@ -130,7 +135,7 @@ export function createAdminServices(args: {
       : undefined;
     const overviewService = createOverviewService({
       instanceId: args.persistenceConfig.instanceId,
-      serviceName: args.serviceName ?? "bili-syncplay-server",
+      serviceName: args.serviceName ?? "syncroom-server",
       serviceVersion: args.serviceVersion,
       persistenceConfig: args.persistenceConfig,
       roomStore: args.roomStore,
@@ -149,6 +154,7 @@ export function createAdminServices(args: {
       adminConfig: args.adminConfig ?? null,
       persistenceConfig: args.persistenceConfig,
       securityConfig: args.securityConfig,
+      getRuntimeLimits: () => args.runtimeLimitsService.getLimits(),
     });
 
     async function publishRoomStateUpdate(roomCode: string): Promise<void> {
@@ -209,6 +215,37 @@ export function createAdminServices(args: {
       return state;
     }
 
+    async function updateRuntimeLimits(actor: AdminSession, input: unknown) {
+      let limits: ReturnType<typeof args.runtimeLimitsService.getLimits>;
+      try {
+        limits = args.runtimeLimitsService.updateLimits(input);
+      } catch (error) {
+        if (error instanceof RuntimeLimitsValidationError) {
+          throw new AdminActionError(400, "input_invalid", error.message);
+        }
+        throw error;
+      }
+
+      void Promise.resolve(
+        auditLogService.append({
+          actor,
+          action: "update_runtime_limits",
+          targetType: "config",
+          targetId: args.persistenceConfig.instanceId,
+          request: limits,
+          result: "ok",
+          instanceId: args.persistenceConfig.instanceId,
+        }),
+      );
+      args.logEvent("admin_runtime_limits_updated", {
+        result: "ok",
+        actor: actor.username,
+        instanceId: args.persistenceConfig.instanceId,
+        maxActiveRoomsPerNode: limits.maxActiveRoomsPerNode,
+      });
+      return limits;
+    }
+
     const actionService = createAdminActionService({
       instanceId: args.persistenceConfig.instanceId,
       roomStore: args.roomStore,
@@ -236,6 +273,7 @@ export function createAdminServices(args: {
 
     const adminRouter = createAdminRouter({
       getConfigSummary: () => configService.getSummary(),
+      updateRuntimeLimits,
       getMetrics: () => metricsService.render(),
       authService,
       roomStoreReady: () => args.roomStore.isReady(),
@@ -274,7 +312,7 @@ export function createAdminServices(args: {
         reason?: string,
       ) => actionService.disconnectSession(actor, sessionId, reason),
       eventStore: args.eventStore,
-      serviceName: args.serviceName ?? "bili-syncplay-server",
+      serviceName: args.serviceName ?? "syncroom-server",
       now: args.now,
       writeOriginPolicy: {
         allowedOrigins: args.securityConfig.allowedOrigins,

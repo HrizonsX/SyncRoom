@@ -69,6 +69,7 @@ type RedisRuntimeSession = {
   displayName: string;
   memberToken: string | null;
   joinedAt: number | null;
+  voiceMicrophoneEnabled: boolean;
   invalidMessageCount: number;
 };
 
@@ -211,6 +212,7 @@ function serializeSession(session: Session): RedisRuntimeSession {
     displayName: session.displayName,
     memberToken: session.memberToken,
     joinedAt: session.joinedAt,
+    voiceMicrophoneEnabled: session.voiceState?.microphoneEnabled === true,
     invalidMessageCount: session.invalidMessageCount,
   };
 }
@@ -235,6 +237,9 @@ function deserializeSession(fields: Record<string, string>): Session | null {
       fields.joinedAt && fields.joinedAt.length > 0
         ? Number(fields.joinedAt)
         : null,
+    voiceState: {
+      microphoneEnabled: fields.voiceMicrophoneEnabled === "true",
+    },
     invalidMessageCount: Number(fields.invalidMessageCount ?? "0"),
     rateLimitState: {
       roomCreate: { windowStart: 0, count: 0 },
@@ -433,6 +438,7 @@ export async function createRedisRuntimeStore(
             memberToken: encodeNullable(serialized.memberToken),
             joinedAt:
               serialized.joinedAt === null ? "" : String(serialized.joinedAt),
+            voiceMicrophoneEnabled: String(serialized.voiceMicrophoneEnabled),
             invalidMessageCount: String(serialized.invalidMessageCount),
           })
           .exec(),

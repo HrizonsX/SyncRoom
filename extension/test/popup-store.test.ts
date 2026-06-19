@@ -49,7 +49,7 @@ test("popup ui state store reset restores runtime defaults", () => {
 test("popup ui state store restores session-persisted easter egg effect", async () => {
   const previousChrome = (globalThis as unknown as { chrome?: unknown }).chrome;
   const sessionBucket = {
-    "bili-syncplay-popup-ui": {
+    "syncroom-popup-ui": {
       easterEggEffectActive: true,
     },
   };
@@ -79,7 +79,7 @@ test("popup ui state store restores session-persisted easter egg effect", async 
 test("popup ui state store ignores local easter egg effect after browser restart", async () => {
   const previousChrome = (globalThis as unknown as { chrome?: unknown }).chrome;
   const localBucket = {
-    "bili-syncplay-popup-ui": {
+    "syncroom-popup-ui": {
       easterEggEffectActive: true,
     },
   };

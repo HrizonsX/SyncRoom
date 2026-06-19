@@ -875,7 +875,7 @@ export function createPageLoaders(options) {
             );
             syncAnnouncementEditor();
           });
-          list?.addEventListener("click", (event) => {
+          list?.addEventListener("click", async (event) => {
             const target = event.target;
             const button = target?.closest?.("[data-delete-announcement]");
             if (!button || !list.contains(button)) {
@@ -883,6 +883,21 @@ export function createPageLoaders(options) {
             }
             button.closest("[data-announcement-item]")?.remove();
             syncAnnouncementEditor();
+            if (getAnnouncementRows().length === 0) {
+              try {
+                await api.updateAnnouncements([]);
+                state.notice = {
+                  type: "success",
+                  message: "公告已清空，并已推送给在线插件。",
+                };
+              } catch (error) {
+                state.notice = {
+                  type: "error",
+                  message: error.message || "公告清空失败。",
+                };
+              }
+              rerender();
+            }
           });
           syncAnnouncementEditor();
           form?.addEventListener("submit", async (event) => {
@@ -1016,6 +1031,7 @@ export function createPageLoaders(options) {
                     <thead>
                       <tr>
                         <th>显示名</th>
+                        <th>语音状态</th>
                         <th>memberId</th>
                         <th>sessionId</th>
                         <th>加入时间</th>
@@ -1030,6 +1046,7 @@ export function createPageLoaders(options) {
                           (member) => `
                         <tr>
                           <td>${renderDataPair(`<strong>${escapeHtml(member.displayName)}</strong>`, member.memberId ? `memberId ${escapeHtml(member.memberId)}` : "")}</td>
+                          <td>${renderStatus(member.microphoneEnabled ? "success" : "neutral", member.microphoneEnabled ? "开麦" : "关麦")}</td>
                           <td><div class="copy-stack"><span class="code">${escapeHtml(member.memberId)}</span><button class="button link" type="button" data-copy="${escapeHtml(member.memberId)}">复制</button></div></td>
                           <td><div class="copy-stack"><span class="code">${escapeHtml(member.sessionId)}</span><button class="button link" type="button" data-copy="${escapeHtml(member.sessionId)}">复制</button></div></td>
                           <td>${renderTimeBlock(member.joinedAt, "加入")}</td>
@@ -1296,6 +1313,12 @@ export function createPageLoaders(options) {
       const config = await api.getConfig();
       const consoleContext = resolveConsoleContext(config.instanceId);
       const isGlobalAdminConfig = isGlobalAdminInstance(config.instanceId);
+      const canEditRuntimeLimits = state.me?.role === "admin";
+      const maxActiveRoomsPerNode =
+        config.runtimeLimits?.maxActiveRoomsPerNode ?? null;
+      const maxActiveRoomsPerNodeValue =
+        maxActiveRoomsPerNode === null ? "" : String(maxActiveRoomsPerNode);
+      const runtimeLimitDisabled = canEditRuntimeLimits ? "" : "disabled";
       return {
         instanceId: config.instanceId,
         html: `
@@ -1324,6 +1347,23 @@ export function createPageLoaders(options) {
                   <dt>角色</dt><dd>${config.admin.role ? escapeHtml(config.admin.role) : renderEmptyValue()}</dd>
                   <dt>会话有效期</dt><dd>${config.admin.sessionTtlMs ? `${escapeHtml(config.admin.sessionTtlMs)} ms` : renderEmptyValue()}</dd>
                 </dl>
+              </section>
+              <section class="panel config-panel runtime-limits-panel">
+                <div class="section-header"><h3>运行期限制</h3></div>
+                <form class="runtime-limit-form" data-runtime-limits-form>
+                  <div class="runtime-limit-row">
+                    <div class="field runtime-limit-field">
+                    <label for="maxActiveRoomsPerNode">节点房间上限</label>
+                    <input id="maxActiveRoomsPerNode" name="maxActiveRoomsPerNode" type="number" min="1" step="1" value="${escapeHtml(maxActiveRoomsPerNodeValue)}" placeholder="不限制" ${runtimeLimitDisabled} />
+                    </div>
+                    <div class="runtime-limit-status">
+                      <span>当前状态</span>
+                      <div>${maxActiveRoomsPerNode === null ? renderStatus("neutral", "不限制") : renderStatus("warning", `${maxActiveRoomsPerNode} 间`)}</div>
+                    </div>
+                    <div class="runtime-limit-effective">当前节点立即生效</div>
+                    <button class="button primary runtime-limit-save" type="submit" ${runtimeLimitDisabled}>保存</button>
+                  </div>
+                </form>
               </section>
             </div>
             <section class="panel config-panel">
@@ -1371,6 +1411,37 @@ export function createPageLoaders(options) {
             </section>
           </div>
         `,
+        bind() {
+          document
+            .querySelector("[data-runtime-limits-form]")
+            ?.addEventListener("submit", async (event) => {
+              event.preventDefault();
+              const formData = new FormData(event.currentTarget);
+              const rawMaxActiveRooms = formData
+                .get("maxActiveRoomsPerNode")
+                ?.toString()
+                .trim();
+              const maxActiveRooms =
+                rawMaxActiveRooms && rawMaxActiveRooms.length > 0
+                  ? Number(rawMaxActiveRooms)
+                  : null;
+              try {
+                await api.updateRuntimeLimits({
+                  maxActiveRoomsPerNode: maxActiveRooms,
+                });
+                state.notice = {
+                  type: "success",
+                  message: "运行期限制已保存。",
+                };
+              } catch (error) {
+                state.notice = {
+                  type: "error",
+                  message: error.message || "运行期限制保存失败。",
+                };
+              }
+              rerender();
+            });
+        },
       };
     },
   };

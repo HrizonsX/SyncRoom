@@ -1,4 +1,4 @@
-import type { ErrorCode } from "@bili-syncplay/protocol";
+import type { ErrorCode } from "@syncroom/protocol";
 
 type MessageParams = Record<string, string | number | null | undefined>;
 
@@ -6,7 +6,7 @@ type MessageCatalog = Record<string, string>;
 
 const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
   zh: {
-    popupTitle: "SyncRoom",
+    popupTitle: "syncRoom",
     popupTagline: "同频观影，好友同声",
     metricConnectionStatus: "连接状态",
     metricRoomMembers: "房间人数",
@@ -115,10 +115,12 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorNotInRoom: "请先加入房间。",
     serverErrorRateLimited: "请求过于频繁，请稍后再试。",
     serverErrorRoomFull: "房间已满。",
+    serverErrorServerRoomLimitReached:
+      "当前服务器节点房间数已达上限，请稍后再试。",
     serverErrorInvalidMessage: "当前请求无效。",
     serverErrorInternal: "服务器内部错误。",
     serverErrorUnsupportedProtocolVersion:
-      "扩展版本过低，请升级 SyncRoom 到最新版本。",
+      "扩展版本过低，请升级 syncRoom 到最新版本。",
     serverErrorVoiceUnavailable: "语音服务不可用。",
     serverErrorVoiceCapacityReached: "语音房间已达到 4 人上限。",
     serverErrorVoiceTokenFailed: "语音令牌签发失败。",
@@ -131,7 +133,7 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     toastSharedNewVideo: "{name} 共享了新视频：{title}",
   },
   en: {
-    popupTitle: "SyncRoom",
+    popupTitle: "syncRoom",
     popupTagline: "Watch together, speak in sync",
     metricConnectionStatus: "Connection",
     metricRoomMembers: "Members",
@@ -249,10 +251,12 @@ const MESSAGES: Record<"zh" | "en", MessageCatalog> = {
     serverErrorNotInRoom: "Join a room first.",
     serverErrorRateLimited: "Too many requests. Try again later.",
     serverErrorRoomFull: "Room is full.",
+    serverErrorServerRoomLimitReached:
+      "This server node has reached its room limit. Try again later.",
     serverErrorInvalidMessage: "The request was rejected as invalid.",
     serverErrorInternal: "Internal server error.",
     serverErrorUnsupportedProtocolVersion:
-      "Your extension version is too old. Please update SyncRoom to the latest version.",
+      "Your extension version is too old. Please update syncRoom to the latest version.",
     serverErrorVoiceUnavailable: "Voice service is unavailable.",
     serverErrorVoiceCapacityReached:
       "This voice room has reached the 4 member limit.",
@@ -327,6 +331,8 @@ export function localizeServerError(
       return t("serverErrorRateLimited");
     case "room_full":
       return t("serverErrorRoomFull");
+    case "server_room_limit_reached":
+      return t("serverErrorServerRoomLimitReached");
     case "invalid_message":
       return t("serverErrorInvalidMessage");
     case "unsupported_protocol_version":

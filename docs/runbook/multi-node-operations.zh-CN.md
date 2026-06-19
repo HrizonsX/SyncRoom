@@ -1,4 +1,4 @@
-# SyncRoom 多节点运维 Runbook
+# syncRoom 多节点运维 Runbook
 
 本文档面向日常运维和应急值班，覆盖多 Room Node、独立 Global Admin 与 Redis
 共享控制面的扩容、缩容、Redis 故障、管理员口令轮换和常见告警定位。
@@ -124,8 +124,8 @@ sudo journalctl -u syncroom-global-admin -f
 
 - `/readyz` 返回 200。
 - Global Admin 概览里新节点 `health` 为 `ok`。
-- `bili_syncplay_connections` 随入口层分发出现合理增长。
-- `bili_syncplay_redis_operation_failures_total` 无持续增长。
+- `syncroom_connections` 随入口层分发出现合理增长。
+- `syncroom_redis_operation_failures_total` 无持续增长。
 
 ## 缩容或安全下线 Room Node
 
@@ -136,13 +136,13 @@ sudo journalctl -u syncroom-global-admin -f
 3. 在目标节点观察连接数：
 
    ```bash
-   curl -fsS http://10.0.0.12:8787/metrics | grep bili_syncplay_connections
+   curl -fsS http://10.0.0.12:8787/metrics | grep syncroom_connections
    ```
 
 4. 在 Global Admin 查看该节点仍承载的房间和 session。
 5. 对仍有活跃成员的房间，优先通知用户短暂重连；客户端重连会经入口层进入其他节点。
 6. 如果必须立即迁移，使用 Global Admin 对目标节点上的 session 执行断开会话动作。不要删除房间，房间基础状态在 Redis 中保留，用户可用 `roomCode + joinToken` 重连。
-7. 等 `bili_syncplay_connections` 降到 0，或确认剩余连接已按变更窗口处理。
+7. 等 `syncroom_connections` 降到 0，或确认剩余连接已按变更窗口处理。
 8. 停止目标节点：
 
    ```bash
@@ -155,13 +155,13 @@ sudo journalctl -u syncroom-global-admin -f
 缩容完成标准：
 
 - 入口层不再向目标节点转发新连接。
-- 目标节点 `bili_syncplay_connections` 为 0。
+- 目标节点 `syncroom_connections` 为 0。
 - Global Admin 不再展示目标节点为健康活跃。
 - 其他 Room Node 的 `/readyz` 和跨节点同步正常。
 
 ## Redis 故障处理
 
-当 provider 配置为 `redis` 时，SyncRoom 不会自动无感切换到 in-memory。
+当 provider 配置为 `redis` 时，syncRoom 不会自动无感切换到 in-memory。
 Redis 在启动阶段不可用会导致相关进程启动失败；运行中 Redis 异常会影响房间持久化、运行时索引、跨节点广播、管理员会话、审计事件和管理命令。
 
 ### 快速判断
@@ -169,7 +169,7 @@ Redis 在启动阶段不可用会导致相关进程启动失败；运行中 Redi
 ```bash
 redis-cli -u "$REDIS_URL" ping
 curl -fsS http://10.0.0.11:8787/readyz
-curl -fsS http://10.0.0.11:8787/metrics | grep bili_syncplay_redis_operation_failures_total
+curl -fsS http://10.0.0.11:8787/metrics | grep syncroom_redis_operation_failures_total
 sudo journalctl -u syncroom-server --since "15 min ago" | grep -E "redis|Redis|node_heartbeat_failed"
 ```
 
@@ -239,7 +239,7 @@ NODE_HEARTBEAT_ENABLED=false
    `NODE_HEARTBEAT_ENABLED=true`。
 3. 先启动一个 Room Node 和 Global Admin，验证后台登录、创建房间、事件流和 `/metrics`。
 4. 逐个恢复其他 Room Node，每次只加入一个 upstream。
-5. 观察 `bili_syncplay_redis_operation_failures_total` 和 Redis 延迟至少 15 分钟。
+5. 观察 `syncroom_redis_operation_failures_total` 和 Redis 延迟至少 15 分钟。
 
 ## 管理员口令轮换
 
@@ -285,19 +285,19 @@ curl -fsS http://10.0.0.11:8788/readyz
 
 ## 常见告警与定位
 
-| 告警或现象                                     | 主要指标 / 信号                                                                | 优先检查                                               | 处理方向                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------ | --------------------------------------------------- |
-| WebSocket 连接数异常下降                       | `bili_syncplay_connections`                                                    | 入口层 upstream、Room Node `/readyz`、进程日志         | 恢复节点或从 LB 摘除异常节点                        |
-| 活跃房间数异常下降                             | `bili_syncplay_active_rooms`、`bili_syncplay_rooms_non_expired`                | Redis 连通性、房间过期配置、重启记录                   | 恢复 Redis，确认 `ROOM_STORE_PROVIDER` 未被改为内存 |
-| Redis 操作失败                                 | `bili_syncplay_redis_operation_failures_total`                                 | Redis 进程、网络、ACL、密码、慢查询                    | 优先恢复 Redis；必要时执行应急降级                  |
-| Redis runtime store 延迟升高                   | `bili_syncplay_redis_runtime_store_duration_seconds_bucket`                    | Redis CPU、内存、网络 RTT、命令排队                    | 扩容 Redis 或降低入口层流量                         |
-| Redis room event bus publish 延迟或失败        | `bili_syncplay_redis_room_event_bus_publish_duration_seconds_bucket`、失败计数 | Redis pub/sub 连通性、网络抖动、Room Node 日志         | 恢复 Redis 与网络；验证跨节点播放同步               |
-| 连接被拒绝增加                                 | `bili_syncplay_ws_connection_rejected_total`、结构化日志 `origin_not_allowed`  | `ALLOWED_ORIGINS`、入口层是否改写 Origin               | 修正 Origin 白名单或反代配置                        |
-| 限流增加                                       | `bili_syncplay_rate_limited_total`                                             | 来源 IP、入口层转发真实 IP、`TRUSTED_PROXY_ADDRESSES`  | 调整限流或修正代理地址配置                          |
-| 消息处理耗时升高                               | `bili_syncplay_message_handler_duration_seconds_bucket`                        | Node CPU、Redis 延迟、房间成员数、日志中的错误         | 限流、扩容 Room Node、排查慢 Redis                  |
-| Global Admin 看不到某个节点或节点显示过期      | Global Admin 概览、`node_heartbeat_failed` 日志                                | `NODE_HEARTBEAT_ENABLED`、`INSTANCE_ID`、Redis runtime | 修复心跳配置或 Redis runtime store                  |
-| 后台登录失败或频繁要求重新登录                 | `/api/admin/auth/login` 响应、审计日志                                         | `ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET` 是否一致 | 同步 admin 认证配置并重启                           |
-| 跨节点房间动作失败，例如踢人或关闭房间返回 502 | 审计日志、`ADMIN_COMMAND_BUS_PROVIDER`、目标节点心跳                           | 管理命令总线、目标 `INSTANCE_ID`、Redis                | 恢复 Redis command bus 或在目标节点本地操作         |
+| 告警或现象                                     | 主要指标 / 信号                                                           | 优先检查                                               | 处理方向                                            |
+| ---------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------- |
+| WebSocket 连接数异常下降                       | `syncroom_connections`                                                    | 入口层 upstream、Room Node `/readyz`、进程日志         | 恢复节点或从 LB 摘除异常节点                        |
+| 活跃房间数异常下降                             | `syncroom_active_rooms`、`syncroom_rooms_non_expired`                     | Redis 连通性、房间过期配置、重启记录                   | 恢复 Redis，确认 `ROOM_STORE_PROVIDER` 未被改为内存 |
+| Redis 操作失败                                 | `syncroom_redis_operation_failures_total`                                 | Redis 进程、网络、ACL、密码、慢查询                    | 优先恢复 Redis；必要时执行应急降级                  |
+| Redis runtime store 延迟升高                   | `syncroom_redis_runtime_store_duration_seconds_bucket`                    | Redis CPU、内存、网络 RTT、命令排队                    | 扩容 Redis 或降低入口层流量                         |
+| Redis room event bus publish 延迟或失败        | `syncroom_redis_room_event_bus_publish_duration_seconds_bucket`、失败计数 | Redis pub/sub 连通性、网络抖动、Room Node 日志         | 恢复 Redis 与网络；验证跨节点播放同步               |
+| 连接被拒绝增加                                 | `syncroom_ws_connection_rejected_total`、结构化日志 `origin_not_allowed`  | `ALLOWED_ORIGINS`、入口层是否改写 Origin               | 修正 Origin 白名单或反代配置                        |
+| 限流增加                                       | `syncroom_rate_limited_total`                                             | 来源 IP、入口层转发真实 IP、`TRUSTED_PROXY_ADDRESSES`  | 调整限流或修正代理地址配置                          |
+| 消息处理耗时升高                               | `syncroom_message_handler_duration_seconds_bucket`                        | Node CPU、Redis 延迟、房间成员数、日志中的错误         | 限流、扩容 Room Node、排查慢 Redis                  |
+| Global Admin 看不到某个节点或节点显示过期      | Global Admin 概览、`node_heartbeat_failed` 日志                           | `NODE_HEARTBEAT_ENABLED`、`INSTANCE_ID`、Redis runtime | 修复心跳配置或 Redis runtime store                  |
+| 后台登录失败或频繁要求重新登录                 | `/api/admin/auth/login` 响应、审计日志                                    | `ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET` 是否一致 | 同步 admin 认证配置并重启                           |
+| 跨节点房间动作失败，例如踢人或关闭房间返回 502 | 审计日志、`ADMIN_COMMAND_BUS_PROVIDER`、目标节点心跳                      | 管理命令总线、目标 `INSTANCE_ID`、Redis                | 恢复 Redis command bus 或在目标节点本地操作         |
 
 排障时优先同时查看：
 
@@ -316,5 +316,5 @@ sudo journalctl -u syncroom-global-admin --since "30 min ago"
 - `/healthz`、`/readyz`、`/metrics` 在每个节点上可访问。
 - Global Admin 可登录，并能查看概览、房间、事件和审计日志。
 - 测试房间上的 `disconnect session`、`kick member`、`close room` 动作符合预期。
-- `bili_syncplay_redis_operation_failures_total` 无持续增长。
+- `syncroom_redis_operation_failures_total` 无持续增长。
 - 入口层 upstream 与实际在线节点列表一致。

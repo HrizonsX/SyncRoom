@@ -1,4 +1,4 @@
-import type { ErrorCode } from "@bili-syncplay/protocol";
+import type { ErrorCode } from "@syncroom/protocol";
 import { isVoiceConfigReady } from "./config/voice-config.js";
 import {
   VOICE_TOKEN_FAILED_MESSAGE,
@@ -73,7 +73,7 @@ export function createVoiceAccessService(options: {
     }
 
     const memberAccess = await validateMemberAccess(session, memberToken);
-    const roomName = `bili-syncplay:${memberAccess.roomCode}`;
+    const roomName = `syncroom:${memberAccess.roomCode}`;
     const participantIdentity = memberAccess.memberId;
     let token: string;
 

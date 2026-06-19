@@ -1,4 +1,4 @@
-import type { ServerMessage } from "@bili-syncplay/protocol";
+import type { ServerMessage } from "@syncroom/protocol";
 import type { WebRoomVoiceState } from "./voice-state.js";
 import {
   WebRoomVoiceRuntimeError,

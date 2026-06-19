@@ -1,8 +1,4 @@
-import type {
-  PlaybackState,
-  RoomState,
-  SharedVideo,
-} from "@bili-syncplay/protocol";
+import type { PlaybackState, RoomState, SharedVideo } from "@syncroom/protocol";
 import type { SharedVideoToastPayload } from "../shared/messages";
 import { decidePlaybackApplication } from "./playback-apply";
 import {

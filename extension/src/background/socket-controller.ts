@@ -1,5 +1,5 @@
-import type { ClientMessage, ServerMessage } from "@bili-syncplay/protocol";
-import { isServerMessage, PROTOCOL_VERSION } from "@bili-syncplay/protocol";
+import type { ClientMessage, ServerMessage } from "@syncroom/protocol";
+import { isServerMessage, PROTOCOL_VERSION } from "@syncroom/protocol";
 import type { DebugLogEntry } from "../shared/messages";
 import type { ConnectionState, RoomSessionState } from "./runtime-state";
 import { getConnectionErrorMessage } from "./connection-error";
@@ -55,10 +55,6 @@ export function createSocketController(args: {
     ) {
       return;
     }
-    if (args.connectionState.connectProbe) {
-      return args.connectionState.connectProbe;
-    }
-
     const serverUrlResult = validateServerUrl(args.connectionState.serverUrl);
     if ("message" in serverUrlResult) {
       args.connectionState.lastError = serverUrlResult.message;
@@ -69,19 +65,41 @@ export function createSocketController(args: {
       return;
     }
 
+    if (args.connectionState.connectProbe) {
+      if (
+        args.connectionState.connectProbeServerUrl ===
+        serverUrlResult.normalizedUrl
+      ) {
+        return args.connectionState.connectProbe;
+      }
+      args.connectionState.connectProbeAbortController?.abort();
+    }
+
     clearReconnectTimer();
     args.log("background", `Connecting to ${serverUrlResult.normalizedUrl}`);
-    args.connectionState.connectProbe = openSocketWithProbe(
+    const abortController = new AbortController();
+    const connectProbe = openSocketWithProbe(
       serverUrlResult.normalizedUrl,
+      abortController.signal,
     );
+    args.connectionState.connectProbe = connectProbe;
+    args.connectionState.connectProbeServerUrl = serverUrlResult.normalizedUrl;
+    args.connectionState.connectProbeAbortController = abortController;
     try {
-      await args.connectionState.connectProbe;
+      await connectProbe;
     } finally {
-      args.connectionState.connectProbe = null;
+      if (args.connectionState.connectProbe === connectProbe) {
+        args.connectionState.connectProbe = null;
+        args.connectionState.connectProbeServerUrl = null;
+        args.connectionState.connectProbeAbortController = null;
+      }
     }
   }
 
-  async function openSocketWithProbe(targetServerUrl: string): Promise<void> {
+  async function openSocketWithProbe(
+    targetServerUrl: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     const serverUrlResult = validateServerUrl(targetServerUrl);
     if ("message" in serverUrlResult) {
       args.connectionState.lastError = serverUrlResult.message;
@@ -104,7 +122,11 @@ export function createSocketController(args: {
         const response = await fetch(connectionCheckUrl, {
           method: "GET",
           cache: "no-store",
+          signal,
         });
+        if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+          return;
+        }
         if (response.ok) {
           type ConnectionCheckResponse = {
             ok?: boolean;
@@ -115,6 +137,9 @@ export function createSocketController(args: {
           };
 
           const payload = (await response.json()) as ConnectionCheckResponse;
+          if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+            return;
+          }
           healthcheckReachable = true;
           if (payload.data?.websocketAllowed === false) {
             args.connectionState.lastError = getConnectionErrorMessage({
@@ -137,6 +162,9 @@ export function createSocketController(args: {
           }
         }
       } catch {
+        if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+          return;
+        }
         // Fall back to the healthcheck probe for older servers that do not expose the preflight endpoint.
       }
     }
@@ -147,9 +175,16 @@ export function createSocketController(args: {
           method: "GET",
           cache: "no-store",
           mode: "no-cors",
+          signal,
         });
+        if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+          return;
+        }
         healthcheckReachable = true;
       } catch {
+        if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+          return;
+        }
         args.connectionState.lastError = getConnectionErrorMessage({
           healthcheckReachable: false,
           extensionOrigin,
@@ -168,9 +203,18 @@ export function createSocketController(args: {
       }
     }
 
-    args.connectionState.socket = new WebSocket(serverUrlResult.normalizedUrl);
+    if (!isCurrentServerUrl(serverUrlResult.normalizedUrl)) {
+      return;
+    }
 
-    args.connectionState.socket.addEventListener("open", () => {
+    const socket = new WebSocket(serverUrlResult.normalizedUrl);
+    args.connectionState.socket = socket;
+
+    socket.addEventListener("open", () => {
+      if (!isActiveSocket(socket, serverUrlResult.normalizedUrl)) {
+        socket.close();
+        return;
+      }
       args.connectionState.connected = true;
       args.connectionState.lastError = null;
       args.connectionState.reconnectAttempt = 0;
@@ -209,7 +253,10 @@ export function createSocketController(args: {
       args.notifyAll();
     });
 
-    args.connectionState.socket.addEventListener("message", (event) => {
+    socket.addEventListener("message", (event) => {
+      if (!isActiveSocket(socket, serverUrlResult.normalizedUrl)) {
+        return;
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(event.data);
@@ -224,7 +271,10 @@ export function createSocketController(args: {
       void args.handleServerMessage(parsed);
     });
 
-    args.connectionState.socket.addEventListener("close", (event) => {
+    socket.addEventListener("close", (event) => {
+      if (!isActiveSocket(socket, serverUrlResult.normalizedUrl)) {
+        return;
+      }
       args.connectionState.connected = false;
       args.stopClockSyncTimer();
       args.clearPendingLocalShare("socket closed before share confirmation");
@@ -246,7 +296,10 @@ export function createSocketController(args: {
       }
     });
 
-    args.connectionState.socket.addEventListener("error", () => {
+    socket.addEventListener("error", () => {
+      if (!isActiveSocket(socket, serverUrlResult.normalizedUrl)) {
+        return;
+      }
       args.connectionState.lastError = getConnectionErrorMessage({
         healthcheckReachable,
         extensionOrigin,
@@ -323,6 +376,23 @@ export function createSocketController(args: {
   function resetReconnectState(): void {
     clearReconnectTimer();
     args.connectionState.reconnectAttempt = 0;
+  }
+
+  function isCurrentServerUrl(targetServerUrl: string): boolean {
+    const currentServerUrlResult = validateServerUrl(
+      args.connectionState.serverUrl,
+    );
+    return (
+      !("message" in currentServerUrlResult) &&
+      currentServerUrlResult.normalizedUrl === targetServerUrl
+    );
+  }
+
+  function isActiveSocket(socket: WebSocket, targetServerUrl: string): boolean {
+    return (
+      args.connectionState.socket === socket &&
+      isCurrentServerUrl(targetServerUrl)
+    );
   }
 
   function clearPendingRoomEntryAfterReconnectExhausted(): void {

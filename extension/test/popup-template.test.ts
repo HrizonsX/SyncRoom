@@ -25,7 +25,7 @@ test("popup room section heading renders a decorative room icon before the label
   }
 });
 
-test("popup template renders a short product tagline under the SyncRoom name", () => {
+test("popup template renders a short product tagline under the syncRoom name", () => {
   setLocaleForTests("zh-CN");
   try {
     const html = renderPopupTemplate();

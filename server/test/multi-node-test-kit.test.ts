@@ -70,7 +70,7 @@ test("multi-node test kit starts two room nodes and one global admin on the same
     assert.equal(overview.status, 200);
     assert.equal(
       (overview.body.data as { service: { name: string } }).service.name,
-      "bili-syncplay-global-admin",
+      "syncroom-global-admin",
     );
   } finally {
     await kit.closeAll();

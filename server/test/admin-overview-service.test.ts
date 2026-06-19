@@ -71,7 +71,7 @@ test("overview counts only persisted non-expired active rooms and reports orphan
 
   const service = createAdminOverviewService({
     instanceId: persistenceConfig.instanceId,
-    serviceName: "bili-syncplay-server",
+    serviceName: "syncroom-server",
     serviceVersion: "0.9.2-test",
     persistenceConfig,
     roomStore,
@@ -128,7 +128,7 @@ test("overview preserves local runtime count fallback when node data is unavaila
 
   const service = createAdminOverviewService({
     instanceId: persistenceConfig.instanceId,
-    serviceName: "bili-syncplay-server",
+    serviceName: "syncroom-server",
     serviceVersion: "0.9.2-test",
     persistenceConfig,
     roomStore,
@@ -168,7 +168,7 @@ test("overview falls back to heartbeat room count when node workload is unavaila
 
   const service = createAdminOverviewService({
     instanceId: persistenceConfig.instanceId,
-    serviceName: "bili-syncplay-server",
+    serviceName: "syncroom-server",
     serviceVersion: "0.9.2-test",
     persistenceConfig,
     roomStore,
@@ -222,7 +222,7 @@ test("overview aggregates event statistics from the event store", async () => {
 
   const service = createAdminOverviewService({
     instanceId: persistenceConfig.instanceId,
-    serviceName: "bili-syncplay-server",
+    serviceName: "syncroom-server",
     serviceVersion: "0.9.2-test",
     persistenceConfig,
     roomStore,
@@ -281,7 +281,7 @@ test("overview's last-minute window counts by ms timestamp across the bucket bou
 
   const service = createAdminOverviewService({
     instanceId: persistenceConfig.instanceId,
-    serviceName: "bili-syncplay-server",
+    serviceName: "syncroom-server",
     serviceVersion: "0.9.2-test",
     persistenceConfig,
     roomStore,

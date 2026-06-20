@@ -8,6 +8,18 @@ import {
 } from "../src/render.js";
 import { webRoomThemeTokens } from "../src/theme.js";
 
+const DANMAKU_TEST_RENDERED_AT = 1_725_000_005_000;
+
+function withMockedNow<T>(now: number, callback: () => T): T {
+  const originalNow = Date.now;
+  Date.now = () => now;
+  try {
+    return callback();
+  } finally {
+    Date.now = originalNow;
+  }
+}
+
 const joinedRoomState: WebRoomState = {
   view: "joined",
   connectionState: "connected",
@@ -317,33 +329,70 @@ test("renders a real video host for Shaka playback sources", () => {
 });
 
 test("renders an escaped private danmaku overlay above the Shaka video", () => {
-  const html = renderWebRoomApp({
-    ...joinedRoomState,
-    playbackSource: {
-      url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
-      sourceType: "mpd",
-      engine: "shaka",
-    },
-    danmakuMessages: [
-      {
-        memberId: "member-2",
-        displayName: "Bob",
-        content: "<img src=x onerror=alert(1)>",
-        videoTime: 42.25,
-        mode: "scroll",
-        color: "#ffffff",
-        timestamp: 1_725_000_000_000,
+  const html = withMockedNow(DANMAKU_TEST_RENDERED_AT, () =>
+    renderWebRoomApp({
+      ...joinedRoomState,
+      playbackSource: {
+        url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
+        sourceType: "mpd",
+        engine: "shaka",
       },
-    ],
-  } as WebRoomState);
+      danmakuMessages: [
+        {
+          memberId: "member-2",
+          displayName: "Bob",
+          content: "<img src=x onerror=alert(1)>",
+          videoTime: 42.25,
+          mode: "scroll",
+          color: "#ffffff",
+          timestamp: DANMAKU_TEST_RENDERED_AT - 1_250,
+        },
+      ],
+    } as WebRoomState),
+  );
 
   assert.match(html, /data-danmaku-layer="true"/);
   assert.match(html, /data-danmaku-paused="false"/);
   assert.match(html, /data-danmaku-key=/);
   assert.match(html, /data-danmaku-video-time="42\.25"/);
   assert.match(html, /class="danmaku-item is-scroll"/);
+  assert.match(html, /--danmaku-lane-y:\s*0px;/);
+  assert.match(html, /--danmaku-progress-delay:\s*-1250ms;/);
+  assert.doesNotMatch(html, /--danmaku-lane:/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.doesNotMatch(html, /<img src=x/);
+});
+
+test("omits expired danmaku messages so they are not replayed", () => {
+  const html = withMockedNow(DANMAKU_TEST_RENDERED_AT, () =>
+    renderWebRoomApp({
+      ...joinedRoomState,
+      danmakuMessages: [
+        {
+          memberId: "member-2",
+          displayName: "Bob",
+          content: "expired danmaku",
+          videoTime: 42.25,
+          mode: "scroll",
+          color: "#ffffff",
+          timestamp: DANMAKU_TEST_RENDERED_AT - 9_500,
+        },
+        {
+          memberId: "member-host",
+          displayName: "Alice",
+          content: "fresh danmaku",
+          videoTime: 43,
+          mode: "scroll",
+          color: "#ffffff",
+          timestamp: DANMAKU_TEST_RENDERED_AT - 500,
+        },
+      ],
+    } as WebRoomState),
+  );
+
+  assert.match(html, /fresh danmaku/);
+  assert.match(html, /--danmaku-progress-delay:\s*-500ms;/);
+  assert.doesNotMatch(html, /expired danmaku/);
 });
 
 test("marks the danmaku layer paused when playback is paused", () => {

@@ -430,8 +430,40 @@ function getDanmakuMessageKey(message: WebRoomDanmakuMessage): string {
   ].join(":");
 }
 
+const DANMAKU_SCROLL_LANE_COUNT = 4;
+const DANMAKU_SCROLL_LANE_GAP_PX = 22;
+const DANMAKU_SCROLL_DURATION_MS = 9_000;
+const DANMAKU_HOLD_DURATION_MS = 4_500;
+
+function getDanmakuLaneYOffset(index: number): string {
+  return `${(index % DANMAKU_SCROLL_LANE_COUNT) * DANMAKU_SCROLL_LANE_GAP_PX}px`;
+}
+
+function getDanmakuAnimationDurationMs(mode: DanmakuMode): number {
+  return mode === "top" || mode === "bottom"
+    ? DANMAKU_HOLD_DURATION_MS
+    : DANMAKU_SCROLL_DURATION_MS;
+}
+
+function getDanmakuMessageAgeMs(
+  message: WebRoomDanmakuMessage,
+  renderedAt: number,
+): number {
+  return Math.max(0, renderedAt - message.timestamp);
+}
+
 function renderDanmakuLayer(state: WebRoomJoinedState): string {
-  const messages = state.danmakuMessages.slice(-80);
+  const renderedAt = Date.now();
+  const messages = state.danmakuMessages.slice(-80).filter((message) => {
+    const mode =
+      message.mode === "top" || message.mode === "bottom"
+        ? message.mode
+        : "scroll";
+    return (
+      getDanmakuMessageAgeMs(message, renderedAt) <
+      getDanmakuAnimationDurationMs(mode)
+    );
+  });
   const paused = state.playback?.playState === "paused" ? "true" : "false";
   const items = messages
     .map((message, index) => {
@@ -439,13 +471,14 @@ function renderDanmakuLayer(state: WebRoomJoinedState): string {
         message.mode === "top" || message.mode === "bottom"
           ? message.mode
           : "scroll";
-      const lane = index % 8;
+      const laneY = getDanmakuLaneYOffset(index);
+      const progressDelay = `-${getDanmakuMessageAgeMs(message, renderedAt)}ms`;
       return `
               <span
                 class="danmaku-item is-${mode}"
                 data-danmaku-key="${escapeHtml(getDanmakuMessageKey(message))}"
                 data-danmaku-video-time="${message.videoTime}"
-                style="--danmaku-lane: ${lane}; color: ${escapeHtml(getSafeDanmakuColor(message.color))};"
+                style="--danmaku-lane-y: ${laneY}; --danmaku-progress-delay: ${progressDelay}; color: ${escapeHtml(getSafeDanmakuColor(message.color))};"
               >${escapeHtml(message.content)}</span>
       `;
     })

@@ -1,5 +1,6 @@
 const DANMAKU_LAYER_SELECTOR = '[data-danmaku-layer="true"]';
 const DANMAKU_ITEM_SELECTOR = "[data-danmaku-key]";
+const DANMAKU_LAYER_PARKING_ATTRIBUTE = "data-danmaku-layer-parking";
 const MAX_RENDERED_DANMAKU_ITEMS = 80;
 
 export type DanmakuKeyElement = {
@@ -8,6 +9,43 @@ export type DanmakuKeyElement = {
 
 export function findDanmakuLayerElement(root: ParentNode): HTMLElement | null {
   return root.querySelector<HTMLElement>(DANMAKU_LAYER_SELECTOR);
+}
+
+function applyDanmakuLayerParkingStyle(element: HTMLElement): void {
+  element.style.position = "fixed";
+  element.style.inset = "0 auto auto 0";
+  element.style.width = "0";
+  element.style.height = "0";
+  element.style.overflow = "hidden";
+  element.style.visibility = "hidden";
+  element.style.pointerEvents = "none";
+}
+
+export function parkDanmakuLayerElement(
+  existingLayer: HTMLElement | null,
+): HTMLElement | null {
+  if (!existingLayer) {
+    return null;
+  }
+
+  const body = existingLayer.ownerDocument.body;
+  if (!body) {
+    return null;
+  }
+
+  const parking = existingLayer.ownerDocument.createElement("div");
+  parking.setAttribute(DANMAKU_LAYER_PARKING_ATTRIBUTE, "true");
+  parking.setAttribute("aria-hidden", "true");
+  applyDanmakuLayerParkingStyle(parking);
+  body.append(parking);
+  parking.append(existingLayer);
+  return parking;
+}
+
+export function removeDanmakuLayerParkingElement(
+  parking: HTMLElement | null,
+): void {
+  parking?.remove();
 }
 
 export function getDanmakuItemKey(
@@ -42,6 +80,44 @@ function syncDanmakuLayerState(target: HTMLElement, source: HTMLElement): void {
   );
 }
 
+function syncDanmakuItemState(target: HTMLElement, source: HTMLElement): void {
+  target.setAttribute("class", source.getAttribute("class") ?? "");
+  target.setAttribute("style", source.getAttribute("style") ?? "");
+  target.setAttribute(
+    "data-danmaku-video-time",
+    source.getAttribute("data-danmaku-video-time") ?? "",
+  );
+}
+
+function getDanmakuItemElementsByKey(layer: Element): Map<string, HTMLElement> {
+  const itemsByKey = new Map<string, HTMLElement>();
+  for (const item of getDanmakuItemElements(layer)) {
+    const key = getDanmakuItemKey(item);
+    if (key) {
+      itemsByKey.set(key, item);
+    }
+  }
+  return itemsByKey;
+}
+
+function pruneAndSyncExistingDanmakuItems(
+  existingLayer: HTMLElement,
+  nextItemsByKey: Map<string, HTMLElement>,
+): Set<string> {
+  const existingKeys = new Set<string>();
+  for (const existingItem of getDanmakuItemElements(existingLayer)) {
+    const key = getDanmakuItemKey(existingItem);
+    const nextItem = key ? nextItemsByKey.get(key) : undefined;
+    if (!key || !nextItem) {
+      existingItem.remove();
+      continue;
+    }
+    syncDanmakuItemState(existingItem, nextItem);
+    existingKeys.add(key);
+  }
+  return existingKeys;
+}
+
 function trimRenderedDanmakuItems(layer: HTMLElement): void {
   const items = getDanmakuItemElements(layer);
   const overflow = items.length - MAX_RENDERED_DANMAKU_ITEMS;
@@ -66,10 +142,10 @@ export function preserveDanmakuLayerElement(
   }
 
   syncDanmakuLayerState(existingLayer, nextLayer);
-  const existingKeys = new Set(
-    getDanmakuItemElements(existingLayer)
-      .map((item) => getDanmakuItemKey(item))
-      .filter((key): key is string => Boolean(key)),
+  const nextItemsByKey = getDanmakuItemElementsByKey(nextLayer);
+  const existingKeys = pruneAndSyncExistingDanmakuItems(
+    existingLayer,
+    nextItemsByKey,
   );
   for (const nextItem of getDanmakuItemElements(nextLayer)) {
     const key = getDanmakuItemKey(nextItem);

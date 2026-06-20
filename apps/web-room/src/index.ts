@@ -15,7 +15,9 @@ import {
 } from "./playback-video-preservation.js";
 import {
   findDanmakuLayerElement,
+  parkDanmakuLayerElement,
   preserveDanmakuLayerElement,
+  removeDanmakuLayerParkingElement,
 } from "./danmaku-layer-preservation.js";
 import { createProviderApiClient } from "./provider-api-client.js";
 import {
@@ -88,12 +90,17 @@ if (app) {
   function render(state: WebRoomState): void {
     const existingPlaybackVideo = findPlaybackVideoElement(appRoot);
     const existingDanmakuLayer = findDanmakuLayerElement(appRoot);
+    const danmakuLayerParking = parkDanmakuLayerElement(existingDanmakuLayer);
     document.documentElement.dataset.webRoomTheme =
       state.themeMode === "dark" ? "dark" : "light";
-    appRoot.innerHTML = renderWebRoomApp(state);
-    preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
-    preserveDanmakuLayerElement(appRoot, existingDanmakuLayer);
-    void playbackControllerRef.current?.sync(appRoot, state);
+    try {
+      appRoot.innerHTML = renderWebRoomApp(state);
+      preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
+      preserveDanmakuLayerElement(appRoot, existingDanmakuLayer);
+      void playbackControllerRef.current?.sync(appRoot, state);
+    } finally {
+      removeDanmakuLayerParkingElement(danmakuLayerParking);
+    }
   }
 
   const controller = createWebRoomAppController({

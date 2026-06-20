@@ -239,6 +239,18 @@ test("styles web room icons and member avatars", () => {
 test("pauses danmaku animation when playback is paused", () => {
   assert.match(
     styles,
+    /\.danmaku-layer\s*{[^}]*inset:\s*0 0 auto;[^}]*height:\s*25%;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.danmaku-item\s*{[^}]*top:\s*calc\(8px \+ var\(--danmaku-lane-y,\s*0px\)\);[^}]*animation-name:\s*danmaku-scroll;[^}]*animation-duration:\s*9s;[^}]*animation-delay:\s*var\(--danmaku-progress-delay,\s*0ms\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.danmaku-item\.is-top,\s*\.danmaku-item\.is-bottom\s*{[^}]*animation-name:\s*danmaku-hold;[^}]*animation-duration:\s*4\.5s;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.danmaku-layer\[data-danmaku-paused="true"\]\s+\.danmaku-item\s*{[^}]*animation-play-state:\s*paused;[^}]*}/s,
   );
 });

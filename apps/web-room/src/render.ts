@@ -25,6 +25,8 @@ export const NARROW_ROOM_REGION_ORDER = [
 const WEB_ROOM_BRAND_NAME = "SyncRoom";
 const WEB_ROOM_BRAND_SLOGAN = "同频观影，好友同声";
 
+export type WebRoomThemeMode = "light" | "dark";
+
 export type WebRoomMember = {
   id: string;
   name: string;
@@ -137,6 +139,7 @@ export type WebRoomPlaybackError = {
 export type WebRoomEntryState = {
   view: "entry";
   connectionState: WebRoomConnectionState;
+  themeMode?: WebRoomThemeMode;
   serverUrl?: string;
   displayName?: string;
   roomInvite?: string;
@@ -148,6 +151,7 @@ export type WebRoomEntryState = {
 export type WebRoomJoinedState = {
   view: "joined";
   connectionState: WebRoomConnectionState;
+  themeMode?: WebRoomThemeMode;
   roomCode: string;
   currentMemberId: string;
   hostMemberId: string;
@@ -222,7 +226,9 @@ type UiIconName =
   | "parse"
   | "play"
   | "members"
-  | "info";
+  | "info"
+  | "theme"
+  | "close";
 
 type EntryIconName = Extract<
   UiIconName,
@@ -328,6 +334,13 @@ function renderIconSvg(
       <path d="M12 16v-4"></path>
       <path d="M12 8h.01"></path>
     `,
+    theme: `
+      <path d="M12 3a6 6 0 0 0 9 7.5A8 8 0 1 1 12 3Z"></path>
+    `,
+    close: `
+      <path d="M18 6 6 18"></path>
+      <path d="m6 6 12 12"></path>
+    `,
   };
 
   return `
@@ -377,11 +390,28 @@ function renderButtonText(label: string, icon: UiIconName): string {
   return `${renderUiIcon(icon, "button-icon")}<span>${escapeHtml(label)}</span>`;
 }
 
-function renderAnnouncementStrip(announcement: string): string {
+function getThemeMode(state: WebRoomState): WebRoomThemeMode {
+  return state.themeMode === "dark" ? "dark" : "light";
+}
+
+function renderThemeToggle(themeMode: WebRoomThemeMode): string {
+  const isDark = themeMode === "dark";
+  const label = isDark ? "白天模式" : "黑夜模式";
+  return `
+      <button type="button" class="secondary-button theme-toggle-button" data-action="toggle-theme-mode" aria-pressed="${isDark}" title="${escapeHtml(label)}">
+        ${renderButtonText(label, "theme")}
+      </button>
+  `;
+}
+
+function renderAnnouncementStrip(state: WebRoomJoinedState): string {
+  const announcement = state.announcement || "暂无公告";
+  const themeMode = getThemeMode(state);
   return `
     <section class="announcement-strip" data-region="announcement">
       ${renderWebRoomBrand("announcement-brand")}
       <span class="announcement-text">${escapeHtml(announcement)}</span>
+      ${renderThemeToggle(themeMode)}
     </section>
   `;
 }
@@ -577,6 +607,7 @@ function getEntryRoomInviteValue(state: WebRoomEntryState): string {
 }
 
 function renderEntry(state: WebRoomEntryState): string {
+  const themeMode = getThemeMode(state);
   const buttonsDisabled =
     state.connectionState === "connecting" ? " disabled" : "";
   const error = state.errorMessage
@@ -585,7 +616,7 @@ function renderEntry(state: WebRoomEntryState): string {
   const roomInvite = getEntryRoomInviteValue(state);
 
   return `
-    <main class="web-room-shell web-room-entry" data-region="entry">
+    <main class="web-room-shell web-room-entry" data-region="entry" data-theme-mode="${themeMode}">
       <section class="entry-panel">
         <div class="entry-header">
           <div class="entry-heading">
@@ -702,7 +733,10 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   return `
     <div class="authorization-modal-backdrop" data-modal="authorization-management">
       <section class="authorization-modal provider-auth-panel" data-panel="provider-auth" data-auth-host="true" data-auth-method="${panel.method}" data-auth-phase="${panel.phase}" data-platform-auth-list="true" role="dialog" aria-modal="true" aria-label="授权管理">
-      <button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">关闭</button>
+      <button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">
+        ${renderUiIcon("close", "button-icon")}
+        <span class="visually-hidden">关闭授权管理</span>
+      </button>
       <div class="settings-tile-heading">
         <span>授权管理</span>
         <small>平台账号授权</small>
@@ -833,7 +867,8 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   };
   const proxyChecked = picker.proxy ? " checked" : "";
   const sharedChecked = picker.shared ? " checked" : "";
-  const message = picker.errorMessage ?? picker.message ?? "通用链接";
+  const message = picker.errorMessage ?? picker.message ?? "";
+  const messageHtml = message ? `<small>${escapeHtml(message)}</small>` : "";
 
   if (!isHost) {
     return `
@@ -850,7 +885,7 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
     <section class="provider-picker-panel" data-panel="host-picker" data-picker-host="true" data-picker-status="${picker.status}">
       <div class="settings-tile-heading">
         ${renderSettingsHeadingLabel("点播解析", "parse")}
-        <small>${escapeHtml(message)}</small>
+        ${messageHtml}
       </div>
       <div class="provider-url-row">
         <input name="bilibiliUrl" autocomplete="url" placeholder="粘贴视频链接" value="${escapeHtml(picker.url ?? "")}" />
@@ -948,13 +983,14 @@ function renderChatMessages(state: WebRoomJoinedState): string {
 
   return state.chatMessages
     .map((message) => {
-      const timestamp = new Date(message.timestamp).toLocaleTimeString(
-        "zh-CN",
-        {
-          hour: "2-digit",
-          minute: "2-digit",
-        },
-      );
+      const timestamp = new Date(message.timestamp).toLocaleString("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
 
       if (message.kind === "system") {
         return `
@@ -1073,7 +1109,7 @@ function renderChatVoicePanel(state: WebRoomJoinedState): string {
       <div class="voice-summary">
         ${renderUiIcon("members", "voice-summary-icon")}
         <strong>在线成员</strong>
-        <small>${state.members.length}</small>
+        <small class="voice-member-count">${state.members.length}</small>
       </div>
       ${error}
       <div class="voice-members">${renderVoiceMembers(state)}</div>
@@ -1113,7 +1149,7 @@ function renderPlaybackError(state: WebRoomJoinedState): string {
 }
 
 function renderJoined(state: WebRoomJoinedState): string {
-  const announcement = state.announcement || "暂无公告";
+  const themeMode = getThemeMode(state);
   const chatCooldownRemainingMs =
     typeof state.chatCooldownUntil === "number"
       ? state.chatCooldownUntil - Date.now()
@@ -1130,8 +1166,8 @@ function renderJoined(state: WebRoomJoinedState): string {
   const chatSendLabel = chatCoolingDown ? `${chatCooldownSeconds}s` : "发送";
 
   return `
-    <main class="web-room-shell web-room-workspace" data-view="joined">
-      ${renderAnnouncementStrip(announcement)}
+    <main class="web-room-shell web-room-workspace" data-view="joined" data-theme-mode="${themeMode}">
+      ${renderAnnouncementStrip(state)}
       <section class="player-chat-grid" data-region="player-chat">
         <div class="player-panel" data-panel="player" data-region="player">
           <div class="player-surface">
@@ -1183,7 +1219,7 @@ function renderJoined(state: WebRoomJoinedState): string {
         </section>
         <section class="settings-panel" data-region="room-settings" data-panel="settings">
           <div class="panel-heading">
-            <h2>${renderPanelTitle("房间设置", "settings")}</h2>
+            <h2>${renderPanelTitle("视频设置", "settings")}</h2>
             ${renderAuthorizationManagementHeaderAction(state)}
           </div>
           <div class="settings-grid">

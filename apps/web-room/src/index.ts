@@ -88,6 +88,8 @@ if (app) {
   function render(state: WebRoomState): void {
     const existingPlaybackVideo = findPlaybackVideoElement(appRoot);
     const existingDanmakuLayer = findDanmakuLayerElement(appRoot);
+    document.documentElement.dataset.webRoomTheme =
+      state.themeMode === "dark" ? "dark" : "light";
     appRoot.innerHTML = renderWebRoomApp(state);
     preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
     preserveDanmakuLayerElement(appRoot, existingDanmakuLayer);
@@ -224,6 +226,11 @@ if (app) {
 
     if (action === "send-player-danmaku") {
       sendPlayerDanmaku(actionElement);
+      return;
+    }
+
+    if (action === "toggle-theme-mode") {
+      controller.toggleThemeMode();
       return;
     }
 

@@ -20,7 +20,7 @@ test("styles Bilibili QR authorization as a scannable square", () => {
 test("styles announcement brand and chat voice action", () => {
   assert.match(
     styles,
-    /\.announcement-strip\s*{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\);[^}]*}/s,
+    /\.announcement-strip\s*{[^}]*grid-template-columns:\s*auto minmax\(0,\s*1fr\) auto;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -28,7 +28,15 @@ test("styles announcement brand and chat voice action", () => {
   );
   assert.match(
     styles,
-    /\.announcement-brand\s+\.brand-mark\s*{[^}]*width:\s*26px;[^}]*height:\s*26px;[^}]*}/s,
+    /\.announcement-brand\s+\.brand-mark\s*{[^}]*width:\s*30px;[^}]*height:\s*30px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.announcement-brand-copy strong\s*{[^}]*font-size:\s*14px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.announcement-brand-copy small\s*{[^}]*font-size:\s*11px;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -41,6 +49,26 @@ test("styles announcement brand and chat voice action", () => {
   assert.match(
     styles,
     /\.voice-toggle-button svg\s*{[^}]*width:\s*15px;[^}]*height:\s*15px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.theme-toggle-button\s*{[^}]*min-height:\s*28px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s*{[^}]*--web-room-bg:\s*#111827;[^}]*--surface:\s*#172033;[^}]*--text-primary:\s*#f8fafc;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-picker-panel,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-auth-panel,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.settings-tile,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.room-video-info,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.room-meta,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.chat-voice-panel\s*{[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.42\);[^}]*border-color:\s*#344256;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.secondary-button,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.voice-toggle-button,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.segment-button\s*{[^}]*border-color:\s*#46566d;[^}]*background:[^}]*rgba\(31,\s*41,\s*55,\s*0\.74\);[^}]*box-shadow:\s*inset 0 1px 0 rgba\(255,\s*255,\s*255,\s*0\.08\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.icon-button\.copy-room-button\s*{[^}]*border-color:\s*#46566d;[^}]*background:[^}]*rgba\(31,\s*41,\s*55,\s*0\.74\);[^}]*color:\s*var\(--text-secondary\);[^}]*}/s,
   );
 });
 
@@ -118,6 +146,10 @@ test("styles compact room info with collapsible member list", () => {
   );
   assert.match(
     styles,
+    /\.room-video-info\s*{[^}]*margin:\s*8px 10px 10px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.member-list-disclosure\s*{[^}]*margin:\s*10px;[^}]*}/s,
   );
   assert.match(
@@ -163,6 +195,10 @@ test("styles chat messages as directional bubbles", () => {
     styles,
     /\.chat-system-message\s*{[^}]*align-self:\s*center;[^}]*max-width:\s*90%;[^}]*text-align:\s*center;[^}]*}/s,
   );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.panel-heading,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.chat-voice-panel,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.chat-input-row\s*{[^}]*border-color:\s*#344256;[^}]*}/s,
+  );
 });
 
 test("styles web room icons and member avatars", () => {
@@ -189,6 +225,14 @@ test("styles web room icons and member avatars", () => {
   assert.match(
     styles,
     /\.voice-member-avatar\s*{[^}]*display:\s*grid;[^}]*place-items:\s*center;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.voice-member-count\s*{[^}]*display:\s*inline-grid;[^}]*place-items:\s*center;[^}]*width:\s*18px;[^}]*height:\s*18px;[^}]*border-radius:\s*999px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.voice-member-count,\s*\.web-room-shell\[data-theme-mode="dark"\]\s+\.voice-member\s*{[^}]*border-color:\s*#58708e;[^}]*background:\s*rgba\(31,\s*41,\s*55,\s*0\.78\);[^}]*color:\s*#dbeafe;[^}]*}/s,
   );
 });
 
@@ -306,7 +350,15 @@ test("styles settings header actions with bounded errors", () => {
   );
   assert.match(
     styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.policy-help-trigger\s*{[^}]*border-color:\s*#58708e;[^}]*background:\s*rgba\(31,\s*41,\s*55,\s*0\.82\);[^}]*color:\s*#dbeafe;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.policy-help-body\s*{[^}]*position:\s*absolute;[^}]*right:\s*0;[^}]*visibility:\s*hidden;[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.policy-help-body\s*{[^}]*border-color:\s*#58708e;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.96\);[^}]*color:\s*#dbeafe;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -314,11 +366,15 @@ test("styles settings header actions with bounded errors", () => {
   );
   assert.match(
     styles,
-    /\.authorization-modal-backdrop\s*{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*z-index:\s*30;[^}]*background:\s*#f8fafc;[^}]*}/s,
+    /\.authorization-modal-backdrop\s*{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*z-index:\s*30;[^}]*background:\s*rgba\(248,\s*250,\s*252,\s*0\.78\);[^}]*backdrop-filter:\s*blur\(2px\);[^}]*}/s,
   );
   assert.match(
     styles,
     /\.authorization-modal\s*{[^}]*width:\s*min\(520px,\s*calc\(100vw - 32px\)\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.authorization-modal-close\s*{[^}]*width:\s*30px;[^}]*padding:\s*0;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -348,7 +404,23 @@ test("keeps mobile player controls and chat composer visible", () => {
   );
   assert.match(
     styles,
-    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-chat-grid\s*{[^}]*grid-template-rows:\s*minmax\(170px,\s*42%\) minmax\(240px,\s*1fr\);[^}]*height:\s*min\(720px,\s*calc\(100vh - 62px\)\);[^}]*overflow:\s*hidden;[^}]*}/s,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.announcement-strip\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.announcement-brand\s*{[^}]*grid-column:\s*1;[^}]*grid-row:\s*1;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.announcement-text\s*{[^}]*grid-column:\s*1 \/ -1;[^}]*grid-row:\s*2;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.theme-toggle-button\s*{[^}]*grid-column:\s*2;[^}]*grid-row:\s*1;[^}]*justify-self:\s*end;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-chat-grid\s*{[^}]*grid-template-rows:\s*minmax\(170px,\s*42%\) minmax\(240px,\s*1fr\);[^}]*gap:\s*8px;[^}]*height:\s*min\(720px,\s*calc\(100vh - 62px\)\);[^}]*overflow:\s*hidden;[^}]*}/s,
   );
   assert.match(
     styles,

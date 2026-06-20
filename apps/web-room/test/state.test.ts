@@ -167,6 +167,59 @@ test("applies chat rate-limit errors as a client cooldown", () => {
   assert.match(nextState.diagnostics.at(-1) ?? "", /chat cooldown/);
 });
 
+test("starts a chat cooldown after the current member message is accepted", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(
+    state,
+    {
+      type: "chat:message",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "刚发送成功",
+        timestamp: 1_725_000_000_000,
+      },
+    },
+    { now: () => 10_000 },
+  );
+
+  assert.equal(nextState.chatMessages.length, 1);
+  assert.equal(nextState.chatMessages[0]?.content, "刚发送成功");
+  assert.equal(nextState.chatCooldownUntil, 15_000);
+});
+
+test("does not start a chat cooldown for other members messages", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(
+    state,
+    {
+      type: "chat:message",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        displayName: "Bob",
+        content: "收到",
+        timestamp: 1_725_000_000_000,
+      },
+    },
+    { now: () => 10_000 },
+  );
+
+  assert.equal(nextState.chatMessages.length, 1);
+  assert.equal(nextState.chatCooldownUntil, undefined);
+});
+
 test("applies announcement updates and chat broadcasts", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",

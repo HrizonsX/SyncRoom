@@ -4,6 +4,7 @@ import type {
   WebRoomJoinedState,
   WebRoomProviderPlaybackStatus,
   WebRoomSystemChatEventType,
+  WebRoomThemeMode,
 } from "./render.js";
 import {
   choosePreferredPlaybackCandidate,
@@ -18,6 +19,7 @@ type InitialJoinedStateInput = {
   currentMemberId: string;
   hostMemberId?: string;
   displayName: string;
+  themeMode?: WebRoomThemeMode;
   serverUrl?: string;
   joinToken?: string;
 };
@@ -48,6 +50,8 @@ function appendChatMessage(
 ): WebRoomChatMessage[] {
   return [...state.chatMessages, message].slice(-200);
 }
+
+const CHAT_SUCCESS_COOLDOWN_MS = 5_000;
 
 const SYSTEM_CHAT_SUFFIX: Record<WebRoomSystemChatEventType, string> = {
   member_joined: "加入了房间",
@@ -163,6 +167,7 @@ export function createInitialJoinedState(
   return {
     view: "joined",
     connectionState: "connected",
+    themeMode: input.themeMode ?? "light",
     roomCode: input.roomCode,
     currentMemberId: input.currentMemberId,
     hostMemberId: input.hostMemberId ?? input.currentMemberId,
@@ -400,18 +405,31 @@ function applyAnnouncement(
 function applyChatMessage(
   state: WebRoomJoinedState,
   payload: RecordLike,
+  currentTime: number,
 ): WebRoomJoinedState {
+  const memberId = getString(payload.memberId);
+  const nextCooldownUntil =
+    memberId === state.currentMemberId
+      ? Math.max(
+          state.chatCooldownUntil ?? 0,
+          currentTime + CHAT_SUCCESS_COOLDOWN_MS,
+        )
+      : state.chatCooldownUntil;
+
   return {
     ...state,
+    ...(typeof nextCooldownUntil === "number"
+      ? { chatCooldownUntil: nextCooldownUntil }
+      : {}),
     chatMessages: appendChatMessage(state, {
-      memberId: getString(payload.memberId),
+      memberId,
       displayName: getString(payload.displayName, "匿名成员"),
       content: getString(payload.content),
       timestamp:
         typeof payload.timestamp === "number" &&
         Number.isFinite(payload.timestamp)
           ? payload.timestamp
-          : Date.now(),
+          : currentTime,
     }),
     diagnostics: appendDiagnostic(state, "chat:message applied"),
   };
@@ -552,7 +570,7 @@ export function applyServerMessage(
     case "announcement:update":
       return applyAnnouncement(state, payload);
     case "chat:message":
-      return applyChatMessage(state, payload);
+      return applyChatMessage(state, payload, options.now?.() ?? Date.now());
     case "danmaku:message":
       return applyDanmakuMessage(state, payload);
     case "room:member-joined":

@@ -12,6 +12,7 @@ import type {
   WebRoomProviderPickerItem,
   WebRoomProviderPickerState,
   WebRoomState,
+  WebRoomThemeMode,
 } from "./render.js";
 import { formatRoomJoinInvite } from "./actions.js";
 import {
@@ -45,6 +46,7 @@ import type {
 
 export const DEFAULT_WEB_ROOM_SERVER_URL = "ws://localhost:8787";
 export const WEB_ROOM_IDENTITY_STORAGE_KEY = "syncroom:web-room-identity";
+export const WEB_ROOM_THEME_STORAGE_KEY = "syncroom:web-room-theme";
 
 const DEFAULT_DISPLAY_NAME = "网页用户";
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
@@ -117,6 +119,7 @@ export type WebRoomAppController = {
   requestVoiceAccess: () => void;
   toggleVoice: () => void;
   toggleVoiceMicrophone: () => Promise<void>;
+  toggleThemeMode: () => void;
   leaveRoom: () => void;
   openAuthorizationPanel: () => void;
   setBilibiliAuthMethod: (method: WebRoomAuthMethod) => void;
@@ -281,6 +284,34 @@ function resolveBrowserDisplayName(
   return getBrowserDisplayName(storage, random);
 }
 
+function isWebRoomThemeMode(value: unknown): value is WebRoomThemeMode {
+  return value === "light" || value === "dark";
+}
+
+function loadWebRoomThemeMode(
+  storage: StorageLike | undefined,
+): WebRoomThemeMode {
+  if (!storage) {
+    return "light";
+  }
+
+  const value = storage.getItem(WEB_ROOM_THEME_STORAGE_KEY);
+  if (isWebRoomThemeMode(value)) {
+    return value;
+  }
+  if (value !== null) {
+    storage.removeItem(WEB_ROOM_THEME_STORAGE_KEY);
+  }
+  return "light";
+}
+
+function persistWebRoomThemeMode(
+  storage: StorageLike | undefined,
+  themeMode: WebRoomThemeMode,
+): void {
+  storage?.setItem(WEB_ROOM_THEME_STORAGE_KEY, themeMode);
+}
+
 function getServerUrl(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
@@ -293,6 +324,7 @@ function getRoomCode(value: string | undefined): string {
 function createEntryState(
   serverUrl: string,
   input: Partial<JoinRoomInput> = {},
+  themeMode: WebRoomThemeMode = "light",
 ): WebRoomState {
   const roomInvite =
     input.roomCode && input.joinToken
@@ -304,6 +336,7 @@ function createEntryState(
   return {
     view: "entry",
     connectionState: "disconnected",
+    themeMode,
     serverUrl,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(roomInvite ? { roomInvite } : {}),
@@ -337,6 +370,18 @@ function withEntryError(
   };
 }
 
+function localizeEntryServerError(
+  payload: Extract<ServerMessage, { type: "error" }>["payload"],
+): string {
+  if (payload.code === "room_not_found") {
+    return "房间不存在或已失效。";
+  }
+  if (payload.code === "join_token_invalid") {
+    return "加入口令无效，请检查房间邀请。";
+  }
+  return payload.message || "加入房间失败。";
+}
+
 export function createWebRoomAppController(
   options: WebRoomAppControllerOptions = {},
 ): WebRoomAppController {
@@ -346,9 +391,11 @@ export function createWebRoomAppController(
   const persistedSession = storage ? loadWebRoomSession(storage) : null;
   const random = options.random ?? Math.random;
   const browserDisplayName = getBrowserDisplayName(storage, random);
+  const browserThemeMode = loadWebRoomThemeMode(storage);
   let state: WebRoomState = createEntryState(
     persistedSession?.serverUrl ?? defaultServerUrl,
     persistedSession ?? { displayName: browserDisplayName },
+    browserThemeMode,
   );
   let client: WebRoomSocketClient | null = null;
   let activeSession: PersistedWebRoomSession | null = null;
@@ -373,6 +420,10 @@ export function createWebRoomAppController(
 
   function getCurrentTime(): number {
     return options.now?.() ?? Date.now();
+  }
+
+  function getCurrentThemeMode(): WebRoomThemeMode {
+    return state.themeMode === "dark" ? "dark" : "light";
   }
 
   function clearChatCooldownTimer(): void {
@@ -737,12 +788,13 @@ export function createWebRoomAppController(
     if (state.view !== "joined") {
       return;
     }
+    const authPanelOpen = state.authPanel?.open === true;
     if (!result.authorized) {
       emit({
         ...state,
         authStatus: "unauthorized",
         authPanel: {
-          open: true,
+          open: authPanelOpen,
           method,
           phase: "failed",
           message: "Bilibili authorization could not be verified.",
@@ -754,7 +806,7 @@ export function createWebRoomAppController(
       ...state,
       authStatus: "authorized",
       authPanel: {
-        open: true,
+        open: authPanelOpen,
         method,
         phase: "authorized",
         ...(result.profile?.displayName
@@ -842,6 +894,7 @@ export function createWebRoomAppController(
     panel: "auth" | "picker";
     message: string;
     method?: WebRoomAuthMethod;
+    open?: boolean;
   }): void {
     if (state.view !== "joined") {
       return;
@@ -851,7 +904,7 @@ export function createWebRoomAppController(
         ...state,
         authStatus: "unauthorized",
         authPanel: {
-          open: true,
+          open: input.open ?? true,
           method: input.method ?? state.authPanel?.method ?? "qr",
           phase: "failed",
           errorMessage: input.message,
@@ -949,6 +1002,7 @@ export function createWebRoomAppController(
         currentMemberId: message.payload.memberId,
         hostMemberId: message.payload.memberId,
         displayName: session.displayName,
+        themeMode: getCurrentThemeMode(),
         serverUrl: session.serverUrl,
         joinToken: session.joinToken,
       }),
@@ -976,6 +1030,7 @@ export function createWebRoomAppController(
         currentMemberId: message.payload.memberId,
         hostMemberId: "",
         displayName: session.displayName,
+        themeMode: getCurrentThemeMode(),
         serverUrl: session.serverUrl,
         joinToken: session.joinToken,
       }),
@@ -1012,7 +1067,7 @@ export function createWebRoomAppController(
 
     if (message.type === "error") {
       if (state.view === "entry") {
-        emit(withEntryError(state, message.payload.message));
+        emit(withEntryError(state, localizeEntryServerError(message.payload)));
         return;
       }
       emit(
@@ -1051,7 +1106,12 @@ export function createWebRoomAppController(
     void voiceController.disconnect("room entry changed");
     client?.close();
     activeSession = null;
-    emit(setConnectionState(createEntryState(serverUrl, action), "connecting"));
+    emit(
+      setConnectionState(
+        createEntryState(serverUrl, action, getCurrentThemeMode()),
+        "connecting",
+      ),
+    );
 
     try {
       client = createWebRoomSocketClient({
@@ -1067,7 +1127,12 @@ export function createWebRoomAppController(
       const message = error instanceof Error ? error.message : "服务器地址无效";
       client = null;
       pendingAction = null;
-      emit(withEntryError(createEntryState(serverUrl, action), message));
+      emit(
+        withEntryError(
+          createEntryState(serverUrl, action, getCurrentThemeMode()),
+          message,
+        ),
+      );
       return false;
     }
   }
@@ -1099,11 +1164,15 @@ export function createWebRoomAppController(
     if (!ROOM_CODE_PATTERN.test(roomCode) || joinToken.length === 0) {
       emit(
         withEntryError(
-          createEntryState(serverUrl, {
-            roomCode,
-            joinToken,
-            displayName,
-          }),
+          createEntryState(
+            serverUrl,
+            {
+              roomCode,
+              joinToken,
+              displayName,
+            },
+            getCurrentThemeMode(),
+          ),
           "请输入有效的房间号和加入口令",
         ),
       );
@@ -1168,6 +1237,15 @@ export function createWebRoomAppController(
     return voiceController.toggleMicrophone();
   }
 
+  function toggleThemeMode(): void {
+    const themeMode = getCurrentThemeMode() === "dark" ? "light" : "dark";
+    persistWebRoomThemeMode(storage, themeMode);
+    emit({
+      ...state,
+      themeMode,
+    });
+  }
+
   function leaveRoom(): void {
     const previousRoomInvite =
       state.view === "joined"
@@ -1189,10 +1267,14 @@ export function createWebRoomAppController(
       clearWebRoomSession(storage);
     }
     emit(
-      createEntryState(state.serverUrl ?? defaultServerUrl, {
-        displayName: getBrowserDisplayName(storage, random),
-        ...previousRoomInvite,
-      }),
+      createEntryState(
+        state.serverUrl ?? defaultServerUrl,
+        {
+          displayName: getBrowserDisplayName(storage, random),
+          ...previousRoomInvite,
+        },
+        getCurrentThemeMode(),
+      ),
     );
   }
 
@@ -1250,6 +1332,7 @@ export function createWebRoomAppController(
       applyProviderApiFailure({
         panel: "auth",
         method,
+        open: state.authPanel?.open === true,
         message: getProviderApiFailureMessage(
           error,
           "Bilibili authorization check failed.",
@@ -1708,6 +1791,7 @@ export function createWebRoomAppController(
     requestVoiceAccess,
     toggleVoice,
     toggleVoiceMicrophone,
+    toggleThemeMode,
     leaveRoom,
     openAuthorizationPanel,
     setBilibiliAuthMethod,

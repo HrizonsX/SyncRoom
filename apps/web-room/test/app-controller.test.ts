@@ -5,6 +5,7 @@ import {
   createWebRoomAppController,
   DEFAULT_WEB_ROOM_SERVER_URL,
   WEB_ROOM_IDENTITY_STORAGE_KEY,
+  WEB_ROOM_THEME_STORAGE_KEY,
 } from "../src/app-controller.js";
 import { ProviderApiError } from "../src/provider-api-client.js";
 import type { StorageLike, WebSocketLike } from "../src/room-client.js";
@@ -223,6 +224,60 @@ test("keeps the generated web nickname fixed for the same browser storage", () =
     storage.getItem(WEB_ROOM_IDENTITY_STORAGE_KEY) ?? "",
     new RegExp(firstDisplayName),
   );
+});
+
+test("localizes entry room-not-found server errors", () => {
+  const recorder = createSocketRecorder();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+  });
+
+  controller.joinRoom({
+    serverUrl: "ws://syncroom.example.test",
+    displayName: "Alice",
+    roomCode: "ABC123",
+    joinToken: "valid-join-token-123",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "error",
+      payload: {
+        code: "room_not_found",
+        message: "Room not found.",
+      },
+    }),
+  );
+
+  const state = controller.getState();
+  assert.equal(state.view, "entry");
+  if (state.view !== "entry") {
+    throw new Error("Expected entry state.");
+  }
+  assert.equal(state.errorMessage, "房间不存在或已失效。");
+});
+
+test("toggles and persists the web room theme mode", () => {
+  const storage = new MemoryStorage();
+  const states: string[] = [];
+  const controller = createWebRoomAppController({
+    storage,
+    onStateChange: (state) => states.push(state.themeMode ?? "light"),
+  });
+
+  assert.equal(controller.getState().themeMode, "light");
+
+  controller.toggleThemeMode();
+
+  assert.equal(controller.getState().themeMode, "dark");
+  assert.equal(storage.getItem(WEB_ROOM_THEME_STORAGE_KEY), "dark");
+
+  controller.toggleThemeMode();
+
+  assert.equal(controller.getState().themeMode, "light");
+  assert.equal(storage.getItem(WEB_ROOM_THEME_STORAGE_KEY), "light");
+  assert.deepEqual(states.slice(-2), ["dark", "light"]);
 });
 
 test("reuses the browser web nickname after leaving a room", () => {
@@ -503,6 +558,7 @@ test("refreshes Bilibili authorization when refresh rejoin restores host identit
   const state = controller.getState();
   assert.equal(state.view, "joined");
   assert.equal(state.view === "joined" ? state.authStatus : null, "authorized");
+  assert.equal(state.view === "joined" ? state.authPanel?.open : null, false);
   assert.equal(
     state.view === "joined" ? state.authPanel?.profileName : null,
     "Alice B",

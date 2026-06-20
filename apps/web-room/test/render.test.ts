@@ -121,12 +121,16 @@ test("renders the supplied joined-room desktop layout regions", () => {
     assert.match(html, new RegExp(`data-region="${region}"`));
   }
 
+  assert.match(html, /data-theme-mode="light"/);
   assert.match(html, /class="announcement-brand brand"/);
   assert.match(html, /class="brand-mark"/);
   assert.match(html, /<svg class="icon" viewBox="0 0 24 24"/);
   assert.match(html, />SyncRoom</);
   assert.match(html, />同频观影，好友同声</);
   assert.match(html, /class="announcement-text"/);
+  assert.match(html, /data-action="toggle-theme-mode"/);
+  assert.match(html, /aria-pressed="false"/);
+  assert.match(html, /data-ui-icon="theme"/);
   assert.match(html, /data-panel="player"/);
   assert.match(html, /data-panel="chat"/);
   assert.match(html, /data-ui-icon="chat"/);
@@ -150,6 +154,8 @@ test("renders the supplied joined-room desktop layout regions", () => {
   assert.doesNotMatch(settingsHeadingHtml, /data-settings-heading-action/);
   assert.match(settingsHeadingHtml, /data-action="authorization-management"/);
   assert.match(settingsHeadingHtml, /管理已授权平台/);
+  assert.match(settingsHeadingHtml, />视频设置</);
+  assert.doesNotMatch(settingsHeadingHtml, />房间设置</);
   const chatHeadingStart = html.indexOf(
     '<div class="panel-heading">',
     html.indexOf('data-panel="chat"'),
@@ -212,6 +218,18 @@ test("renders the supplied joined-room desktop layout regions", () => {
   );
   assert.match(diagnosticsHtml, /data-ui-icon="info"/);
   assert.match(html, /valid-join-token-123/);
+});
+
+test("renders the joined room in dark theme mode", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    themeMode: "dark",
+  });
+
+  assert.match(html, /data-theme-mode="dark"/);
+  assert.match(html, /data-action="toggle-theme-mode"/);
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, />白天模式<\/span>/);
 });
 
 test("omits the player title control before a video is selected", () => {
@@ -370,8 +388,14 @@ test("renders chat messages as directional bubbles with timestamps", () => {
   assert.match(html, /data-chat-author="self"/);
   assert.match(html, /class="chat-message is-other"/);
   assert.match(html, /data-chat-author="other"/);
-  assert.match(html, /<time datetime="1725000000000">/);
-  assert.match(html, /<time datetime="1725000060000">/);
+  assert.match(
+    html,
+    /<time datetime="1725000000000">2024\/08\/30 14:40<\/time>/,
+  );
+  assert.match(
+    html,
+    /<time datetime="1725000060000">2024\/08\/30 14:41<\/time>/,
+  );
 });
 
 test("renders system chat messages centered in chronological chat flow", () => {
@@ -534,6 +558,15 @@ test("renders authorization management as a platform list with Bilibili QR only"
   assert.match(html, /role="dialog"/);
   assert.match(html, /aria-modal="true"/);
   assert.match(html, /data-action="close-authorization-management"/);
+  assert.match(
+    html,
+    /<button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">[\s\S]*data-ui-icon="close"[\s\S]*<span class="visually-hidden">关闭授权管理<\/span>[\s\S]*<\/button>/,
+  );
+  assert.doesNotMatch(html, />关闭<\/button>/);
+  assert.ok(
+    html.indexOf('data-modal="authorization-management"') >
+      html.indexOf('<main class="web-room-shell web-room-workspace"'),
+  );
   assert.match(html, /data-panel="provider-auth"/);
   assert.match(html, /data-platform-auth-list="true"/);
   assert.match(html, /data-platform-id="bilibili"/);
@@ -699,6 +732,18 @@ test("renders host picker controls for Bilibili parse results and playback polic
   assert.match(html, /1080P/);
   assert.match(html, /720P/);
   assert.match(html, /data-action="share-provider-item"/);
+});
+
+test("omits the default provider picker helper copy", () => {
+  const html = renderWebRoomApp(joinedRoomState);
+  const pickerStart = html.indexOf('data-panel="host-picker"');
+  const pickerHtml = html.slice(
+    pickerStart,
+    html.indexOf("</section>", pickerStart),
+  );
+
+  assert.match(pickerHtml, /点播解析/);
+  assert.doesNotMatch(pickerHtml, /通用链接/);
 });
 
 test("escapes chat text and keeps messages in the page lifecycle model", () => {

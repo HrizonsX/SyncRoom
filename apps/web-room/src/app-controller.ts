@@ -405,7 +405,7 @@ export function createWebRoomAppController(
     }
     const remainingMs = cooldownUntil - getCurrentTime();
     if (remainingMs > 0) {
-      syncTransientUiTimers();
+      emit({ ...state });
       return;
     }
     emit({
@@ -452,7 +452,7 @@ export function createWebRoomAppController(
         chatCooldownTimerUntil = cooldownUntil;
         chatCooldownTimer = setAuthPollTimeout(
           handleChatCooldownTimer,
-          remainingMs,
+          Math.min(remainingMs, 1000),
         );
       }
     } else {

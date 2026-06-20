@@ -1456,11 +1456,25 @@ test("releases chat send cooldown after the server retry window", () => {
   assert.equal(state.chatCooldownUntil, 14_000);
   assert.deepEqual(
     timers.map((timer) => timer.delayMs),
-    [4_000],
+    [1_000],
+  );
+
+  now = 11_000;
+  timers[0]?.callback();
+
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.chatCooldownUntil, 14_000);
+  assert.deepEqual(
+    timers.map((timer) => timer.delayMs),
+    [1_000, 1_000],
   );
 
   now = 14_000;
-  timers[0]?.callback();
+  timers.at(-1)?.callback();
 
   state = controller.getState();
   assert.equal(state.view, "joined");

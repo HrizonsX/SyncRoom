@@ -157,7 +157,7 @@ test("styles chat messages as directional bubbles", () => {
   );
   assert.match(
     styles,
-    /\.chat-panel\s*{[^}]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto;[^}]*overflow:\s*hidden;[^}]*}/s,
+    /\.chat-panel\s*{[^}]*grid-template-rows:\s*auto auto minmax\(0,\s*1fr\) auto;[^}]*height:\s*100%;[^}]*max-height:\s*100%;[^}]*overflow:\s*hidden;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -200,6 +200,22 @@ test("pauses danmaku animation when playback is paused", () => {
 });
 
 test("styles player danmaku entry for desktop control bar and mobile popover", () => {
+  assert.match(
+    styles,
+    /\.web-room-workspace\s*{[^}]*grid-template-rows:\s*auto minmax\(0,\s*1fr\) minmax\(150px,\s*auto\);[^}]*height:\s*calc\(100vh - 20px\);[^}]*max-height:\s*calc\(100vh - 20px\);[^}]*overflow:\s*hidden;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-chat-grid\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*max-height:\s*100%;[^}]*overflow:\s*hidden;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-panel\s*{[^}]*min-height:\s*0;[^}]*overflow:\s*hidden;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-surface\s*{[^}]*height:\s*100%;[^}]*min-height:\s*0;[^}]*aspect-ratio:\s*auto;[^}]*overflow:\s*hidden;[^}]*}/s,
+  );
   assert.match(
     styles,
     /\.player-controls media-time-range\[disabled\]\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
@@ -261,10 +277,14 @@ test("styles player volume as an upward popover control", () => {
   );
 });
 
-test("styles settings tiles with compact full-width auth and bounded errors", () => {
+test("styles settings header actions with bounded errors", () => {
   assert.match(
     styles,
-    /\.authorization-management-tile\s*{[^}]*grid-column:\s*1 \/ -1;[^}]*}/s,
+    /\.settings-heading-actions\s*{[^}]*display:\s*inline-flex;[^}]*justify-content:\s*flex-end;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.settings-heading-action\s*{[^}]*min-height:\s*26px;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -278,22 +298,35 @@ test("styles settings tiles with compact full-width auth and bounded errors", ()
     styles,
     /\.policy-option\s*{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*}/s,
   );
+  assert.match(styles, /\.settings-panel\s*{[^}]*overflow:\s*visible;[^}]*}/s);
   assert.match(styles, /\.policy-help\s*{[^}]*position:\s*relative;[^}]*}/s);
   assert.match(
     styles,
-    /\.policy-help summary\s*{[^}]*display:\s*grid;[^}]*place-items:\s*center;[^}]*width:\s*16px;[^}]*height:\s*16px;[^}]*}/s,
+    /\.policy-help-trigger\s*{[^}]*display:\s*grid;[^}]*place-items:\s*center;[^}]*width:\s*16px;[^}]*height:\s*16px;[^}]*}/s,
   );
   assert.match(
     styles,
-    /\.policy-help-body\s*{[^}]*position:\s*absolute;[^}]*width:\s*min\(260px,\s*72vw\);[^}]*}/s,
+    /\.policy-help-body\s*{[^}]*position:\s*absolute;[^}]*right:\s*0;[^}]*visibility:\s*hidden;[^}]*opacity:\s*0;[^}]*pointer-events:\s*none;[^}]*}/s,
   );
   assert.match(
     styles,
-    /\.authorization-modal-backdrop\s*{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*z-index:\s*30;[^}]*}/s,
+    /\.policy-help:hover\s+\.policy-help-body,\s*\.policy-help:focus-within\s+\.policy-help-body\s*{[^}]*visibility:\s*visible;[^}]*opacity:\s*1;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.authorization-modal-backdrop\s*{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*z-index:\s*30;[^}]*background:\s*#f8fafc;[^}]*}/s,
   );
   assert.match(
     styles,
     /\.authorization-modal\s*{[^}]*width:\s*min\(520px,\s*calc\(100vw - 32px\)\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.platform-logo-bilibili\s*{[^}]*background:\s*#00a1d6;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.platform-logo-svg\s*{[^}]*width:\s*44px;[^}]*height:\s*22px;[^}]*stroke:\s*currentColor;[^}]*}/s,
   );
 });
 
@@ -305,5 +338,36 @@ test("styles player title as a compact control bar label", () => {
   assert.match(
     styles,
     /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-video-title\s*{[^}]*max-width:\s*min\(72vw,\s*260px\);[^}]*margin:\s*8px 0 0 8px;[^}]*}/s,
+  );
+});
+
+test("keeps mobile player controls and chat composer visible", () => {
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.web-room-workspace\s*{[^}]*height:\s*auto;[^}]*max-height:\s*none;[^}]*overflow:\s*visible;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-chat-grid\s*{[^}]*grid-template-rows:\s*minmax\(170px,\s*42%\) minmax\(240px,\s*1fr\);[^}]*height:\s*min\(720px,\s*calc\(100vh - 62px\)\);[^}]*overflow:\s*hidden;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@supports\s*\(height:\s*100dvh\)\s*{[\s\S]*\.player-chat-grid\s*{[^}]*height:\s*min\(720px,\s*calc\(100dvh - 62px\)\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-panel\s*{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-controls\s*{[^}]*right:\s*10px;[^}]*bottom:\s*12px;[^}]*left:\s*10px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.chat-panel\s*{[^}]*height:\s*auto;[^}]*min-height:\s*0;[^}]*max-height:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.chat-list\s*{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;[^}]*}/s,
   );
 });

@@ -432,25 +432,6 @@ function renderConnectionState(state: WebRoomConnectionState): string {
   return `<span class="status-pill is-${state}" data-connection-state="${state}">${label}</span>`;
 }
 
-function renderProviderPlaybackStatus(
-  status: WebRoomProviderPlaybackStatus | undefined,
-): string {
-  if (!status) {
-    return "";
-  }
-
-  const details = [
-    status.providerId,
-    status.sourceType,
-    `proxy:${status.proxy ? "on" : "off"}`,
-    `shared:${status.shared ? "on" : "off"}`,
-  ]
-    .filter(Boolean)
-    .join(" / ");
-  const title = status.itemTitle ? `${status.itemTitle} · ${details}` : details;
-  return `<small class="provider-playback-status" data-provider-playback-status="safe">${escapeHtml(title)}</small>`;
-}
-
 function renderPlaybackVideo(source: PlaybackSource | undefined): string {
   const sourceAttributes = source
     ? `
@@ -640,32 +621,33 @@ function renderEntry(state: WebRoomEntryState): string {
   `;
 }
 
-function renderAuthorizationManagementEntry(state: WebRoomJoinedState): string {
+function renderAuthorizationManagementHeaderAction(
+  state: WebRoomJoinedState,
+): string {
   const isHost = state.currentMemberId === state.hostMemberId;
-  const playbackStatus = renderProviderPlaybackStatus(
-    state.providerPlaybackStatus,
-  );
-
   if (!isHost) {
-    return `
-      <section class="settings-tile authorization-management-tile" data-panel="authorization-entry" data-auth-host="false">
-        <div class="settings-tile-heading">
-          <span>授权管理</span>
-        </div>
-        ${renderProviderPlaybackStatus(state.providerPlaybackStatus)}
-        <button type="button" class="secondary-button" disabled>${renderButtonText("房主可管理", "auth")}</button>
-      </section>
-    `;
+    return "";
   }
 
   return `
-    <section class="settings-tile authorization-management-tile" data-panel="authorization-entry" data-auth-host="true">
-      <div class="settings-tile-heading">
-        <span>授权管理</span>
-      </div>
-      ${playbackStatus}
-      <button type="button" class="secondary-button" data-action="authorization-management">${renderButtonText("管理已授权平台", "auth")}</button>
-    </section>
+    <span class="settings-heading-actions">
+      <button type="button" class="secondary-button settings-heading-action" data-action="authorization-management">${renderButtonText("管理已授权平台", "auth")}</button>
+    </span>
+  `;
+}
+
+function renderBilibiliLogo(): string {
+  return `
+    <span class="platform-logo platform-logo-bilibili">
+      <svg class="platform-logo-svg" viewBox="0 0 64 32" role="img" aria-label="Bilibili 官方 Logo" focusable="false">
+        <rect x="8" y="8" width="48" height="20" rx="6"></rect>
+        <path d="M22 8 17 3"></path>
+        <path d="M42 8 47 3"></path>
+        <path d="M24 18h.01"></path>
+        <path d="M40 18h.01"></path>
+        <path d="M29 23h6"></path>
+      </svg>
+    </span>
   `;
 }
 
@@ -689,6 +671,21 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   const qrCode = panel.qrCodeUrl
     ? `<img class="auth-qr" src="${escapeHtml(panel.qrCodeUrl)}" alt="Bilibili QR" />`
     : '<div class="auth-qr-placeholder">QR</div>';
+  const shouldShowQrMethod =
+    panel.phase !== "idle" ||
+    Boolean(panel.qrCodeUrl) ||
+    state.authStatus === "checking";
+  const platformAuthAction = shouldShowQrMethod
+    ? ""
+    : `<button type="button" class="secondary-button platform-auth-action" data-action="bilibili-login-qr">${renderButtonText("授权", "auth")}</button>`;
+  const authMethod = shouldShowQrMethod
+    ? `
+          <div class="auth-method auth-method-qr">
+            ${qrCode}
+            <button type="button" class="secondary-button" data-action="bilibili-login-qr">${renderButtonText("二维码授权", "qr")}</button>
+          </div>
+        `
+    : "";
 
   if (!isHost) {
     return `
@@ -712,17 +709,15 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
       </div>
       <div class="platform-auth-list">
         <section class="platform-auth-item" data-platform-id="bilibili">
-          <div class="settings-tile-heading">
-            <span>Bilibili 授权</span>
+          ${renderBilibiliLogo()}
+          <div class="platform-auth-copy">
+            <strong>B 站</strong>
             <small>${escapeHtml(message)}</small>
           </div>
-          <div class="auth-method auth-method-qr">
-            ${qrCode}
-            <button type="button" class="secondary-button" data-action="bilibili-login-qr">${renderButtonText("二维码登录", "qr")}</button>
-          </div>
+          ${platformAuthAction}
+          ${authMethod}
         </section>
       </div>
-      <button type="button" class="secondary-button danger-button" data-action="bilibili-logout">${renderButtonText("退出授权", "logout")}</button>
       </section>
     </div>
   `;
@@ -820,10 +815,10 @@ function renderPolicyHelp(policy: "proxy" | "shared"): string {
       : "把解析后的播放源同步给房间成员，成员加入后会沿用同一播放源。";
 
   return `
-    <details class="policy-help" data-policy-help="${policy}">
-      <summary aria-label="${policy} 说明">!</summary>
-      <div class="policy-help-body" role="note">${escapeHtml(message)}</div>
-    </details>
+    <span class="policy-help" data-policy-help="${policy}">
+      <span class="policy-help-trigger" aria-label="${policy} 说明" tabindex="0">!</span>
+      <span class="policy-help-body" role="tooltip">${escapeHtml(message)}</span>
+    </span>
   `;
 }
 
@@ -1119,13 +1114,20 @@ function renderPlaybackError(state: WebRoomJoinedState): string {
 
 function renderJoined(state: WebRoomJoinedState): string {
   const announcement = state.announcement || "暂无公告";
+  const chatCooldownRemainingMs =
+    typeof state.chatCooldownUntil === "number"
+      ? state.chatCooldownUntil - Date.now()
+      : 0;
   const chatCoolingDown =
-    typeof state.chatCooldownUntil === "number" &&
-    state.chatCooldownUntil > Date.now();
+    typeof state.chatCooldownUntil === "number" && chatCooldownRemainingMs > 0;
+  const chatCooldownSeconds = chatCoolingDown
+    ? Math.max(1, Math.ceil(chatCooldownRemainingMs / 1000))
+    : 0;
   const chatCooldownAttribute = chatCoolingDown
-    ? ' data-chat-cooldown="true"'
+    ? ` data-chat-cooldown="true" data-chat-cooldown-seconds="${chatCooldownSeconds}"`
     : ' data-chat-cooldown="false"';
   const chatSendDisabled = chatCoolingDown ? " disabled" : "";
+  const chatSendLabel = chatCoolingDown ? `${chatCooldownSeconds}s` : "发送";
 
   return `
     <main class="web-room-shell web-room-workspace" data-view="joined">
@@ -1144,7 +1146,7 @@ function renderJoined(state: WebRoomJoinedState): string {
           <div class="chat-list">${renderChatMessages(state)}</div>
           <div class="chat-input-row"${chatCooldownAttribute}>
             <input name="chat" maxlength="500" />
-            <button type="button" class="secondary-button" data-action="send-chat"${chatSendDisabled}>${renderButtonText("发送", "send")}</button>
+            <button type="button" class="secondary-button" data-action="send-chat"${chatSendDisabled}>${renderButtonText(chatSendLabel, "send")}</button>
             ${renderVoiceToggleButton(state.voice)}
           </div>
         </aside>
@@ -1182,9 +1184,9 @@ function renderJoined(state: WebRoomJoinedState): string {
         <section class="settings-panel" data-region="room-settings" data-panel="settings">
           <div class="panel-heading">
             <h2>${renderPanelTitle("房间设置", "settings")}</h2>
+            ${renderAuthorizationManagementHeaderAction(state)}
           </div>
           <div class="settings-grid">
-            ${renderAuthorizationManagementEntry(state)}
             ${renderProviderPickerPanel(state)}
             ${renderPlaybackError(state)}
           </div>

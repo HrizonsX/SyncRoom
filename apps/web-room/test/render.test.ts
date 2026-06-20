@@ -148,6 +148,8 @@ test("renders the supplied joined-room desktop layout regions", () => {
     html.indexOf("</div>", settingsHeadingStart),
   );
   assert.doesNotMatch(settingsHeadingHtml, /data-settings-heading-action/);
+  assert.match(settingsHeadingHtml, /data-action="authorization-management"/);
+  assert.match(settingsHeadingHtml, /管理已授权平台/);
   const chatHeadingStart = html.indexOf(
     '<div class="panel-heading">',
     html.indexOf('data-panel="chat"'),
@@ -163,7 +165,7 @@ test("renders the supplied joined-room desktop layout regions", () => {
   assert.match(html, /title="Bilibili video title"/);
   assert.ok(settingsIndex >= 0);
   assert.ok(authManagementIndex > settingsIndex);
-  assert.match(html, /data-panel="authorization-entry"/);
+  assert.doesNotMatch(html, /data-panel="authorization-entry"/);
   assert.match(html, /data-action="copy-room-invite"/);
   assert.match(html, /data-action="leave-room"/);
   assert.match(html, /class="button-icon"/);
@@ -443,15 +445,19 @@ test("renders shell boundaries for provider auth and host picker", () => {
   const html = renderWebRoomApp(joinedRoomState);
 
   assert.doesNotMatch(html, /data-panel="provider-auth"/);
-  assert.match(html, /data-panel="authorization-entry"/);
   assert.match(html, /data-action="authorization-management"/);
   assert.match(html, /data-ui-icon="auth"/);
-  const authEntryStart = html.indexOf('data-panel="authorization-entry"');
-  const authEntryHtml = html.slice(
-    authEntryStart,
-    html.indexOf("</section>", authEntryStart),
+  assert.doesNotMatch(html, /data-panel="authorization-entry"/);
+  const settingsHeadingStart = html.indexOf(
+    '<div class="panel-heading">',
+    html.indexOf('data-panel="settings"'),
   );
-  assert.doesNotMatch(authEntryHtml, /<small>/);
+  const settingsHeadingHtml = html.slice(
+    settingsHeadingStart,
+    html.indexOf("</div>", settingsHeadingStart),
+  );
+  assert.match(settingsHeadingHtml, /data-action="authorization-management"/);
+  assert.match(settingsHeadingHtml, /管理已授权平台/);
   assert.match(html, /data-panel="host-picker"/);
   assert.match(html, /data-action="parse-bilibili-url"/);
   assert.match(html, /data-ui-icon="parse"/);
@@ -459,6 +465,10 @@ test("renders shell boundaries for provider auth and host picker", () => {
   assert.match(html, /data-policy-help="proxy"/);
   assert.match(html, /data-policy-help="shared"/);
   assert.match(html, /class="policy-help"/);
+  assert.match(html, /class="policy-help-trigger"/);
+  assert.match(html, /role="tooltip"/);
+  assert.doesNotMatch(html, /<details class="policy-help"/);
+  assert.doesNotMatch(html, /<summary aria-label="proxy 说明">/);
   assert.match(html, /name="bilibiliUrl"/);
   assert.match(html, /placeholder="粘贴视频链接"/);
   const pickerStart = html.indexOf('class="provider-picker-panel"');
@@ -530,12 +540,39 @@ test("renders authorization management as a platform list with Bilibili QR only"
   assert.match(html, /data-auth-host="true"/);
   assert.match(html, /data-auth-method="qr"/);
   assert.match(html, /data-auth-phase="loading"/);
+  assert.match(html, /class="platform-logo platform-logo-bilibili"/);
+  assert.match(html, /class="platform-logo-svg"/);
+  assert.match(html, /aria-label="Bilibili 官方 Logo"/);
   assert.match(html, /data-action="bilibili-login-qr"/);
-  assert.match(html, /data-action="bilibili-logout"/);
+  assert.match(html, /二维码授权/);
+  assert.doesNotMatch(html, /data-action="bilibili-logout"/);
+  assert.doesNotMatch(html, /退出授权/);
   assert.doesNotMatch(html, /data-action="bilibili-login-sms"/);
   assert.doesNotMatch(html, /name="bilibiliPhone"/);
   assert.doesNotMatch(html, /name="bilibiliSmsCode"/);
   assert.doesNotMatch(html, />SMS</);
+});
+
+test("keeps Bilibili QR method hidden until the authorization action starts", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "unauthorized",
+    authPanel: {
+      open: true,
+      method: "qr",
+      phase: "idle",
+    },
+  });
+
+  assert.match(html, /data-platform-id="bilibili"/);
+  assert.match(html, /class="platform-logo platform-logo-bilibili"/);
+  assert.match(html, /class="platform-logo-svg"/);
+  assert.match(html, /aria-label="Bilibili 官方 Logo"/);
+  assert.match(html, /data-action="bilibili-login-qr"/);
+  assert.match(html, />授权<\/span>/);
+  assert.doesNotMatch(html, /class="auth-method auth-method-qr"/);
+  assert.doesNotMatch(html, /auth-qr-placeholder/);
+  assert.doesNotMatch(html, /data-action="bilibili-logout"/);
 });
 
 test("omits text-chat danmaku controls from the chat input", () => {
@@ -679,6 +716,8 @@ test("disables chat send while server cooldown is active", () => {
 
   assert.match(html, /data-chat-cooldown="true"/);
   assert.match(html, /data-action="send-chat" disabled/);
+  assert.match(html, /data-chat-cooldown-seconds="4"/);
+  assert.match(html, />4s<\/span>/);
 });
 
 test("renders direct playback failure with host proxy fallback action", () => {
@@ -723,12 +762,12 @@ test("exposes member-safe authorization state for non-host users", () => {
   });
 
   assert.doesNotMatch(html, /data-region="title-auth"/);
-  assert.match(html, /data-auth-host="false"/);
-  assert.match(html, /data-provider-playback-status="safe"/);
-  assert.match(html, /bilibili/);
-  assert.match(html, /proxy:on/);
-  assert.match(html, /shared:off/);
+  assert.doesNotMatch(html, /data-auth-host="false"/);
+  assert.doesNotMatch(html, /data-panel="authorization-entry"/);
+  assert.doesNotMatch(html, /data-provider-playback-status="safe"/);
+  assert.doesNotMatch(html, /proxy:on|shared:off/);
   assert.doesNotMatch(html, /data-action="bilibili-login"/);
+  assert.doesNotMatch(html, /data-action="authorization-management"/);
   assert.doesNotMatch(html, /data-action="bilibili-logout"/);
   assert.doesNotMatch(html, /data-action="share-provider-item"/);
   assert.doesNotMatch(html, /SESSDATA|Cookie|manifest-1\.mpd/i);

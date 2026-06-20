@@ -233,6 +233,250 @@ test("room service restores owner identity when the owner refreshes during empty
   assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
 });
 
+test("room service keeps chat history in room state for refreshed and new members", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "CHAT01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  currentTime = 1_200;
+
+  await service.appendChatMessageForSession(owner, created.memberToken, {
+    memberId: owner.memberId ?? owner.id,
+    displayName: "Alice",
+    content: "hello",
+    timestamp: currentTime,
+  });
+  currentTime = 1_400;
+  await service.appendSystemChatMessageForRoom(created.room.code, {
+    kind: "system",
+    systemEventType: "member_joined",
+    memberId: owner.memberId ?? owner.id,
+    displayName: "Alice",
+    content: "Alice joined room",
+    timestamp: currentTime,
+  });
+
+  const joiner = createSession("joiner");
+  const joined = await service.joinRoomForSession(
+    joiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const state = await service.getRoomStateForSession(
+    joiner,
+    joined.memberToken,
+    "sync:request",
+  );
+
+  assert.deepEqual(state.chatMessages, [
+    {
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "hello",
+      timestamp: 1_200,
+    },
+    {
+      kind: "system",
+      systemEventType: "member_joined",
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "Alice joined room",
+      timestamp: 1_400,
+    },
+  ]);
+});
+
+test("room service transfers host to next joined member on explicit owner leave", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "HOST01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const firstJoiner = createSession("first-joiner");
+  const firstJoined = await service.joinRoomForSession(
+    firstJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const secondJoiner = createSession("second-joiner");
+  await service.joinRoomForSession(
+    secondJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Carol",
+  );
+
+  currentTime = 2_000;
+  const result = await service.leaveRoomForSession(owner, {
+    reason: "explicit",
+  });
+  const state = await service.getRoomStateForSession(
+    firstJoiner,
+    firstJoined.memberToken,
+    "sync:request",
+  );
+  const persisted = await roomStore.getRoom(created.room.code);
+
+  assert.equal(result.hostTransferred, true);
+  assert.equal(state.hostMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerDisplayName, "Bob");
+  assert.deepEqual(
+    state.members.map((member) => member.id),
+    [firstJoiner.memberId, secondJoiner.memberId],
+  );
+});
+
+test("room service enforces host-managed member permissions", async () => {
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore(),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => "PERM01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  await service.setRoomMemberPermissionForSession(
+    owner,
+    created.memberToken,
+    guest.memberId!,
+    "chat",
+    false,
+  );
+  const state = await service.getRoomStateForSession(
+    owner,
+    created.memberToken,
+    "sync:request",
+  );
+  const guestState = state.members.find(
+    (member) => member.id === guest.memberId,
+  );
+
+  assert.deepEqual(guestState?.permissions, {
+    voice: true,
+    playbackControl: true,
+    chat: false,
+    danmaku: true,
+  });
+  await assert.rejects(
+    () =>
+      service.getRoomStateForSession(guest, joined.memberToken, "chat:message"),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied" &&
+      error.reason === "member_permission_denied",
+  );
+  await service.getRoomStateForSession(
+    guest,
+    joined.memberToken,
+    "danmaku:message",
+  );
+});
+
+test("room service limits member management to the current host", async () => {
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore(),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => "HOST02",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  await assert.rejects(
+    () =>
+      service.setRoomMemberPermissionForSession(
+        guest,
+        joined.memberToken,
+        owner.memberId!,
+        "chat",
+        false,
+      ),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied",
+  );
+
+  const transferred = await service.transferRoomHostForSession(
+    owner,
+    created.memberToken,
+    guest.memberId!,
+  );
+
+  assert.equal(transferred.room.ownerMemberId, guest.memberId);
+  await assert.rejects(
+    () =>
+      service.setRoomMemberPermissionForSession(
+        owner,
+        created.memberToken,
+        guest.memberId!,
+        "chat",
+        false,
+      ),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied",
+  );
+});
+
 test("room service validates voice access with existing room member tokens", async () => {
   const service = createRoomService({
     config: getDefaultSecurityConfig(),

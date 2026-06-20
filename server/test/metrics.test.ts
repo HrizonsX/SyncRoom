@@ -219,55 +219,55 @@ test("metrics collector aggregates web playback and proxy observability with saf
 
   assert.equal(
     rendered.includes(
-      'bili_syncplay_playback_startup_failures_total{provider="bilibili",stage="manifest"} 1',
+      'syncroom_playback_startup_failures_total{provider="bilibili",stage="manifest"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_playback_startup_failures_total{provider="unknown",stage="unknown"} 1',
+      'syncroom_playback_startup_failures_total{provider="unknown",stage="unknown"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_direct_link_playback_total{outcome="success",provider="bilibili",room_code="ROOM01"} 1',
+      'syncroom_direct_link_playback_total{outcome="success",provider="bilibili",room_code="ROOM01"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_direct_link_playback_total{outcome="failure",provider="bilibili",room_code="ROOM01"} 1',
+      'syncroom_direct_link_playback_total{outcome="failure",provider="bilibili",room_code="ROOM01"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_direct_link_playback_total{outcome="proxy_fallback",provider="bilibili",room_code="ROOM01"} 1',
+      'syncroom_direct_link_playback_total{outcome="proxy_fallback",provider="bilibili",room_code="ROOM01"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_member_player_errors_total{browser="chrome",provider="bilibili",stage="decode",system="windows"} 1',
+      'syncroom_member_player_errors_total{browser="chrome",provider="bilibili",stage="decode",system="windows"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_member_player_errors_total{browser="unknown",provider="bilibili",stage="segment",system="unknown"} 1',
+      'syncroom_member_player_errors_total{browser="unknown",provider="bilibili",stage="segment",system="unknown"} 1',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_proxy_traffic_bytes_total{provider="bilibili",room_code="ROOM01"} 3072',
+      'syncroom_proxy_traffic_bytes_total{provider="bilibili",room_code="ROOM01"} 3072',
     ),
     true,
   );
   assert.equal(
     rendered.includes(
-      'bili_syncplay_proxy_requests_total{provider="bilibili",room_code="ROOM01"} 2',
+      'syncroom_proxy_requests_total{provider="bilibili",room_code="ROOM01"} 2',
     ),
     true,
   );

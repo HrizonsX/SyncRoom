@@ -18,6 +18,7 @@ test("security config reads overrides and keeps defaults for missing values", ()
     ALLOWED_ORIGINS: "https://a.example, https://b.example ",
     TRUSTED_PROXY_ADDRESSES: "127.0.0.1, 198.51.100.7 ",
     RATE_LIMIT_SYNC_PING_BURST: "5",
+    RATE_LIMIT_DANMAKU_MESSAGE_PER_5_SECONDS: "12",
   });
 
   assert.deepEqual(config.allowedOrigins, [
@@ -26,6 +27,7 @@ test("security config reads overrides and keeps defaults for missing values", ()
   ]);
   assert.deepEqual(config.trustedProxyAddresses, ["127.0.0.1", "198.51.100.7"]);
   assert.equal(config.rateLimits.syncPingBurst, 5);
+  assert.equal(config.rateLimits.danmakuMessagePer5Seconds, 12);
   assert.equal(config.maxMembersPerRoom, 8);
 });
 

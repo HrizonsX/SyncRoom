@@ -50,6 +50,7 @@ type SecurityConfigFile = {
     playbackUpdateBurst?: number;
     syncRequestPer10Seconds?: number;
     chatMessagePer5Seconds?: number;
+    danmakuMessagePer5Seconds?: number;
     syncPingPerSecond?: number;
     syncPingBurst?: number;
   };

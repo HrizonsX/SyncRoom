@@ -248,6 +248,7 @@ function deserializeSession(fields: Record<string, string>): Session | null {
       playbackUpdate: { tokens: 0, lastRefillAt: 0 },
       syncRequest: { windowStart: 0, count: 0 },
       chatMessage: { windowStart: 0, count: 0 },
+      danmakuMessage: { windowStart: 0, count: 0 },
       syncPing: { tokens: 0, lastRefillAt: 0 },
     },
   };

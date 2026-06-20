@@ -166,6 +166,51 @@ test("sends playback update messages using the shared protocol contract", () => 
   });
 });
 
+test("sends host member management messages", () => {
+  const { client, sent } = createSentMessageRecorder();
+
+  client.setRoomMemberPermission({
+    memberToken: "valid-member-token-123",
+    targetMemberId: "member-2",
+    permission: "chat",
+    allowed: false,
+  });
+  client.kickRoomMember({
+    memberToken: "valid-member-token-123",
+    targetMemberId: "member-2",
+  });
+  client.transferRoomHost({
+    memberToken: "valid-member-token-123",
+    targetMemberId: "member-2",
+  });
+
+  assert.deepEqual(sent, [
+    {
+      type: "room:member-permission:set",
+      payload: {
+        memberToken: "valid-member-token-123",
+        targetMemberId: "member-2",
+        permission: "chat",
+        allowed: false,
+      },
+    },
+    {
+      type: "room:member:kick",
+      payload: {
+        memberToken: "valid-member-token-123",
+        targetMemberId: "member-2",
+      },
+    },
+    {
+      type: "room:host:transfer",
+      payload: {
+        memberToken: "valid-member-token-123",
+        targetMemberId: "member-2",
+      },
+    },
+  ]);
+});
+
 test("sends LiveKit voice access and voice state using existing contracts", () => {
   const { client, sent } = createSentMessageRecorder();
 

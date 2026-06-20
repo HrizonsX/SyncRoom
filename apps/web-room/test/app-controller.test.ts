@@ -444,6 +444,72 @@ test("joins a room with a join token and requests room state after join", () => 
   );
 });
 
+test("starts web clock sync after joining and applies pong metrics", () => {
+  let now = 1_000;
+  const clockSyncIntervals: Array<{
+    callback: () => void;
+    delayMs: number;
+    handle: string;
+  }> = [];
+  const clearedClockSyncIntervals: string[] = [];
+  const { controller, recorder } = createJoinedHostController({
+    now: () => now,
+    setClockSyncInterval: (callback: () => void, delayMs: number) => {
+      const handle = `clock-${clockSyncIntervals.length + 1}`;
+      clockSyncIntervals.push({ callback, delayMs, handle });
+      return handle;
+    },
+    clearClockSyncInterval: (handle: unknown) => {
+      clearedClockSyncIntervals.push(String(handle));
+    },
+  });
+
+  const clockPing = recorder.sockets[0]?.sent.find(
+    (message) => (message as { type?: string }).type === "sync:ping",
+  );
+  assert.deepEqual(clockPing, {
+    type: "sync:ping",
+    payload: {
+      clientSendTime: 1_000,
+    },
+  });
+  assert.equal(clockSyncIntervals.length, 1);
+  assert.equal(clockSyncIntervals[0]?.delayMs, 15_000);
+
+  now = 1_250;
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "sync:pong",
+      payload: {
+        clientSendTime: 1_000,
+        serverReceiveTime: 1_120,
+        serverSendTime: 1_130,
+      },
+    }),
+  );
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.rttMs, 240);
+  assert.equal(state.clockOffsetMs, 0);
+
+  now = 16_000;
+  clockSyncIntervals[0]?.callback();
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "sync:ping",
+    payload: {
+      clientSendTime: 16_000,
+    },
+  });
+
+  controller.leaveRoom();
+  assert.deepEqual(clearedClockSyncIntervals, ["clock-1"]);
+});
+
 test("restores a persisted web room session on refresh", () => {
   const storage = new MemoryStorage();
   const recorder = createSocketRecorder();
@@ -653,6 +719,19 @@ test("manages host Bilibili authorization panel local states", () => {
     method: "qr",
     phase: "loading",
     message: "Bilibili QR authorization request is pending.",
+  });
+
+  controller.collapseBilibiliAuth();
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.authStatus, "unauthorized");
+  assert.deepEqual(state.authPanel, {
+    open: true,
+    method: "qr",
+    phase: "idle",
   });
 
   controller.logoutBilibiliAuth();
@@ -1064,7 +1143,11 @@ test("manages host Bilibili picker local parse and policy states", () => {
     ],
   });
   controller.selectProviderItem("cid-1");
-  controller.setProviderPlaybackPolicy({ proxy: false, shared: true });
+  controller.setProviderPlaybackPolicy({
+    proxy: false,
+    shared: true,
+    url: "https://www.bilibili.com/video/BV1TEST",
+  });
   state = controller.getState();
   assert.equal(state.view, "joined");
   if (state.view !== "joined") {
@@ -1072,8 +1155,53 @@ test("manages host Bilibili picker local parse and policy states", () => {
   }
   assert.equal(state.providerPicker?.status, "ready");
   assert.equal(state.providerPicker?.selectedItemId, "cid-1");
+  assert.equal(
+    state.providerPicker?.url,
+    "https://www.bilibili.com/video/BV1TEST",
+  );
   assert.equal(state.providerPicker?.proxy, false);
   assert.equal(state.providerPicker?.shared, true);
+});
+
+test("keeps a typed provider URL when playback policy changes before parsing", () => {
+  const recorder = createSocketRecorder();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  controller.setProviderPlaybackPolicy({
+    proxy: false,
+    shared: true,
+    url: "https://www.bilibili.com/video/BV1PENDING",
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(
+    state.providerPicker?.url,
+    "https://www.bilibili.com/video/BV1PENDING",
+  );
 });
 
 test("loads Bilibili parse results from the provider API", async () => {
@@ -1252,6 +1380,64 @@ test("sends private room danmaku with the current playback time", () => {
       color: "#00ccff",
     },
   });
+});
+
+test("limits private room danmaku sends to one per second", () => {
+  let now = 10_000;
+  const timers: Array<{ callback: () => void; delayMs: number }> = [];
+  const { controller, recorder } = createJoinedHostController({
+    now: () => now,
+    setAuthPollTimeout: (callback: () => void, delayMs: number) => {
+      timers.push({ callback, delayMs });
+      return timers.length;
+    },
+    clearAuthPollTimeout: () => {},
+  });
+
+  controller.sendDanmaku("first", { videoTime: 1 });
+  controller.sendDanmaku("second", { videoTime: 2 });
+
+  assert.equal(
+    recorder.sockets[0]?.sent.filter(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "danmaku:message",
+    ).length,
+    1,
+  );
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.danmakuCooldownUntil, 11_000);
+  assert.deepEqual(
+    timers.map((timer) => timer.delayMs),
+    [1_000],
+  );
+
+  now = 11_000;
+  timers[0]?.callback();
+  controller.sendDanmaku("third", { videoTime: 3 });
+
+  assert.equal(
+    recorder.sockets[0]?.sent.filter(
+      (message) =>
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === "danmaku:message",
+    ).length,
+    2,
+  );
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.danmakuCooldownUntil, 12_000);
 });
 
 test("connects the LiveKit voice runtime after access is granted", async () => {
@@ -1641,6 +1827,8 @@ test("shows actionable parse guidance when shared playback needs authorization",
     throw new Error("Expected joined state.");
   }
   assert.equal(state.providerPicker?.status, "failed");
+  assert.match(state.diagnostics.at(-1) ?? "", /provider API picker failed/);
+  assert.match(state.diagnostics.at(-1) ?? "", /provider_auth_required/);
   assert.equal(
     state.providerPicker?.errorMessage,
     "请先完成 Bilibili 授权，或关闭 shared 后再解析。",
@@ -1694,9 +1882,13 @@ test("shares the selected Bilibili item with the final proxy and shared policy",
       video: {
         videoId: "BV1xx411c7mD",
         url: "https://www.bilibili.com/video/BV1xx411c7mD",
-        title: "Part 1",
+        title: "Bilibili video",
         provider: {
           ...providerPlaybackDescriptor,
+          item: {
+            ...providerPlaybackDescriptor.item,
+            title: "Bilibili video",
+          },
           policy: {
             proxy: true,
             shared: false,
@@ -1706,6 +1898,61 @@ test("shares the selected Bilibili item with the final proxy and shared policy",
     },
   });
   assert.doesNotMatch(JSON.stringify(shared), /SESSDATA|Cookie/i);
+});
+
+test("shares provider videos with the parsed video title after selecting a part", () => {
+  const recorder = createSocketRecorder();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  controller.setProviderPickerResults({
+    message: "Anthropic史：从OpenAI叛逃者，到估值万亿的AI帝国",
+    items: [
+      {
+        itemId: "BV1xx411c7mD:cid-987654",
+        title: "anthropic_成片_白板版",
+        kind: "part",
+        qualityLabel: "360P",
+        sourceType: "mp4",
+        providerDescriptor: {
+          ...providerPlaybackDescriptor,
+          title: "Anthropic史：从OpenAI叛逃者，到估值万亿的AI帝国",
+          item: {
+            ...providerPlaybackDescriptor.item,
+            title: "anthropic_成片_白板版",
+          },
+        },
+      },
+    ],
+  });
+  controller.shareSelectedProviderItem();
+
+  const shared = recorder.sockets[0]?.sent.at(-1) as
+    | { payload?: { video?: { title?: string } } }
+    | undefined;
+  assert.equal(
+    shared?.payload?.video?.title,
+    "Anthropic史：从OpenAI叛逃者，到估值万亿的AI帝国",
+  );
 });
 
 test("shares the selected provider quality as the default playback candidate", () => {
@@ -1924,6 +2171,9 @@ test("switches direct-link failures back to proxy playback for the selected item
     message: "Direct link segment failed.",
     canUseProxyFallback: true,
   });
+  assert.match(state.diagnostics.at(-1) ?? "", /direct playback failed/);
+  assert.match(state.diagnostics.at(-1) ?? "", /segment/);
+  assert.match(state.diagnostics.at(-1) ?? "", /Direct link segment failed/);
   assert.deepEqual(recorder.sockets[0]?.sent.slice(-2), [
     {
       type: "playback:report",

@@ -2,6 +2,8 @@
 
 This guide covers deployment and operations for the `apps/web-room/` client, temporary Bilibili authorization, and `proxy/shared` playback policy.
 
+For user-facing room behavior, see the [web room feature guide](../features/web-room.md).
+
 ## Deployment Mode
 
 The web room is a standalone static app. Source lives in `apps/web-room/`, and build output is written to `apps/web-room/dist/`:
@@ -17,7 +19,13 @@ The root build also includes the web room:
 npm run build
 ```
 
-The Node room server does not serve these static files directly. Host `apps/web-room/dist/` through Nginx, Caddy, object storage, or a CDN, and point the web app at a browser-reachable SyncRoom server URL such as `wss://sync.example.com`.
+The Node room server does not serve these static files directly, and `@syncroom/web-room` does not include a built-in dev server script. Host `apps/web-room/dist/` through a static file server, Nginx, Caddy, object storage, or a CDN, and point the web app at a browser-reachable SyncRoom server URL such as `ws://localhost:8787` locally or `wss://sync.example.com` in production.
+
+Local static hosting example:
+
+```bash
+npx serve apps/web-room/dist -l 4173
+```
 
 ## Server URL And Origin
 
@@ -39,7 +47,7 @@ ALLOWED_ORIGINS=https://room.example.com,chrome-extension://<extension-id>
 For local static testing:
 
 ```bash
-ALLOWED_ORIGINS=http://localhost:3000,chrome-extension://<extension-id>
+ALLOWED_ORIGINS=http://localhost:4173,chrome-extension://<extension-id>
 ```
 
 For production HTTPS pages, use a `wss://` server URL. If a reverse proxy splits paths, route `/api/providers/`, `/proxy/`, and WebSocket upgrades to the same SyncRoom room node.
@@ -54,7 +62,7 @@ Bilibili credentials are stored only in the temporary server-side auth store:
 
 The room-owner offline TTL defaults to `600000` ms, or 10 minutes. The default is currently code-level via `DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS`; this release does not expose a dedicated environment variable override.
 
-Only the current room host can start, poll, inspect, parse with, or clear Bilibili authorization. QR login and SMS login are supported in the first release.
+Only the current room host can start, poll, inspect, parse with, or clear Bilibili authorization. The web room UI exposes QR login for Bilibili authorization in this release.
 
 Authorization is cleared when the host logs out, leaves the room, the room is destroyed or expires, the server restarts, or the owner remains offline past the TTL.
 
@@ -72,11 +80,11 @@ The authoritative first-release path is `proxy=true`. When direct-link playback 
 
 Low-cardinality metrics include:
 
-- `bili_syncplay_playback_startup_failures_total`
-- `bili_syncplay_direct_link_playback_total`
-- `bili_syncplay_member_player_errors_total`
-- `bili_syncplay_proxy_traffic_bytes_total`
-- `bili_syncplay_proxy_requests_total`
+- `syncroom_playback_startup_failures_total`
+- `syncroom_direct_link_playback_total`
+- `syncroom_member_player_errors_total`
+- `syncroom_proxy_traffic_bytes_total`
+- `syncroom_proxy_requests_total`
 
 Admin audit records safe host actions such as selecting video, changing source, and changing `proxy/shared` policy. It does not store per-segment events, cookies, headers, or raw upstream signed URLs.
 

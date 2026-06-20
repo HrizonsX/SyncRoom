@@ -2,6 +2,7 @@ import type { RoomCode } from "./common.js";
 import type {
   DanmakuMode,
   PlaybackState,
+  RoomMemberPermissionName,
   SharedVideo,
   VideoProviderId,
   WebPlaybackBrowserLabel,
@@ -115,6 +116,32 @@ export interface DanmakuMessage {
   };
 }
 
+export interface SetRoomMemberPermissionMessage {
+  type: "room:member-permission:set";
+  payload: {
+    memberToken: string;
+    targetMemberId: string;
+    permission: RoomMemberPermissionName;
+    allowed: boolean;
+  };
+}
+
+export interface KickRoomMemberMessage {
+  type: "room:member:kick";
+  payload: {
+    memberToken: string;
+    targetMemberId: string;
+  };
+}
+
+export interface TransferRoomHostMessage {
+  type: "room:host:transfer";
+  payload: {
+    memberToken: string;
+    targetMemberId: string;
+  };
+}
+
 export interface PlaybackReportMessage {
   type: "playback:report";
   payload: {
@@ -140,4 +167,7 @@ export type ClientMessage =
   | ClientVoiceStateMessage
   | ChatMessage
   | DanmakuMessage
+  | SetRoomMemberPermissionMessage
+  | KickRoomMemberMessage
+  | TransferRoomHostMessage
   | PlaybackReportMessage;

@@ -6,6 +6,7 @@ import type {
   WebRoomSystemChatEventType,
   WebRoomThemeMode,
 } from "./render.js";
+import { readMemberPermissions } from "./member-permissions.js";
 import {
   choosePreferredPlaybackCandidate,
   selectPlaybackAdapter,
@@ -25,6 +26,9 @@ type InitialJoinedStateInput = {
 };
 
 type RecordLike = Record<string, unknown>;
+const ROOM_CHAT_HISTORY_LIMIT = 200;
+const CLOCK_SAMPLE_SMOOTHING_PREVIOUS_WEIGHT = 0.7;
+const CLOCK_SAMPLE_SMOOTHING_CURRENT_WEIGHT = 0.3;
 
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null;
@@ -44,14 +48,90 @@ function appendDiagnostic(state: WebRoomJoinedState, item: string): string[] {
   return [...state.diagnostics, item].slice(-80);
 }
 
+function smoothClockMetric(
+  previousValue: number | null | undefined,
+  sampleValue: number,
+): number {
+  return previousValue === null || previousValue === undefined
+    ? sampleValue
+    : Math.round(
+        previousValue * CLOCK_SAMPLE_SMOOTHING_PREVIOUS_WEIGHT +
+          sampleValue * CLOCK_SAMPLE_SMOOTHING_CURRENT_WEIGHT,
+      );
+}
+
 function appendChatMessage(
   state: WebRoomJoinedState,
   message: WebRoomChatMessage,
 ): WebRoomChatMessage[] {
-  return [...state.chatMessages, message].slice(-200);
+  return [...state.chatMessages, message].slice(-ROOM_CHAT_HISTORY_LIMIT);
+}
+
+function getChatMessageKey(message: WebRoomChatMessage): string {
+  return [
+    message.kind ?? "user",
+    message.systemEventType ?? "",
+    message.memberId,
+    message.timestamp,
+    message.content,
+  ].join(":");
+}
+
+function readRoomChatHistory(value: unknown): WebRoomChatMessage[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .filter(isRecord)
+    .map((item) => {
+      const timestamp = getFiniteNumber(item.timestamp);
+      const kind: WebRoomChatMessage["kind"] =
+        item.kind === "system" ? "system" : undefined;
+      const systemEventType: WebRoomSystemChatEventType | undefined =
+        item.systemEventType === "member_joined" ||
+        item.systemEventType === "member_left" ||
+        item.systemEventType === "voice_unmuted" ||
+        item.systemEventType === "voice_muted"
+          ? item.systemEventType
+          : undefined;
+      return {
+        ...(kind ? { kind } : {}),
+        ...(systemEventType ? { systemEventType } : {}),
+        memberId: getString(item.memberId),
+        displayName: getString(item.displayName, "匿名成员"),
+        content: getString(item.content),
+        timestamp: timestamp ?? Date.now(),
+      };
+    })
+    .filter(
+      (message) =>
+        message.memberId.length > 0 &&
+        message.content.trim().length > 0 &&
+        Number.isFinite(message.timestamp),
+    )
+    .slice(-ROOM_CHAT_HISTORY_LIMIT);
+}
+
+function mergeChatMessages(
+  currentMessages: WebRoomChatMessage[],
+  incomingMessages: WebRoomChatMessage[] | undefined,
+): WebRoomChatMessage[] {
+  if (!incomingMessages) {
+    return currentMessages;
+  }
+
+  const merged = new Map<string, WebRoomChatMessage>();
+  for (const message of [...currentMessages, ...incomingMessages]) {
+    merged.set(getChatMessageKey(message), message);
+  }
+  return Array.from(merged.values())
+    .sort((left, right) => left.timestamp - right.timestamp)
+    .slice(-ROOM_CHAT_HISTORY_LIMIT);
 }
 
 const CHAT_SUCCESS_COOLDOWN_MS = 5_000;
+const DANMAKU_SUCCESS_COOLDOWN_MS = 1_000;
 
 const SYSTEM_CHAT_SUFFIX: Record<WebRoomSystemChatEventType, string> = {
   member_joined: "加入了房间",
@@ -177,6 +257,8 @@ export function createInitialJoinedState(
     announcement: undefined,
     videoTitle: undefined,
     authStatus: "unauthorized",
+    clockOffsetMs: null,
+    rttMs: null,
     voice: createInitialWebRoomVoiceState(),
     members: [{ id: input.currentMemberId, name: input.displayName }],
     chatMessages: [],
@@ -196,8 +278,10 @@ function applyMemberJoined(
     return state;
   }
 
+  const memberPermissions = readMemberPermissions(member.permissions);
   const nextMember = {
     id: memberId,
+    ...(memberPermissions ? { permissions: memberPermissions } : {}),
     name: getString(member.name, "匿名成员"),
   };
   const nextState = {
@@ -296,6 +380,23 @@ function getProviderPlaybackStatus(
   };
 }
 
+function getSharedVideoTitle(
+  sharedVideo: RecordLike | null,
+  fallback?: string,
+): string | undefined {
+  if (!sharedVideo) {
+    return fallback;
+  }
+
+  const provider = isRecord(sharedVideo.provider) ? sharedVideo.provider : null;
+  const providerTitle = getString(provider?.title).trim();
+  if (providerTitle.length > 0) {
+    return providerTitle;
+  }
+
+  return getString(sharedVideo.title, fallback);
+}
+
 function getProviderPlaybackSource(
   sharedVideo: RecordLike | null,
 ): PlaybackSource | undefined {
@@ -360,28 +461,48 @@ function applyRoomState(
   const members = Array.isArray(payload.members)
     ? payload.members
         .filter(isRecord)
-        .map((member) => ({
-          id: getString(member.id),
-          name: getString(member.name, "匿名成员"),
-        }))
+        .map((member) => {
+          const permissions = readMemberPermissions(member.permissions);
+          return {
+            id: getString(member.id),
+            ...(permissions ? { permissions } : {}),
+            name: getString(member.name, "匿名成员"),
+          };
+        })
         .filter((member) => member.id.length > 0)
     : state.members;
+  const playback = readPlaybackState(payload.playback);
+  const playbackSource = getProviderPlaybackSource(sharedVideo);
+  const chatMessages = mergeChatMessages(
+    state.chatMessages,
+    readRoomChatHistory(payload.chatMessages),
+  );
 
   return {
     ...state,
     roomCode: getString(payload.roomCode, state.roomCode),
     hostMemberId: getString(payload.hostMemberId, state.hostMemberId),
     videoTitle: sharedVideo
-      ? getString(sharedVideo.title, state.videoTitle)
+      ? getSharedVideoTitle(sharedVideo, state.videoTitle)
       : state.videoTitle,
     providerPlaybackStatus: getProviderPlaybackStatus(sharedVideo),
-    playbackSource: getProviderPlaybackSource(sharedVideo),
+    playbackSource,
     playbackUrl: sharedVideo
       ? getString(sharedVideo.url) || undefined
       : undefined,
-    playback: readPlaybackState(payload.playback),
+    playback,
     members,
-    diagnostics: appendDiagnostic(state, "room:state applied"),
+    chatMessages,
+    diagnostics: appendDiagnostic(
+      state,
+      [
+        "room:state applied",
+        `members:${members.length}`,
+        `chat:${chatMessages.length}`,
+        `source:${playbackSource ? `${playbackSource.engine}/${playbackSource.sourceType}` : "-"}`,
+        `playback:${playback?.playState ?? "-"}`,
+      ].join(" "),
+    ),
   };
 }
 
@@ -449,29 +570,46 @@ function getDanmakuColor(value: unknown): string {
 function applyDanmakuMessage(
   state: WebRoomJoinedState,
   payload: RecordLike,
+  currentTime: number,
 ): WebRoomJoinedState {
+  const timestamp =
+    typeof payload.timestamp === "number" && Number.isFinite(payload.timestamp)
+      ? payload.timestamp
+      : currentTime;
+  const memberId = getString(payload.memberId);
+  const nextCooldownUntil =
+    memberId === state.currentMemberId
+      ? Math.max(
+          state.danmakuCooldownUntil ?? 0,
+          currentTime + DANMAKU_SUCCESS_COOLDOWN_MS,
+        )
+      : state.danmakuCooldownUntil;
   const videoTime =
     typeof payload.videoTime === "number" &&
     Number.isFinite(payload.videoTime) &&
     payload.videoTime >= 0
       ? payload.videoTime
       : 0;
+  const nextSequence = (state.danmakuSequence ?? 0) + 1;
   return {
     ...state,
+    danmakuSequence: nextSequence,
+    ...(typeof nextCooldownUntil === "number"
+      ? { danmakuCooldownUntil: nextCooldownUntil }
+      : {}),
     danmakuMessages: [
       ...state.danmakuMessages,
       {
-        memberId: getString(payload.memberId),
+        renderKey: [state.roomCode, nextSequence, memberId, timestamp].join(
+          ":",
+        ),
+        memberId,
         displayName: getString(payload.displayName, "匿名成员"),
         content: getString(payload.content),
         videoTime,
         mode: getDanmakuMode(payload.mode),
         color: getDanmakuColor(payload.color),
-        timestamp:
-          typeof payload.timestamp === "number" &&
-          Number.isFinite(payload.timestamp)
-            ? payload.timestamp
-            : Date.now(),
+        timestamp,
       },
     ].slice(-200),
     diagnostics: appendDiagnostic(state, "danmaku:message applied"),
@@ -544,13 +682,76 @@ function applyError(
     return {
       ...state,
       chatCooldownUntil: currentTime + Math.max(0, payload.retryAfterMs),
-      diagnostics: appendDiagnostic(state, "chat cooldown applied"),
+      diagnostics: appendDiagnostic(
+        state,
+        [
+          "chat cooldown applied",
+          getString(payload.code),
+          getString(payload.message),
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ),
     };
   }
 
+  if (
+    payload.code === "chat_rate_limited" &&
+    payload.messageType === "danmaku:message" &&
+    typeof payload.retryAfterMs === "number" &&
+    Number.isFinite(payload.retryAfterMs)
+  ) {
+    return {
+      ...state,
+      danmakuCooldownUntil: currentTime + Math.max(0, payload.retryAfterMs),
+      diagnostics: appendDiagnostic(state, "danmaku cooldown applied"),
+    };
+  }
+
+  const details = [
+    "error received",
+    getString(payload.code),
+    getString(payload.messageType, messageType),
+    getString(payload.message),
+  ].filter(Boolean);
+
   return {
     ...state,
-    diagnostics: appendDiagnostic(state, `${messageType} received`),
+    diagnostics: appendDiagnostic(state, details.join(" ")),
+  };
+}
+
+function applySyncPong(
+  state: WebRoomJoinedState,
+  payload: RecordLike,
+  currentTime: number,
+): WebRoomJoinedState {
+  const clientSendTime = getFiniteNumber(payload.clientSendTime);
+  const serverReceiveTime = getFiniteNumber(payload.serverReceiveTime);
+  const serverSendTime = getFiniteNumber(payload.serverSendTime);
+  if (
+    clientSendTime === undefined ||
+    serverReceiveTime === undefined ||
+    serverSendTime === undefined
+  ) {
+    return state;
+  }
+
+  const sampleRtt =
+    currentTime - clientSendTime - (serverSendTime - serverReceiveTime);
+  const sampleOffset =
+    (serverReceiveTime - clientSendTime + (serverSendTime - currentTime)) / 2;
+  const rttMs = smoothClockMetric(state.rttMs, sampleRtt);
+  const clockOffsetMs = smoothClockMetric(state.clockOffsetMs, sampleOffset);
+
+  return {
+    ...state,
+    rttMs,
+    clockOffsetMs,
+    diagnostics: appendDiagnostic(
+      state,
+      `sync:pong applied offset=${clockOffsetMs}ms rtt=${rttMs}ms`,
+    ),
   };
 }
 
@@ -572,13 +773,15 @@ export function applyServerMessage(
     case "chat:message":
       return applyChatMessage(state, payload, options.now?.() ?? Date.now());
     case "danmaku:message":
-      return applyDanmakuMessage(state, payload);
+      return applyDanmakuMessage(state, payload, options.now?.() ?? Date.now());
     case "room:member-joined":
       return applyMemberJoined(state, payload, options.now?.() ?? Date.now());
     case "room:member-left":
       return applyMemberLeft(state, payload, options.now?.() ?? Date.now());
     case "voice:state":
       return applyVoiceState(state, payload, options.now?.() ?? Date.now());
+    case "sync:pong":
+      return applySyncPong(state, payload, options.now?.() ?? Date.now());
     case "voice:access-granted":
     case "error":
       return message.type === "error"

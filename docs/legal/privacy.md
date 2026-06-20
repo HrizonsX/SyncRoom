@@ -52,7 +52,7 @@ LiveKit is used only for room voice. It is not used to distribute the main share
 
 ### 1.6 Temporary Video Site Authorization
 
-When a web room host explicitly uses Bilibili QR or SMS login, the server may temporarily store credential material required for Bilibili API requests, such as cookies, CSRF values, or equivalent tokens. These credentials are kept only in temporary server-side authorization state for the host's room and provider playback flow.
+When a web room host explicitly uses Bilibili QR authorization, the server may temporarily store credential material required for Bilibili API requests, such as cookies, CSRF values, or equivalent tokens. These credentials are kept only in temporary server-side authorization state for the host's room and provider playback flow.
 
 Temporary provider credentials are not written to durable room storage, Admin pages, audit logs, error responses, or member-visible payloads. Room members do not receive the host's Bilibili credentials.
 

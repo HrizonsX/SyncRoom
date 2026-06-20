@@ -8,6 +8,8 @@ export const ERROR_CODES = [
   "room_not_found",
   "join_token_invalid",
   "member_token_invalid",
+  "member_permission_denied",
+  "member_kicked",
   "not_in_room",
   "rate_limited",
   "invalid_message",

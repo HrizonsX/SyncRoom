@@ -184,6 +184,7 @@ export function createWebRoomPlaybackController(
   let boundSyncUrl: string | undefined;
   let suppressLocalEventsUntil = 0;
   let syncGeneration = 0;
+  let needsPlaybackHydration = true;
 
   function getNow(): number {
     return options.now?.() ?? Date.now();
@@ -250,6 +251,7 @@ export function createWebRoomPlaybackController(
     async sync(root: ParentNode, state: WebRoomState): Promise<void> {
       const generation = ++syncGeneration;
       if (state.view !== "joined" || !state.playbackSource) {
+        needsPlaybackHydration = true;
         disposePlaybackBinding();
         await elementController.clear();
         return;
@@ -259,6 +261,7 @@ export function createWebRoomPlaybackController(
         '[data-playback-video="true"]',
       );
       if (!video) {
+        needsPlaybackHydration = true;
         disposePlaybackBinding();
         await elementController.clear();
         return;
@@ -279,6 +282,9 @@ export function createWebRoomPlaybackController(
       if (generation !== syncGeneration) {
         return;
       }
+      if (loadedSource) {
+        needsPlaybackHydration = true;
+      }
 
       if (!isEventedMediaElement(video)) {
         disposePlaybackBinding();
@@ -293,14 +299,17 @@ export function createWebRoomPlaybackController(
 
       suppressLocalEventsUntil = getNow() + 500;
       try {
-        await applyRemotePlaybackState({
+        const result = await applyRemotePlaybackState({
           media: video,
           localMemberId: state.currentMemberId,
           currentUrl,
           playback: state.playback,
-          allowLocalEcho: loadedSource,
+          allowLocalEcho: loadedSource || needsPlaybackHydration,
           now: options.now,
         });
+        if (result.applied || result.reason !== "url_mismatch") {
+          needsPlaybackHydration = false;
+        }
       } catch (error) {
         if (generation === syncGeneration) {
           options.onPlaybackError?.(error, state.playbackSource);

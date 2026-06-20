@@ -2,8 +2,14 @@ import type {
   DanmakuMode,
   PlaybackState,
   ProviderPlaybackDescriptor,
+  RoomMemberPermissionName,
+  RoomMemberPermissions,
 } from "@syncroom/protocol";
 import { formatRoomJoinInvite } from "./actions.js";
+import {
+  getEffectiveMemberPermissions,
+  isMemberPermissionAllowed,
+} from "./member-permissions.js";
 import type { PlaybackSource } from "./playback-adapter.js";
 import type { WebRoomVoiceState } from "./voice-state.js";
 
@@ -30,6 +36,7 @@ export type WebRoomThemeMode = "light" | "dark";
 export type WebRoomMember = {
   id: string;
   name: string;
+  permissions?: RoomMemberPermissions;
 };
 
 export type WebRoomSystemChatEventType =
@@ -48,6 +55,7 @@ export type WebRoomChatMessage = {
 };
 
 export type WebRoomDanmakuMessage = {
+  renderKey?: string;
   memberId: string;
   displayName: string;
   content: string;
@@ -161,6 +169,8 @@ export type WebRoomJoinedState = {
   announcement?: string;
   videoTitle?: string;
   authStatus: WebRoomAuthStatus;
+  clockOffsetMs?: number | null;
+  rttMs?: number | null;
   voice: WebRoomVoiceState;
   authPanel?: WebRoomAuthPanelState;
   providerPicker?: WebRoomProviderPickerState;
@@ -172,7 +182,9 @@ export type WebRoomJoinedState = {
   members: WebRoomMember[];
   chatMessages: WebRoomChatMessage[];
   danmakuMessages: WebRoomDanmakuMessage[];
+  danmakuSequence?: number;
   chatCooldownUntil?: number;
+  danmakuCooldownUntil?: number;
   diagnostics: string[];
 };
 
@@ -185,6 +197,22 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function getCurrentMember(
+  state: WebRoomJoinedState,
+): WebRoomMember | undefined {
+  return state.members.find((member) => member.id === state.currentMemberId);
+}
+
+function canCurrentMember(
+  state: WebRoomJoinedState,
+  permission: RoomMemberPermissionName,
+): boolean {
+  if (state.currentMemberId === state.hostMemberId) {
+    return true;
+  }
+  return isMemberPermissionAllowed(getCurrentMember(state), permission);
 }
 
 function renderWebRoomBrand(className: string): string {
@@ -214,6 +242,7 @@ type UiIconName =
   | "create"
   | "server"
   | "server-url"
+  | "announcement"
   | "chat"
   | "room-info"
   | "settings"
@@ -270,6 +299,10 @@ function renderIconSvg(
       <path d="M2 12h20"></path>
       <path d="M12 2a15 15 0 0 1 0 20"></path>
       <path d="M12 2a15 15 0 0 0 0 20"></path>
+    `,
+    announcement: `
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"></path>
+      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
     `,
     chat: `
       <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"></path>
@@ -410,7 +443,10 @@ function renderAnnouncementStrip(state: WebRoomJoinedState): string {
   return `
     <section class="announcement-strip" data-region="announcement">
       ${renderWebRoomBrand("announcement-brand")}
-      <span class="announcement-text">${escapeHtml(announcement)}</span>
+      <span class="announcement-message">
+        ${renderUiIcon("announcement", "announcement-icon")}
+        <span class="announcement-text">${escapeHtml(announcement)}</span>
+      </span>
       ${renderThemeToggle(themeMode)}
     </section>
   `;
@@ -421,6 +457,10 @@ function getSafeDanmakuColor(value: string): string {
 }
 
 function getDanmakuMessageKey(message: WebRoomDanmakuMessage): string {
+  if (message.renderKey?.trim()) {
+    return message.renderKey;
+  }
+
   return [
     message.memberId,
     message.timestamp,
@@ -483,7 +523,7 @@ function renderDanmakuLayer(state: WebRoomJoinedState): string {
       `;
     })
     .join("");
-  return `<div class="danmaku-layer" data-danmaku-layer="true" data-danmaku-paused="${paused}" aria-hidden="true">${items}</div>`;
+  return `<div class="danmaku-layer" data-danmaku-layer="true" data-danmaku-paused="${paused}" noautohide aria-hidden="true">${items}</div>`;
 }
 
 function renderConnectionState(state: WebRoomConnectionState): string {
@@ -514,7 +554,8 @@ function renderPlaybackVideo(source: PlaybackSource | undefined): string {
   `;
 }
 
-function renderPlayerDanmakuInlineControls(): string {
+function renderPlayerDanmakuInlineControls(canSendDanmaku: boolean): string {
+  const disabled = canSendDanmaku ? "" : " disabled";
   return `
                 <div class="player-danmaku-inline" data-player-danmaku-controls="inline">
                   <input
@@ -523,15 +564,17 @@ function renderPlayerDanmakuInlineControls(): string {
                     name="playerDanmaku"
                     maxlength="120"
                     autocomplete="off"
+                    ${disabled}
                     placeholder="发弹幕"
                     aria-label="发送弹幕"
                   />
-                  ${renderPlayerDanmakuSendButton()}
+                  ${renderPlayerDanmakuSendButton(canSendDanmaku)}
                 </div>
                 <button
                   type="button"
                   class="player-danmaku-toggle"
                   data-action="toggle-player-danmaku"
+                  ${disabled}
                   aria-label="发弹幕"
                   aria-controls="player-danmaku-panel"
                   aria-expanded="false"
@@ -539,12 +582,14 @@ function renderPlayerDanmakuInlineControls(): string {
   `;
 }
 
-function renderPlayerDanmakuSendButton(): string {
+function renderPlayerDanmakuSendButton(canSendDanmaku: boolean): string {
+  const disabled = canSendDanmaku ? "" : " disabled";
   return `
                   <button
                     type="button"
                     class="player-danmaku-send"
                     data-action="send-player-danmaku"
+                    ${disabled}
                     aria-label="发送弹幕"
                   >
                     <svg class="player-danmaku-send-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -567,7 +612,8 @@ function renderPlayerVideoTitle(title: string | undefined): string {
   `;
 }
 
-function renderPlayerDanmakuPopover(): string {
+function renderPlayerDanmakuPopover(canSendDanmaku: boolean): string {
+  const disabled = canSendDanmaku ? "" : " disabled";
   return `
               <div
                 id="player-danmaku-panel"
@@ -582,10 +628,11 @@ function renderPlayerDanmakuPopover(): string {
                   name="playerDanmaku"
                   maxlength="120"
                   autocomplete="off"
+                  ${disabled}
                   placeholder="发弹幕"
                   aria-label="发送弹幕"
                 />
-                ${renderPlayerDanmakuSendButton()}
+                ${renderPlayerDanmakuSendButton(canSendDanmaku)}
               </div>
   `;
 }
@@ -593,7 +640,7 @@ function renderPlayerDanmakuPopover(): string {
 function renderPlayerVolumeControl(): string {
   return `
                 <div class="player-volume-control">
-                  <media-mute-button aria-label="音量"></media-mute-button>
+                  <media-mute-button notooltip aria-label="音量"></media-mute-button>
                   <div class="player-volume-popover" aria-label="音量">
                     <div class="player-volume-range-frame">
                       <media-volume-range></media-volume-range>
@@ -603,24 +650,50 @@ function renderPlayerVolumeControl(): string {
   `;
 }
 
+function renderPlayerTimePair(): string {
+  return `
+                <span class="player-time-pair" aria-label="当前播放时长 / 视频总时长">
+                  <media-time-display notoggle></media-time-display>
+                  <span class="player-time-separator" aria-hidden="true">/</span>
+                  <media-duration-display></media-duration-display>
+                </span>
+  `;
+}
+
 function renderPlayerSurface(state: WebRoomJoinedState): string {
   const isEmpty = state.playbackSource ? "false" : "true";
-  const timeRangeDisabled = state.playbackSource ? "" : " disabled";
+  const hasPlaybackSource = Boolean(state.playbackSource);
+  const canControlPlayback =
+    hasPlaybackSource && canCurrentMember(state, "playbackControl");
+  const danmakuCooldownRemainingMs =
+    typeof state.danmakuCooldownUntil === "number"
+      ? state.danmakuCooldownUntil - Date.now()
+      : 0;
+  const danmakuCoolingDown =
+    typeof state.danmakuCooldownUntil === "number" &&
+    danmakuCooldownRemainingMs > 0;
+  const danmakuCooldownSeconds = danmakuCoolingDown
+    ? Math.max(1, Math.ceil(danmakuCooldownRemainingMs / 1000))
+    : 0;
+  const canSendDanmaku =
+    canCurrentMember(state, "danmaku") && !danmakuCoolingDown;
+  const playerDisabled = canControlPlayback ? "" : " disabled";
+  const timeRangeDisabled = canControlPlayback ? "" : " disabled";
   return `
-            <media-controller class="player-media-controller" data-player-empty="${isEmpty}">
+            <media-controller class="player-media-controller" fullscreenelement="app" data-player-empty="${isEmpty}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
               ${renderPlaybackVideo(state.playbackSource)}
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}
-              ${renderPlayerDanmakuPopover()}
+              ${renderPlayerDanmakuPopover(canSendDanmaku)}
               <media-control-bar class="player-controls">
-                <media-play-button></media-play-button>
+                <media-play-button notooltip${playerDisabled}></media-play-button>
                 <media-time-range${timeRangeDisabled}></media-time-range>
-                <media-time-display show-duration></media-time-display>
-                ${renderPlayerDanmakuInlineControls()}
+                ${renderPlayerTimePair()}
+                ${renderPlayerDanmakuInlineControls(canSendDanmaku)}
                 ${renderPlayerVolumeControl()}
-                <media-playback-rate-button></media-playback-rate-button>
-                <media-pip-button></media-pip-button>
-                <media-fullscreen-button></media-fullscreen-button>
+                <media-playback-rate-button notooltip${playerDisabled}></media-playback-rate-button>
+                <media-pip-button notooltip></media-pip-button>
+                <media-fullscreen-button notooltip></media-fullscreen-button>
               </media-control-bar>
             </media-controller>
     `;
@@ -715,6 +788,40 @@ function renderBilibiliLogo(): string {
   `;
 }
 
+function localizeProviderAuthMessage(message: string): string {
+  switch (message) {
+    case "Bilibili QR authorization request is pending.":
+      return "正在请求 B 站二维码授权。";
+    case "Preparing QR login.":
+      return "正在准备二维码登录。";
+    case "Scan the Bilibili QR code.":
+    case "Scan the Bilibili QR code to authorize playback.":
+      return "请使用 B 站 App 扫描二维码。";
+    case "Waiting for scan.":
+      return "等待扫码。";
+    case "QR code scanned; waiting for confirmation.":
+      return "已扫码，请在手机上确认。";
+    case "QR code expired.":
+      return "二维码已过期，请重新授权。";
+    case "QR authorization failed.":
+      return "二维码授权失败，请重试。";
+    case "Bilibili authorization could not be verified.":
+      return "B 站授权未通过验证。";
+    case "Bilibili authorization check failed.":
+      return "B 站授权状态检查失败。";
+    case "Bilibili authorization failed.":
+      return "B 站授权失败，请重试。";
+    case "Bilibili authorization logout is pending.":
+      return "正在退出 B 站授权。";
+    case "Bilibili authorization cleared.":
+      return "B 站授权已清除。";
+    case "Bilibili authorization logout failed.":
+      return "B 站授权退出失败。";
+    default:
+      return message;
+  }
+}
+
 function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   const isHost = state.currentMemberId === state.hostMemberId;
   const panel = state.authPanel ?? {
@@ -728,15 +835,17 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   const profileSummary = [panel.profileName, panel.vipLabel]
     .filter((item): item is string => Boolean(item))
     .join(" - ");
-  const message =
+  const rawMessage =
     panel.errorMessage ??
     panel.message ??
     (profileSummary || (isHost ? "Bilibili" : "房主可管理"));
+  const message = localizeProviderAuthMessage(rawMessage);
   const qrCode = panel.qrCodeUrl
     ? `<img class="auth-qr" src="${escapeHtml(panel.qrCodeUrl)}" alt="Bilibili QR" />`
     : '<div class="auth-qr-placeholder">QR</div>';
   const shouldShowQrMethod =
-    panel.phase !== "idle" ||
+    panel.phase === "loading" ||
+    panel.phase === "pending" ||
     Boolean(panel.qrCodeUrl) ||
     state.authStatus === "checking";
   const platformAuthAction = shouldShowQrMethod
@@ -746,7 +855,7 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
     ? `
           <div class="auth-method auth-method-qr">
             ${qrCode}
-            <button type="button" class="secondary-button" data-action="bilibili-login-qr">${renderButtonText("二维码授权", "qr")}</button>
+            <button type="button" class="secondary-button" data-action="collapse-bilibili-auth">${renderButtonText("收起二维码", "qr")}</button>
           </div>
         `
     : "";
@@ -766,13 +875,15 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   return `
     <div class="authorization-modal-backdrop" data-modal="authorization-management">
       <section class="authorization-modal provider-auth-panel" data-panel="provider-auth" data-auth-host="true" data-auth-method="${panel.method}" data-auth-phase="${panel.phase}" data-platform-auth-list="true" role="dialog" aria-modal="true" aria-label="授权管理">
-      <button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">
-        ${renderUiIcon("close", "button-icon")}
-        <span class="visually-hidden">关闭授权管理</span>
-      </button>
-      <div class="settings-tile-heading">
-        <span>授权管理</span>
-        <small>平台账号授权</small>
+      <div class="authorization-modal-heading">
+        <div class="settings-tile-heading">
+          <span>授权管理</span>
+          <small>平台账号授权</small>
+        </div>
+        <button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">
+          ${renderUiIcon("close", "button-icon")}
+          <span class="visually-hidden">关闭授权管理</span>
+        </button>
       </div>
       <div class="platform-auth-list">
         <section class="platform-auth-item" data-platform-id="bilibili">
@@ -798,12 +909,13 @@ function renderProviderPickerItems(picker: WebRoomProviderPickerState): string {
   return picker.items
     .map((item) => {
       const selected = item.itemId === picker.selectedItemId;
+      const title = item.providerDescriptor?.title.trim() || item.title;
       const meta = [item.kind, item.qualityLabel, item.sourceType]
         .filter(Boolean)
         .join(" / ");
       return `
         <button type="button" class="provider-item-row" data-action="select-provider-item" data-item-id="${escapeHtml(item.itemId)}" data-item-selected="${selected}">
-          <span>${escapeHtml(item.title)}</span>
+          <span>${escapeHtml(title)}</span>
           <small>${escapeHtml(meta)}</small>
         </button>
       `;
@@ -902,6 +1014,7 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const sharedChecked = picker.shared ? " checked" : "";
   const message = picker.errorMessage ?? picker.message ?? "";
   const messageHtml = message ? `<small>${escapeHtml(message)}</small>` : "";
+  const shareDisabled = picker.selectedItemId ? "" : " disabled";
 
   if (!isHost) {
     return `
@@ -923,6 +1036,7 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
       <div class="provider-url-row">
         <input name="bilibiliUrl" autocomplete="url" placeholder="粘贴视频链接" value="${escapeHtml(picker.url ?? "")}" />
         <button type="button" class="secondary-button" data-action="parse-bilibili-url">${renderButtonText("解析", "parse")}</button>
+        <button type="button" class="primary-button" data-action="share-provider-item"${shareDisabled}>${renderButtonText("开始播放", "play")}</button>
       </div>
       <div class="policy-row">
         <span class="policy-option">
@@ -936,8 +1050,60 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
       </div>
       <div class="provider-result-list">${renderProviderPickerItems(picker)}</div>
       ${renderProviderQualityOptions(picker)}
-      <button type="button" class="primary-button" data-action="share-provider-item"${picker.selectedItemId ? "" : " disabled"}>${renderButtonText("开始播放", "play")}</button>
     </section>
+  `;
+}
+
+function renderMemberPermissionAction(
+  member: WebRoomMember,
+  permission: RoomMemberPermissionName,
+  labels: { allow: string; deny: string },
+): string {
+  const allowed = getEffectiveMemberPermissions(member)[permission];
+  return `
+          <button
+            type="button"
+            class="member-action-button"
+            data-action="set-member-permission"
+            data-member-id="${escapeHtml(member.id)}"
+            data-member-permission="${permission}"
+            data-member-permission-allowed="${allowed ? "false" : "true"}"
+          >${escapeHtml(allowed ? labels.deny : labels.allow)}</button>
+  `;
+}
+
+function renderMemberManagementActions(
+  state: WebRoomJoinedState,
+  member: WebRoomMember,
+): string {
+  if (
+    state.currentMemberId !== state.hostMemberId ||
+    member.id === state.currentMemberId
+  ) {
+    return "";
+  }
+
+  return `
+        <span class="member-actions">
+          ${renderMemberPermissionAction(member, "voice", {
+            deny: "禁麦",
+            allow: "开麦",
+          })}
+          ${renderMemberPermissionAction(member, "playbackControl", {
+            deny: "禁视频",
+            allow: "开视频",
+          })}
+          ${renderMemberPermissionAction(member, "chat", {
+            deny: "禁聊天",
+            allow: "开聊天",
+          })}
+          ${renderMemberPermissionAction(member, "danmaku", {
+            deny: "禁弹幕",
+            allow: "开弹幕",
+          })}
+          <button type="button" class="member-action-button" data-action="transfer-host" data-member-id="${escapeHtml(member.id)}">转让</button>
+          <button type="button" class="member-action-button is-danger" data-action="kick-member" data-member-id="${escapeHtml(member.id)}">踢出</button>
+        </span>
   `;
 }
 
@@ -955,8 +1121,13 @@ function renderMembers(state: WebRoomJoinedState): string {
       return `
         <li class="member-row">
           <span class="avatar">${escapeHtml(member.name.slice(0, 1) || "?")}</span>
-          <span class="member-name">${escapeHtml(member.name)}</span>
-          <span class="member-badges">${hostBadge}${selfBadge}</span>
+          <span class="member-main">
+            <span class="member-identity">
+              <span class="member-name">${escapeHtml(member.name)}</span>
+              <span class="member-badges">${hostBadge}${selfBadge}</span>
+            </span>
+            ${renderMemberManagementActions(state, member)}
+          </span>
         </li>
       `;
     })
@@ -1007,6 +1178,18 @@ function renderRoomVideoInfo(state: WebRoomJoinedState): string {
             <dt>播放状态</dt><dd>${escapeHtml(getPlaybackStatusLabel(state))}</dd>
           </dl>
   `;
+}
+
+function formatClockMetricValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${value}ms`
+    : "-";
+}
+
+function formatClockMetricDataValue(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
 }
 
 function renderChatMessages(state: WebRoomJoinedState): string {
@@ -1063,9 +1246,12 @@ function getVoiceActionLabel(voice: WebRoomVoiceState): string {
   return "加入语音";
 }
 
-function renderVoiceToggleButton(voice: WebRoomVoiceState): string {
+function renderVoiceToggleButton(
+  voice: WebRoomVoiceState,
+  canUseVoice: boolean,
+): string {
   const isBusy = voice.status === "requesting" || voice.status === "connecting";
-  const disabled = isBusy ? " disabled" : "";
+  const disabled = isBusy || !canUseVoice ? " disabled" : "";
   const label = getVoiceActionLabel(voice);
 
   return `
@@ -1195,7 +1381,10 @@ function renderJoined(state: WebRoomJoinedState): string {
   const chatCooldownAttribute = chatCoolingDown
     ? ` data-chat-cooldown="true" data-chat-cooldown-seconds="${chatCooldownSeconds}"`
     : ' data-chat-cooldown="false"';
-  const chatSendDisabled = chatCoolingDown ? " disabled" : "";
+  const canSendChat = canCurrentMember(state, "chat");
+  const canUseVoice = canCurrentMember(state, "voice");
+  const chatSendDisabled = chatCoolingDown || !canSendChat ? " disabled" : "";
+  const chatInputDisabled = canSendChat ? "" : " disabled";
   const chatSendLabel = chatCoolingDown ? `${chatCooldownSeconds}s` : "发送";
 
   return `
@@ -1214,9 +1403,9 @@ function renderJoined(state: WebRoomJoinedState): string {
           ${renderChatVoicePanel(state)}
           <div class="chat-list">${renderChatMessages(state)}</div>
           <div class="chat-input-row"${chatCooldownAttribute}>
-            <input name="chat" maxlength="500" />
+            <input name="chat" maxlength="500"${chatInputDisabled} />
             <button type="button" class="secondary-button" data-action="send-chat"${chatSendDisabled}>${renderButtonText(chatSendLabel, "send")}</button>
-            ${renderVoiceToggleButton(state.voice)}
+            ${renderVoiceToggleButton(state.voice, canUseVoice)}
           </div>
         </aside>
       </section>
@@ -1242,10 +1431,11 @@ function renderJoined(state: WebRoomJoinedState): string {
           <dl class="room-meta">
             <dt>我的昵称</dt><dd>${escapeHtml(state.displayName)}</dd>
             <dt>服务器</dt><dd>${escapeHtml(state.serverUrl ?? "-")}</dd>
-            <dt>加入口令</dt><dd>${escapeHtml(state.joinToken ?? "-")}</dd>
             <dt>连接状态</dt><dd>${renderConnectionState(state.connectionState)}</dd>
+            <dt>偏移</dt><dd data-clock-offset-ms="${escapeHtml(formatClockMetricDataValue(state.clockOffsetMs))}">${escapeHtml(formatClockMetricValue(state.clockOffsetMs))}</dd>
+            <dt>RTT</dt><dd data-clock-rtt-ms="${escapeHtml(formatClockMetricDataValue(state.rttMs))}">${escapeHtml(formatClockMetricValue(state.rttMs))}</dd>
           </dl>
-          <details class="member-list-disclosure">
+          <details class="member-list-disclosure" data-disclosure-id="members">
             <summary>${renderSummaryLabel(`在线成员 ${state.members.length}`, "members")}</summary>
             <ul class="member-list">${renderMembers(state)}</ul>
           </details>
@@ -1259,7 +1449,7 @@ function renderJoined(state: WebRoomJoinedState): string {
             ${renderProviderPickerPanel(state)}
             ${renderPlaybackError(state)}
           </div>
-          <details class="diagnostics-disclosure">
+          <details class="diagnostics-disclosure" data-disclosure-id="diagnostics">
             <summary>${renderSummaryLabel("诊断日志", "info")}</summary>
             <div class="diagnostics-log">${renderDiagnostics(state)}</div>
           </details>

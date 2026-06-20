@@ -17,6 +17,7 @@ import type {
   AnnouncementItem,
   AnnouncementState,
   PlaybackState,
+  RoomChatMessage,
   RoomMember,
   RoomState,
   SharedVideo,
@@ -28,6 +29,10 @@ import {
   DANMAKU_MESSAGE_MAX_LENGTH,
   DANMAKU_MODES,
   MAX_ANNOUNCEMENT_ITEMS,
+  ROOM_CHAT_HISTORY_LIMIT,
+  ROOM_CHAT_MESSAGE_KINDS,
+  ROOM_MEMBER_PERMISSION_NAMES,
+  ROOM_SYSTEM_CHAT_EVENT_TYPES,
   isPlaybackSyncIntent,
 } from "../types/domain.js";
 import { isErrorCode } from "../types/common.js";
@@ -64,6 +69,9 @@ const CLIENT_MESSAGE_TYPES = new Set([
   "voice:state",
   "chat:message",
   "danmaku:message",
+  "room:member-permission:set",
+  "room:member:kick",
+  "room:host:transfer",
 ]);
 const DANMAKU_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -149,10 +157,42 @@ function isPlaybackState(value: unknown): value is PlaybackState {
 }
 
 export function isRoomMember(value: unknown): value is RoomMember {
+  const permissions = isRecord(value) ? value.permissions : undefined;
   return (
     isRecord(value) &&
     isActorId(value.id) &&
-    isBoundedString(value.name, DISPLAY_NAME_MAX_LENGTH)
+    isBoundedString(value.name, DISPLAY_NAME_MAX_LENGTH) &&
+    (permissions === undefined ||
+      (isRecord(permissions) &&
+        ROOM_MEMBER_PERMISSION_NAMES.every(
+          (permission) => typeof permissions[permission] === "boolean",
+        )))
+  );
+}
+
+function isRoomChatMessage(value: unknown): value is RoomChatMessage {
+  return (
+    isRecord(value) &&
+    (value.kind === undefined ||
+      isOneOf(value.kind, ROOM_CHAT_MESSAGE_KINDS)) &&
+    (value.systemEventType === undefined ||
+      isOneOf(value.systemEventType, ROOM_SYSTEM_CHAT_EVENT_TYPES)) &&
+    (value.kind !== "system" || value.systemEventType !== undefined) &&
+    isActorId(value.memberId) &&
+    isBoundedString(value.displayName, DISPLAY_NAME_MAX_LENGTH) &&
+    isNonEmptyBoundedString(value.content, CHAT_MESSAGE_MAX_LENGTH) &&
+    isFiniteNumber(value.timestamp)
+  );
+}
+
+function isOptionalRoomChatHistory(
+  value: unknown,
+): value is RoomChatMessage[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= ROOM_CHAT_HISTORY_LIMIT &&
+      value.every((message) => isRoomChatMessage(message)))
   );
 }
 
@@ -164,7 +204,8 @@ export function isRoomState(value: unknown): value is RoomState {
     (value.sharedVideo === null || isSharedVideo(value.sharedVideo)) &&
     (value.playback === null || isPlaybackState(value.playback)) &&
     Array.isArray(value.members) &&
-    value.members.every((member) => isRoomMember(member))
+    value.members.every((member) => isRoomMember(member)) &&
+    isOptionalRoomChatHistory(value.chatMessages)
   );
 }
 

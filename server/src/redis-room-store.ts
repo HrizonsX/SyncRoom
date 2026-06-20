@@ -2,12 +2,15 @@ import { Redis } from "ioredis";
 import type { RoomListQuery } from "./admin/types.js";
 import { getRedisRoomStoreKeys } from "./redis-namespace.js";
 import {
+  cloneMemberPermissions,
   createPersistedRoom,
   type ExpiredRoomsDeletionResult,
   type RoomStore,
   type RoomUpdateResult,
 } from "./room-store.js";
 import type { PersistedRoom } from "./types.js";
+
+const ROOM_CHAT_HISTORY_LIMIT = 200;
 
 const DELETE_EXPIRED_ROOMS_LUA = `
 local expiryKey = KEYS[1]
@@ -50,7 +53,12 @@ function parseRoom(value: string | null): PersistedRoom | null {
   if (!value) {
     return null;
   }
-  return JSON.parse(value) as PersistedRoom;
+  const room = JSON.parse(value) as PersistedRoom;
+  return {
+    ...room,
+    chatMessages: (room.chatMessages ?? []).slice(-ROOM_CHAT_HISTORY_LIMIT),
+    memberPermissions: cloneMemberPermissions(room.memberPermissions),
+  };
 }
 
 function parseDeleteExpiredRoomsResult(
@@ -214,6 +222,9 @@ export async function createRedisRoomStore(
         const nextRoom: PersistedRoom = {
           ...currentRoom,
           ...patch,
+          chatMessages: patch.chatMessages
+            ? patch.chatMessages.slice(-ROOM_CHAT_HISTORY_LIMIT)
+            : currentRoom.chatMessages,
           version: currentRoom.version + 1,
         };
 

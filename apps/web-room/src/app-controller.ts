@@ -2,6 +2,7 @@ import {
   parseSharedVideoRef,
   type ClientMessage,
   type ProviderPlaybackDescriptor,
+  type RoomMemberPermissionName,
   type ServerMessage,
   type SharedVideo,
   type WebPlaybackReportEvent,
@@ -30,6 +31,7 @@ import {
   type WebRoomSocketClient,
   type WebRoomSocketClientOptions,
 } from "./room-client.js";
+import { isMemberPermissionAllowed } from "./member-permissions.js";
 import { createWebRoomVoiceController } from "./voice-controller.js";
 import {
   createUnavailableVoiceRuntime,
@@ -50,6 +52,8 @@ export const WEB_ROOM_THEME_STORAGE_KEY = "syncroom:web-room-theme";
 
 const DEFAULT_DISPLAY_NAME = "网页用户";
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
+const CLOCK_SYNC_INTERVAL_MS = 15_000;
+const DANMAKU_SEND_COOLDOWN_MS = 1_000;
 const TRANSIENT_VOICE_ERROR_MS = 3_000;
 const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 const DISPLAY_NAME_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -87,6 +91,12 @@ type AuthPollTimeoutScheduler = (
   delayMs: number,
 ) => AuthPollTimeoutHandle;
 type AuthPollTimeoutClearer = (handle: AuthPollTimeoutHandle) => void;
+type ClockSyncIntervalHandle = unknown;
+type ClockSyncIntervalScheduler = (
+  callback: () => void,
+  delayMs: number,
+) => ClockSyncIntervalHandle;
+type ClockSyncIntervalClearer = (handle: ClockSyncIntervalHandle) => void;
 
 export type WebRoomAppControllerOptions = {
   storage?: StorageLike;
@@ -98,6 +108,8 @@ export type WebRoomAppControllerOptions = {
   authPollIntervalMs?: number;
   setAuthPollTimeout?: AuthPollTimeoutScheduler;
   clearAuthPollTimeout?: AuthPollTimeoutClearer;
+  setClockSyncInterval?: ClockSyncIntervalScheduler;
+  clearClockSyncInterval?: ClockSyncIntervalClearer;
   providerApiClientFactory?: (serverUrl: string) => ProviderApiClient;
   voiceRuntime?: WebRoomVoiceRuntime;
   voiceRuntimeFactory?: (args: {
@@ -116,6 +128,13 @@ export type WebRoomAppController = {
     content: string,
     options: { videoTime: number; color?: string },
   ) => void;
+  setRoomMemberPermission: (input: {
+    targetMemberId: string;
+    permission: RoomMemberPermissionName;
+    allowed: boolean;
+  }) => void;
+  kickRoomMember: (targetMemberId: string) => void;
+  transferRoomHost: (targetMemberId: string) => void;
   requestVoiceAccess: () => void;
   toggleVoice: () => void;
   toggleVoiceMicrophone: () => Promise<void>;
@@ -126,6 +145,7 @@ export type WebRoomAppController = {
   startBilibiliAuth: (input: { method: WebRoomAuthMethod }) => Promise<void>;
   logoutBilibiliAuth: () => Promise<void>;
   closeAuthorizationPanel: () => void;
+  collapseBilibiliAuth: () => void;
   openProviderPicker: () => void;
   parseBilibiliUrl: (input: {
     url: string;
@@ -141,6 +161,7 @@ export type WebRoomAppController = {
   setProviderPlaybackPolicy: (policy: {
     proxy?: boolean;
     shared?: boolean;
+    url?: string;
   }) => void;
   shareSelectedProviderItem: () => void;
   showDirectPlaybackFailure: (input: {
@@ -253,6 +274,16 @@ function persistBrowserDisplayName(
     WEB_ROOM_IDENTITY_STORAGE_KEY,
     JSON.stringify({ displayName: safeDisplayName }),
   );
+}
+
+function unrefTimerHandle(handle: unknown): void {
+  if (!isRecord(handle)) {
+    return;
+  }
+  const unref = handle.unref;
+  if (typeof unref === "function") {
+    unref.call(handle);
+  }
 }
 
 function getBrowserDisplayName(
@@ -404,8 +435,11 @@ export function createWebRoomAppController(
   let authPollGeneration = 0;
   let chatCooldownTimer: AuthPollTimeoutHandle | null = null;
   let chatCooldownTimerUntil: number | null = null;
+  let danmakuCooldownTimer: AuthPollTimeoutHandle | null = null;
+  let danmakuCooldownTimerUntil: number | null = null;
   let voiceErrorTimer: AuthPollTimeoutHandle | null = null;
   let voiceErrorTimerKey: string | null = null;
+  let clockSyncTimer: ClockSyncIntervalHandle | null = null;
   const authPollIntervalMs =
     options.authPollIntervalMs ?? DEFAULT_AUTH_POLL_INTERVAL_MS;
   const setAuthPollTimeout: AuthPollTimeoutScheduler =
@@ -416,6 +450,19 @@ export function createWebRoomAppController(
     ((handle) =>
       globalThis.clearTimeout(
         handle as ReturnType<typeof globalThis.setTimeout>,
+      ));
+  const setClockSyncInterval: ClockSyncIntervalScheduler =
+    options.setClockSyncInterval ??
+    ((callback, delayMs) => {
+      const handle = globalThis.setInterval(callback, delayMs);
+      unrefTimerHandle(handle);
+      return handle;
+    });
+  const clearClockSyncInterval: ClockSyncIntervalClearer =
+    options.clearClockSyncInterval ??
+    ((handle) =>
+      globalThis.clearInterval(
+        handle as ReturnType<typeof globalThis.setInterval>,
       ));
 
   function getCurrentTime(): number {
@@ -433,6 +480,15 @@ export function createWebRoomAppController(
     clearAuthPollTimeout(chatCooldownTimer);
     chatCooldownTimer = null;
     chatCooldownTimerUntil = null;
+  }
+
+  function clearDanmakuCooldownTimer(): void {
+    if (danmakuCooldownTimer === null) {
+      return;
+    }
+    clearAuthPollTimeout(danmakuCooldownTimer);
+    danmakuCooldownTimer = null;
+    danmakuCooldownTimerUntil = null;
   }
 
   function clearVoiceErrorTimer(): void {
@@ -465,6 +521,27 @@ export function createWebRoomAppController(
     });
   }
 
+  function handleDanmakuCooldownTimer(): void {
+    danmakuCooldownTimer = null;
+    danmakuCooldownTimerUntil = null;
+    if (state.view !== "joined") {
+      return;
+    }
+    const cooldownUntil = state.danmakuCooldownUntil;
+    if (typeof cooldownUntil !== "number") {
+      return;
+    }
+    const remainingMs = cooldownUntil - getCurrentTime();
+    if (remainingMs > 0) {
+      emit({ ...state });
+      return;
+    }
+    emit({
+      ...state,
+      danmakuCooldownUntil: undefined,
+    });
+  }
+
   function handleVoiceErrorTimer(errorKey: string): void {
     voiceErrorTimer = null;
     voiceErrorTimerKey = null;
@@ -483,6 +560,7 @@ export function createWebRoomAppController(
   function syncTransientUiTimers(): void {
     if (state.view !== "joined") {
       clearChatCooldownTimer();
+      clearDanmakuCooldownTimer();
       clearVoiceErrorTimer();
       return;
     }
@@ -501,13 +579,37 @@ export function createWebRoomAppController(
       if (chatCooldownTimerUntil !== cooldownUntil) {
         clearChatCooldownTimer();
         chatCooldownTimerUntil = cooldownUntil;
+        const nextDelayMs = Math.min(remainingMs, 1000);
         chatCooldownTimer = setAuthPollTimeout(
           handleChatCooldownTimer,
-          Math.min(remainingMs, 1000),
+          nextDelayMs,
         );
       }
     } else {
       clearChatCooldownTimer();
+    }
+
+    const danmakuCooldownUntil = state.danmakuCooldownUntil;
+    if (typeof danmakuCooldownUntil === "number") {
+      const remainingMs = danmakuCooldownUntil - getCurrentTime();
+      if (remainingMs <= 0) {
+        clearDanmakuCooldownTimer();
+        emit({
+          ...state,
+          danmakuCooldownUntil: undefined,
+        });
+        return;
+      }
+      if (danmakuCooldownTimerUntil !== danmakuCooldownUntil) {
+        clearDanmakuCooldownTimer();
+        danmakuCooldownTimerUntil = danmakuCooldownUntil;
+        danmakuCooldownTimer = setAuthPollTimeout(
+          handleDanmakuCooldownTimer,
+          Math.min(remainingMs, 1000),
+        );
+      }
+    } else {
+      clearDanmakuCooldownTimer();
     }
 
     const voiceError = state.voice.error;
@@ -541,6 +643,33 @@ export function createWebRoomAppController(
     });
   }
 
+  function appendDiagnosticItem(item: string): string[] {
+    return state.view === "joined"
+      ? [...state.diagnostics, item].slice(-80)
+      : [];
+  }
+
+  function sendClockPing(): void {
+    client?.ping(getCurrentTime());
+  }
+
+  function clearClockSyncTimer(): void {
+    if (clockSyncTimer === null) {
+      return;
+    }
+    clearClockSyncInterval(clockSyncTimer);
+    clockSyncTimer = null;
+  }
+
+  function startClockSyncTimer(): void {
+    clearClockSyncTimer();
+    sendClockPing();
+    clockSyncTimer = setClockSyncInterval(
+      sendClockPing,
+      CLOCK_SYNC_INTERVAL_MS,
+    );
+  }
+
   function clearBilibiliAuthPollTimer(): void {
     if (authPollTimer === null) {
       return;
@@ -570,6 +699,9 @@ export function createWebRoomAppController(
     if (state.view !== "joined" || !activeSession || !client) {
       return null;
     }
+    if (!canUseMemberPermission("playbackControl")) {
+      return null;
+    }
     const url = state.playbackUrl ?? state.playback?.url;
     if (!url) {
       return null;
@@ -585,6 +717,9 @@ export function createWebRoomAppController(
     message: Extract<ClientMessage, { type: "playback:update" }>,
   ): void {
     if (!client || !activeSession) {
+      return;
+    }
+    if (!canUseMemberPermission("playbackControl")) {
       return;
     }
     client.updatePlayback(message);
@@ -637,6 +772,32 @@ export function createWebRoomAppController(
     return (
       state.view === "joined" && state.currentMemberId === state.hostMemberId
     );
+  }
+
+  function getCurrentMemberState() {
+    if (state.view !== "joined") {
+      return null;
+    }
+    const currentMemberId = state.currentMemberId;
+    return (
+      state.members.find((member) => member.id === currentMemberId) ?? null
+    );
+  }
+
+  function canUseMemberPermission(
+    permission: RoomMemberPermissionName,
+  ): boolean {
+    if (state.view !== "joined") {
+      return false;
+    }
+    if (isHostState()) {
+      return true;
+    }
+    return isMemberPermissionAllowed(getCurrentMemberState(), permission);
+  }
+
+  function canManageRoomMembers(): boolean {
+    return Boolean(client && activeSession && isHostState());
   }
 
   function requireHostAuthorizationState(): boolean {
@@ -882,6 +1043,7 @@ export function createWebRoomAppController(
       applyProviderApiFailure({
         panel: "auth",
         method: input.method,
+        diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
         message: getProviderApiFailureMessage(
           error,
           "Bilibili authorization failed.",
@@ -893,15 +1055,20 @@ export function createWebRoomAppController(
   function applyProviderApiFailure(input: {
     panel: "auth" | "picker";
     message: string;
+    diagnostic?: string;
     method?: WebRoomAuthMethod;
     open?: boolean;
   }): void {
     if (state.view !== "joined") {
       return;
     }
+    const diagnostics = input.diagnostic
+      ? appendDiagnosticItem(input.diagnostic)
+      : state.diagnostics;
     if (input.panel === "auth") {
       emit({
         ...state,
+        diagnostics,
         authStatus: "unauthorized",
         authPanel: {
           open: input.open ?? true,
@@ -914,6 +1081,7 @@ export function createWebRoomAppController(
     }
     emit({
       ...state,
+      diagnostics,
       providerPicker: {
         ...(state.providerPicker ?? {
           open: true,
@@ -948,6 +1116,20 @@ export function createWebRoomAppController(
       return "解析失败，请确认 Bilibili 授权有效，或关闭 shared/proxy 后重试。";
     }
     return error instanceof Error ? error.message : fallbackMessage;
+  }
+
+  function getProviderApiFailureDiagnostic(
+    error: unknown,
+    panel: "auth" | "picker",
+  ): string {
+    const providerError = error as Partial<ProviderApiError>;
+    return [
+      `provider API ${panel} failed`,
+      typeof providerError.code === "string" ? providerError.code : "",
+      error instanceof Error ? error.message : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
   }
 
   function handleOpen(): void {
@@ -1007,6 +1189,7 @@ export function createWebRoomAppController(
         joinToken: session.joinToken,
       }),
     );
+    startClockSyncTimer();
     requestCurrentRoomState(message.payload.memberToken);
   }
 
@@ -1035,6 +1218,7 @@ export function createWebRoomAppController(
         joinToken: session.joinToken,
       }),
     );
+    startClockSyncTimer();
     requestCurrentRoomState(message.payload.memberToken);
   }
 
@@ -1054,7 +1238,7 @@ export function createWebRoomAppController(
     }
 
     if (isVoiceServerMessage(message)) {
-      if (message.type === "voice:state" && state.view === "joined") {
+      if (state.view === "joined") {
         emit(
           applyServerMessage(state, message, {
             now: options.now,
@@ -1068,6 +1252,29 @@ export function createWebRoomAppController(
     if (message.type === "error") {
       if (state.view === "entry") {
         emit(withEntryError(state, localizeEntryServerError(message.payload)));
+        return;
+      }
+      if (message.payload.code === "member_kicked") {
+        const serverUrl = state.serverUrl ?? activeSession?.serverUrl;
+        resetBilibiliAuthPolling();
+        void voiceController.disconnect("member kicked");
+        client?.close();
+        client = null;
+        activeSession = null;
+        pendingAction = null;
+        if (storage) {
+          clearWebRoomSession(storage);
+        }
+        emit(
+          withEntryError(
+            createEntryState(
+              serverUrl ?? defaultServerUrl,
+              { displayName: state.displayName },
+              getCurrentThemeMode(),
+            ),
+            "你已被房主移出房间。",
+          ),
+        );
         return;
       }
       emit(
@@ -1085,6 +1292,13 @@ export function createWebRoomAppController(
           now: options.now,
         }),
       );
+      if (
+        message.type === "room:state" &&
+        !canUseMemberPermission("voice") &&
+        state.voice.status !== "idle"
+      ) {
+        void voiceController.disconnect("voice permission disabled");
+      }
       if (message.type === "room:state" && !wasHost && isHostState()) {
         void refreshBilibiliAuthStatus(state.authPanel?.method ?? "qr");
       }
@@ -1092,6 +1306,7 @@ export function createWebRoomAppController(
   }
 
   function handleClose(): void {
+    clearClockSyncTimer();
     void voiceController.disconnect("socket closed");
     emit(setConnectionState(state, "disconnected"));
   }
@@ -1104,6 +1319,7 @@ export function createWebRoomAppController(
     resetBilibiliAuthPolling();
     pendingAction = action;
     void voiceController.disconnect("room entry changed");
+    clearClockSyncTimer();
     client?.close();
     activeSession = null;
     emit(
@@ -1194,6 +1410,9 @@ export function createWebRoomAppController(
     if (!client || !activeSession || trimmed.length === 0) {
       return;
     }
+    if (!canUseMemberPermission("chat")) {
+      return;
+    }
     client.sendChat({
       memberToken: activeSession.memberToken,
       content: trimmed,
@@ -1208,6 +1427,16 @@ export function createWebRoomAppController(
     if (!client || !activeSession || trimmed.length === 0) {
       return;
     }
+    if (!canUseMemberPermission("danmaku")) {
+      return;
+    }
+    if (
+      state.view === "joined" &&
+      typeof state.danmakuCooldownUntil === "number" &&
+      state.danmakuCooldownUntil > getCurrentTime()
+    ) {
+      return;
+    }
     const videoTime =
       Number.isFinite(options.videoTime) && options.videoTime >= 0
         ? options.videoTime
@@ -1219,13 +1448,76 @@ export function createWebRoomAppController(
       mode: "scroll",
       ...(options.color ? { color: options.color } : {}),
     });
+    if (state.view === "joined") {
+      emit({
+        ...state,
+        danmakuCooldownUntil: getCurrentTime() + DANMAKU_SEND_COOLDOWN_MS,
+      });
+    }
+  }
+
+  function setRoomMemberPermission(input: {
+    targetMemberId: string;
+    permission: RoomMemberPermissionName;
+    allowed: boolean;
+  }): void {
+    if (
+      input.targetMemberId.length === 0 ||
+      !canManageRoomMembers() ||
+      !client ||
+      !activeSession
+    ) {
+      return;
+    }
+    client.setRoomMemberPermission({
+      memberToken: activeSession.memberToken,
+      targetMemberId: input.targetMemberId,
+      permission: input.permission,
+      allowed: input.allowed,
+    });
+  }
+
+  function kickRoomMember(targetMemberId: string): void {
+    if (
+      targetMemberId.length === 0 ||
+      !canManageRoomMembers() ||
+      !client ||
+      !activeSession
+    ) {
+      return;
+    }
+    client.kickRoomMember({
+      memberToken: activeSession.memberToken,
+      targetMemberId,
+    });
+  }
+
+  function transferRoomHost(targetMemberId: string): void {
+    if (
+      targetMemberId.length === 0 ||
+      !canManageRoomMembers() ||
+      !client ||
+      !activeSession
+    ) {
+      return;
+    }
+    client.transferRoomHost({
+      memberToken: activeSession.memberToken,
+      targetMemberId,
+    });
   }
 
   function requestVoiceAccess(): void {
+    if (!canUseMemberPermission("voice")) {
+      return;
+    }
     voiceController.requestAccess({ forceRefresh: true });
   }
 
   function toggleVoice(): void {
+    if (!canUseMemberPermission("voice")) {
+      return;
+    }
     if (state.view === "joined" && state.voice.status === "connected") {
       void voiceController.toggleMicrophone();
       return;
@@ -1234,6 +1526,9 @@ export function createWebRoomAppController(
   }
 
   function toggleVoiceMicrophone(): Promise<void> {
+    if (!canUseMemberPermission("voice")) {
+      return Promise.resolve();
+    }
     return voiceController.toggleMicrophone();
   }
 
@@ -1256,6 +1551,7 @@ export function createWebRoomAppController(
         : {};
     resetBilibiliAuthPolling();
     void voiceController.disconnect("leave room requested");
+    clearClockSyncTimer();
     if (client && activeSession) {
       client.leaveRoom(activeSession.memberToken);
     }
@@ -1312,6 +1608,23 @@ export function createWebRoomAppController(
     });
   }
 
+  function collapseBilibiliAuth(): void {
+    if (state.view !== "joined" || !state.authPanel?.open) {
+      return;
+    }
+    resetBilibiliAuthPolling();
+    emit({
+      ...state,
+      authStatus:
+        state.authStatus === "authorized" ? "authorized" : "unauthorized",
+      authPanel: {
+        open: true,
+        method: state.authPanel.method ?? "qr",
+        phase: "idle",
+      },
+    });
+  }
+
   async function refreshBilibiliAuthStatus(
     method: WebRoomAuthMethod,
   ): Promise<void> {
@@ -1333,6 +1646,7 @@ export function createWebRoomAppController(
         panel: "auth",
         method,
         open: state.authPanel?.open === true,
+        diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
         message: getProviderApiFailureMessage(
           error,
           "Bilibili authorization check failed.",
@@ -1398,6 +1712,7 @@ export function createWebRoomAppController(
       applyProviderApiFailure({
         panel: "auth",
         method: input.method,
+        diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
         message: getProviderApiFailureMessage(
           error,
           "Bilibili authorization failed.",
@@ -1448,6 +1763,7 @@ export function createWebRoomAppController(
       applyProviderApiFailure({
         panel: "auth",
         method,
+        diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
         message: getProviderApiFailureMessage(
           error,
           "Bilibili authorization logout failed.",
@@ -1528,6 +1844,7 @@ export function createWebRoomAppController(
     } catch (error) {
       applyProviderApiFailure({
         panel: "picker",
+        diagnostic: getProviderApiFailureDiagnostic(error, "picker"),
         message: getProviderApiFailureMessage(
           error,
           "Bilibili URL parse failed.",
@@ -1605,6 +1922,7 @@ export function createWebRoomAppController(
   function setProviderPlaybackPolicy(policy: {
     proxy?: boolean;
     shared?: boolean;
+    url?: string;
   }): void {
     if (state.view !== "joined" || !requireHostAuthorizationState()) {
       return;
@@ -1620,6 +1938,7 @@ export function createWebRoomAppController(
       ...state,
       providerPicker: {
         ...picker,
+        url: policy.url?.trim() || picker.url,
         proxy: policy.proxy ?? picker.proxy,
         shared: policy.shared ?? picker.shared,
       },
@@ -1661,9 +1980,9 @@ export function createWebRoomAppController(
     }
 
     const title =
+      selectedProviderDescriptor.title.trim() ||
       selectedItem.title.trim() ||
-      selectedProviderDescriptor.item.title ||
-      selectedProviderDescriptor.title;
+      selectedProviderDescriptor.item.title;
     const video: SharedVideo = {
       videoId: sharedRef.videoId,
       url: sharedRef.normalizedUrl,
@@ -1747,6 +2066,9 @@ export function createWebRoomAppController(
     }
     emit({
       ...state,
+      diagnostics: appendDiagnosticItem(
+        `direct playback failed ${input.stage} ${input.message}`,
+      ),
       playbackError: {
         code: "direct_playback_failed",
         stage: input.stage,
@@ -1788,6 +2110,9 @@ export function createWebRoomAppController(
     joinRoom,
     sendChat,
     sendDanmaku,
+    setRoomMemberPermission,
+    kickRoomMember,
+    transferRoomHost,
     requestVoiceAccess,
     toggleVoice,
     toggleVoiceMicrophone,
@@ -1798,6 +2123,7 @@ export function createWebRoomAppController(
     startBilibiliAuth,
     logoutBilibiliAuth,
     closeAuthorizationPanel,
+    collapseBilibiliAuth,
     openProviderPicker,
     parseBilibiliUrl,
     setProviderPickerResults,

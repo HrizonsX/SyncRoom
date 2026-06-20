@@ -4,6 +4,8 @@ import type {
   ErrorCode,
   ErrorMessage,
   PlaybackState,
+  RoomChatMessage,
+  RoomMemberPermissions,
   RoomState,
   ServerMessage,
   SharedVideo,
@@ -26,6 +28,7 @@ export type SessionRateLimitState = {
   videoShare: WindowCounter;
   syncRequest: WindowCounter;
   chatMessage: WindowCounter;
+  danmakuMessage: WindowCounter;
   playbackUpdate: TokenBucket;
   syncPing: TokenBucket;
 };
@@ -74,8 +77,10 @@ export type PersistedRoom = {
   createdAt: number;
   ownerMemberId?: string | null;
   ownerDisplayName?: string | null;
+  memberPermissions: Record<string, RoomMemberPermissions>;
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
+  chatMessages: RoomChatMessage[];
   version: number;
   lastActiveAt: number;
   expiresAt: number | null;
@@ -174,6 +179,7 @@ export type SecurityConfig = {
     playbackUpdateBurst: number;
     syncRequestPer10Seconds: number;
     chatMessagePer5Seconds: number;
+    danmakuMessagePer5Seconds: number;
     syncPingPerSecond: number;
     syncPingBurst: number;
     adminLoginFailuresPerIpPerMinute: number;

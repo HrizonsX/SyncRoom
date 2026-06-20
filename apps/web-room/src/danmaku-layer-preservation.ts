@@ -7,6 +7,15 @@ export type DanmakuKeyElement = {
   getAttribute: (name: string) => string | null;
 };
 
+export type DanmakuAnimationElement = DanmakuKeyElement & {
+  getAnimations?: () => Array<{ currentTime: unknown }>;
+};
+
+export type DanmakuAnimationSnapshot = {
+  key: string;
+  currentTimeMs: number;
+};
+
 export function findDanmakuLayerElement(root: ParentNode): HTMLElement | null {
   return root.querySelector<HTMLElement>(DANMAKU_LAYER_SELECTOR);
 }
@@ -57,6 +66,7 @@ export function getDanmakuItemKey(
 export function getUniqueNextDanmakuItemKeys(
   existingItems: DanmakuKeyElement[],
   nextItems: DanmakuKeyElement[],
+  renderedKeys: ReadonlySet<string> = new Set(),
 ): string[] {
   const existingKeys = new Set(
     existingItems
@@ -66,11 +76,72 @@ export function getUniqueNextDanmakuItemKeys(
   return nextItems
     .map((item) => getDanmakuItemKey(item))
     .filter((key): key is string => Boolean(key))
-    .filter((key) => !existingKeys.has(key));
+    .filter((key) => !existingKeys.has(key) && !renderedKeys.has(key));
 }
 
 function getDanmakuItemElements(layer: Element): HTMLElement[] {
   return Array.from(layer.querySelectorAll<HTMLElement>(DANMAKU_ITEM_SELECTOR));
+}
+
+function getAnimationCurrentTimeMs(
+  element: DanmakuAnimationElement,
+): number | undefined {
+  const animation = element.getAnimations?.()[0];
+  const currentTime = animation?.currentTime;
+  return typeof currentTime === "number" && Number.isFinite(currentTime)
+    ? currentTime
+    : undefined;
+}
+
+export function captureDanmakuAnimationSnapshots(
+  items: DanmakuAnimationElement[],
+): DanmakuAnimationSnapshot[] {
+  const snapshots: DanmakuAnimationSnapshot[] = [];
+  for (const item of items) {
+    const key = getDanmakuItemKey(item);
+    const currentTimeMs = getAnimationCurrentTimeMs(item);
+    if (!key || currentTimeMs === undefined) {
+      continue;
+    }
+    snapshots.push({ key, currentTimeMs });
+  }
+  return snapshots;
+}
+
+export function restoreDanmakuAnimationSnapshots(
+  items: DanmakuAnimationElement[],
+  snapshots: readonly DanmakuAnimationSnapshot[],
+): void {
+  const snapshotByKey = new Map(
+    snapshots.map((snapshot) => [snapshot.key, snapshot.currentTimeMs]),
+  );
+  for (const item of items) {
+    const key = getDanmakuItemKey(item);
+    const currentTimeMs = key ? snapshotByKey.get(key) : undefined;
+    const animation = item.getAnimations?.()[0];
+    if (!animation || currentTimeMs === undefined) {
+      continue;
+    }
+    animation.currentTime = currentTimeMs;
+  }
+}
+
+export function captureDanmakuLayerAnimationSnapshots(
+  layer: Element | null,
+): DanmakuAnimationSnapshot[] {
+  return layer
+    ? captureDanmakuAnimationSnapshots(getDanmakuItemElements(layer))
+    : [];
+}
+
+export function restoreDanmakuLayerAnimationSnapshots(
+  layer: Element | null,
+  snapshots: readonly DanmakuAnimationSnapshot[],
+): void {
+  if (!layer || snapshots.length === 0) {
+    return;
+  }
+  restoreDanmakuAnimationSnapshots(getDanmakuItemElements(layer), snapshots);
 }
 
 function syncDanmakuLayerState(target: HTMLElement, source: HTMLElement): void {
@@ -129,15 +200,56 @@ function trimRenderedDanmakuItems(layer: HTMLElement): void {
   }
 }
 
+function bindDanmakuAnimationCleanup(layer: HTMLElement): void {
+  if (layer.dataset.danmakuCleanupBound === "true") {
+    return;
+  }
+
+  layer.dataset.danmakuCleanupBound = "true";
+  layer.addEventListener("animationend", (event) => {
+    const target = event.target as (Element & { remove: () => void }) | null;
+    if (target?.matches(DANMAKU_ITEM_SELECTOR)) {
+      target.remove();
+    }
+  });
+}
+
+function keepOnlyUnrenderedNextItems(
+  nextLayer: HTMLElement,
+  renderedKeys: Set<string> | undefined,
+): void {
+  const nextKeys = new Set<string>();
+  for (const nextItem of getDanmakuItemElements(nextLayer)) {
+    const key = getDanmakuItemKey(nextItem);
+    if (!key) {
+      nextItem.remove();
+      continue;
+    }
+    if (nextKeys.has(key) || renderedKeys?.has(key)) {
+      nextItem.remove();
+      continue;
+    }
+    nextKeys.add(key);
+    renderedKeys?.add(key);
+  }
+}
+
 export function preserveDanmakuLayerElement(
   root: ParentNode,
   existingLayer: HTMLElement | null,
+  renderedKeys?: Set<string>,
 ): void {
-  if (!existingLayer) {
-    return;
-  }
   const nextLayer = findDanmakuLayerElement(root);
   if (!nextLayer) {
+    if (existingLayer) {
+      bindDanmakuAnimationCleanup(existingLayer);
+    }
+    return;
+  }
+
+  if (!existingLayer) {
+    keepOnlyUnrenderedNextItems(nextLayer, renderedKeys);
+    bindDanmakuAnimationCleanup(nextLayer);
     return;
   }
 
@@ -147,14 +259,21 @@ export function preserveDanmakuLayerElement(
     existingLayer,
     nextItemsByKey,
   );
+  if (renderedKeys) {
+    for (const key of existingKeys) {
+      renderedKeys.add(key);
+    }
+  }
   for (const nextItem of getDanmakuItemElements(nextLayer)) {
     const key = getDanmakuItemKey(nextItem);
-    if (!key || existingKeys.has(key)) {
+    if (!key || existingKeys.has(key) || renderedKeys?.has(key)) {
       continue;
     }
     existingLayer.append(nextItem.cloneNode(true));
     existingKeys.add(key);
+    renderedKeys?.add(key);
   }
   trimRenderedDanmakuItems(existingLayer);
+  bindDanmakuAnimationCleanup(existingLayer);
   nextLayer.replaceWith(existingLayer);
 }

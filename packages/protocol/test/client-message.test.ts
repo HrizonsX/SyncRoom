@@ -414,6 +414,56 @@ test("accepts a valid playback:update message", () => {
   );
 });
 
+test("accepts host member management messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "room:member-permission:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+        permission: "chat",
+        allowed: false,
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "room:member:kick",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "room:host:transfer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects host member management messages with malformed permissions", () => {
+  assert.equal(
+    isClientMessage({
+      type: "room:member-permission:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+        permission: "screen-share",
+        allowed: false,
+      },
+    }),
+    false,
+  );
+});
+
 test("accepts playback:update when url is exactly 512 characters", () => {
   const exactBoundaryUrl = createBilibiliUrlWithExactLength(URL_MAX_LENGTH);
 

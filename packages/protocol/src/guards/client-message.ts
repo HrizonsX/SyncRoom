@@ -10,8 +10,11 @@ import type {
   PlaybackReportMessage,
   ProfileUpdateMessage,
   ShareVideoMessage,
+  KickRoomMemberMessage,
+  SetRoomMemberPermissionMessage,
   SyncPingMessage,
   SyncRequestMessage,
+  TransferRoomHostMessage,
   VoiceAccessMessage,
   ClientVoiceStateMessage,
 } from "../types/client-message.js";
@@ -23,6 +26,7 @@ import {
   WEB_PLAYER_ERROR_STAGES,
   DANMAKU_MESSAGE_MAX_LENGTH,
   DANMAKU_MODES,
+  ROOM_MEMBER_PERMISSION_NAMES,
   VIDEO_PROVIDER_IDS,
   isPlaybackSyncIntent,
 } from "../types/domain.js";
@@ -331,6 +335,58 @@ function isDanmakuMessage(value: unknown): value is DanmakuMessage {
   );
 }
 
+function isMemberManagementTargetPayload(
+  value: unknown,
+): value is KickRoomMemberMessage["payload"] {
+  return (
+    isRecord(value) &&
+    isToken(value.memberToken) &&
+    isActorId(value.targetMemberId)
+  );
+}
+
+function isSetRoomMemberPermissionPayload(
+  value: unknown,
+): value is SetRoomMemberPermissionMessage["payload"] {
+  return (
+    isRecord(value) &&
+    isToken(value.memberToken) &&
+    isActorId(value.targetMemberId) &&
+    isOneOf(value.permission, ROOM_MEMBER_PERMISSION_NAMES) &&
+    typeof value.allowed === "boolean"
+  );
+}
+
+function isSetRoomMemberPermissionMessage(
+  value: unknown,
+): value is SetRoomMemberPermissionMessage {
+  return (
+    isRecord(value) &&
+    value.type === "room:member-permission:set" &&
+    isSetRoomMemberPermissionPayload(value.payload)
+  );
+}
+
+function isKickRoomMemberMessage(
+  value: unknown,
+): value is KickRoomMemberMessage {
+  return (
+    isRecord(value) &&
+    value.type === "room:member:kick" &&
+    isMemberManagementTargetPayload(value.payload)
+  );
+}
+
+function isTransferRoomHostMessage(
+  value: unknown,
+): value is TransferRoomHostMessage {
+  return (
+    isRecord(value) &&
+    value.type === "room:host:transfer" &&
+    isMemberManagementTargetPayload(value.payload)
+  );
+}
+
 function playbackReportNeedsStage(
   event: PlaybackReportMessage["payload"]["event"],
 ): boolean {
@@ -403,6 +459,12 @@ export function isClientMessage(value: unknown): value is ClientMessage {
       return isChatMessage(value);
     case "danmaku:message":
       return isDanmakuMessage(value);
+    case "room:member-permission:set":
+      return isSetRoomMemberPermissionMessage(value);
+    case "room:member:kick":
+      return isKickRoomMemberMessage(value);
+    case "room:host:transfer":
+      return isTransferRoomHostMessage(value);
     case "playback:report":
       return isPlaybackReportMessage(value);
     default:

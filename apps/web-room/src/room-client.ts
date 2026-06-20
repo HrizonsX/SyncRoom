@@ -2,6 +2,7 @@ import type {
   ClientMessage,
   DanmakuMode,
   PlaybackState,
+  RoomMemberPermissionName,
   SharedVideo,
   VideoProviderId,
   WebPlaybackBrowserLabel,
@@ -87,6 +88,18 @@ type PlaybackReportInput = {
   stage?: WebPlayerErrorStage;
   browser?: WebPlaybackBrowserLabel;
   system?: WebPlaybackSystemLabel;
+};
+
+type MemberPermissionInput = {
+  memberToken: string;
+  targetMemberId: string;
+  permission: RoomMemberPermissionName;
+  allowed: boolean;
+};
+
+type MemberManagementInput = {
+  memberToken: string;
+  targetMemberId: string;
 };
 
 function isToken(value: unknown): value is string {
@@ -224,6 +237,38 @@ export function createWebRoomSocketClient(options: WebRoomSocketClientOptions) {
           videoTime: input.videoTime,
           mode: input.mode ?? "scroll",
           ...(input.color ? { color: input.color } : {}),
+        },
+      });
+    },
+
+    setRoomMemberPermission(input: MemberPermissionInput): void {
+      sendJson(socket, {
+        type: "room:member-permission:set",
+        payload: {
+          memberToken: input.memberToken,
+          targetMemberId: input.targetMemberId,
+          permission: input.permission,
+          allowed: input.allowed,
+        },
+      });
+    },
+
+    kickRoomMember(input: MemberManagementInput): void {
+      sendJson(socket, {
+        type: "room:member:kick",
+        payload: {
+          memberToken: input.memberToken,
+          targetMemberId: input.targetMemberId,
+        },
+      });
+    },
+
+    transferRoomHost(input: MemberManagementInput): void {
+      sendJson(socket, {
+        type: "room:host:transfer",
+        payload: {
+          memberToken: input.memberToken,
+          targetMemberId: input.targetMemberId,
         },
       });
     },

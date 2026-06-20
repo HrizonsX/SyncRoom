@@ -885,11 +885,15 @@ function createVideoViewUrl(matchedUrl: ProviderMatchedUrl): string {
   );
 }
 
-function createVideoPlayUrl(args: { bvid: string; cid: string }): string {
+function createVideoPlayUrl(args: {
+  bvid: string;
+  cid: string;
+  quality?: number;
+}): string {
   const url = new URL(BILIBILI_WBI_PLAYURL_URL);
   url.searchParams.set("bvid", args.bvid);
   url.searchParams.set("cid", args.cid);
-  url.searchParams.set("qn", "0");
+  url.searchParams.set("qn", String(args.quality ?? 0));
   url.searchParams.set("platform", "html5");
   url.searchParams.set("high_quality", "1");
   return url.toString();
@@ -990,10 +994,15 @@ async function createSignedVideoPlayUrl(args: {
   now: number;
   bvid: string;
   cid: string;
+  quality?: number;
 }): Promise<string> {
   const keys = await readWbiKeys(args);
   return signWbiUrl(
-    createVideoPlayUrl({ bvid: args.bvid, cid: args.cid }),
+    createVideoPlayUrl({
+      bvid: args.bvid,
+      cid: args.cid,
+      quality: args.quality,
+    }),
     keys,
     args.now,
   );
@@ -1606,6 +1615,56 @@ function readPlaybackCandidates(
   return candidates;
 }
 
+function readAcceptedVideoQualities(playData: BilibiliPlayUrlData): number[] {
+  const qualities = [
+    readInteger(playData.quality),
+    ...(Array.isArray(playData.accept_quality)
+      ? playData.accept_quality.map((value) => readInteger(value))
+      : []),
+  ].filter(
+    (value): value is number =>
+      value !== null && Number.isFinite(value) && value > 0,
+  );
+  return [...new Set(qualities)];
+}
+
+function normalizePlaybackCandidateDefaults(
+  candidates: ProviderPlayableItem["candidates"],
+): ProviderPlayableItem["candidates"] {
+  return candidates.map((candidate, index) => ({
+    ...candidate,
+    default: index === 0,
+  }));
+}
+
+async function requestAdditionalVideoQualityPlayData(args: {
+  fetchImpl: typeof fetch;
+  credentials?: VideoAuthCredentials | null;
+  cache: WbiKeyCache;
+  now: number;
+  bvid: string;
+  cid: string;
+  quality: number;
+  extraCookie: string;
+}): Promise<BilibiliPlayUrlData | null> {
+  const playUrl = await createSignedVideoPlayUrl({
+    fetchImpl: args.fetchImpl,
+    credentials: args.credentials,
+    cache: args.cache,
+    now: args.now,
+    bvid: args.bvid,
+    cid: args.cid,
+    quality: args.quality,
+  });
+  const { payload } = await requestBilibiliParseJson<BilibiliPlayUrlData>(
+    args.fetchImpl,
+    playUrl,
+    args.credentials,
+    { extraCookie: args.extraCookie },
+  );
+  return payload.code === 0 && payload.data ? payload.data : null;
+}
+
 function readLiveQualityLabel(args: {
   playData: BilibiliLivePlayUrlData;
   quality: number | null;
@@ -1850,12 +1909,37 @@ async function parseNormalVideo(
       );
     }
 
-    const candidates = readPlaybackCandidates(playPayload.data, {
-      upstreamHeaders: createMediaUpstreamHeaders(
-        parseCredentials,
-        buvidCookie,
+    const playDataByQuality = [playPayload.data];
+    const currentQuality = readInteger(playPayload.data.quality);
+    for (const quality of readAcceptedVideoQualities(playPayload.data)) {
+      if (quality === currentQuality) {
+        continue;
+      }
+      const additionalPlayData = await requestAdditionalVideoQualityPlayData({
+        fetchImpl,
+        credentials: parseCredentials,
+        cache: args.wbiKeyCache,
+        now: currentTime,
+        bvid,
+        cid: page.cid,
+        quality,
+        extraCookie: buvidCookie,
+      });
+      if (additionalPlayData) {
+        playDataByQuality.push(additionalPlayData);
+      }
+    }
+    const upstreamHeaders = createMediaUpstreamHeaders(
+      parseCredentials,
+      buvidCookie,
+    );
+    const candidates = normalizePlaybackCandidateDefaults(
+      playDataByQuality.flatMap((playData) =>
+        readPlaybackCandidates(playData, {
+          upstreamHeaders,
+        }),
       ),
-    });
+    );
     if (candidates.length === 0) {
       throw new VideoProviderError(
         "provider_parse_failed",

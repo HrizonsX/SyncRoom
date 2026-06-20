@@ -40,6 +40,14 @@ test("styles announcement brand and chat voice action", () => {
   );
   assert.match(
     styles,
+    /\.announcement-message\s*{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.announcement-icon\s*{[^}]*width:\s*14px;[^}]*height:\s*14px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.chat-input-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto auto;[^}]*}/s,
   );
   assert.match(
@@ -156,6 +164,31 @@ test("styles compact room info with collapsible member list", () => {
     styles,
     /\.member-list-disclosure summary\s*{[^}]*cursor:\s*pointer;[^}]*}/s,
   );
+  assert.match(
+    styles,
+    /\.member-main\s*{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*flex-wrap:\s*wrap;[^}]*}/s,
+  );
+  assert.match(styles, /\.member-identity\s*{[^}]*flex:\s*1 1 140px;[^}]*}/s);
+  assert.match(
+    styles,
+    /\.member-badges\s*{[^}]*justify-content:\s*flex-end;[^}]*margin-left:\s*auto;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.member-actions\s*{[^}]*display:\s*inline-flex;[^}]*flex-wrap:\s*wrap;[^}]*justify-content:\s*flex-end;[^}]*margin-left:\s*auto;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.member-row\s*{[^}]*border-color:\s*#344256;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.42\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.avatar\s*{[^}]*border-color:\s*#58708e;[^}]*background:\s*rgba\(31,\s*41,\s*55,\s*0\.82\);[^}]*color:\s*#e5edf8;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.mini-badge\s*{[^}]*border-color:\s*rgba\(125,\s*211,\s*252,\s*0\.38\);[^}]*background:\s*rgba\(14,\s*116,\s*144,\s*0\.28\);[^}]*color:\s*#e0f2fe;[^}]*}/s,
+  );
 });
 
 test("styles diagnostics as a collapsed disclosure", () => {
@@ -170,6 +203,37 @@ test("styles diagnostics as a collapsed disclosure", () => {
   assert.match(
     styles,
     /\.diagnostics-disclosure\[open\]\s+\.diagnostics-log\s*{[^}]*display:\s*block;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.diagnostics-log\s*{[^}]*border-color:\s*#344256;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.42\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.log-line\s*{[^}]*color:\s*#d7dee8;[^}]*}/s,
+  );
+});
+
+test("styles provider parse results for dark mode", () => {
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-item-row\s*{[^}]*border-color:\s*#344256;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.56\);[^}]*color:\s*var\(--text-secondary\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-item-row\[data-item-selected="true"\]\s*{[^}]*border-color:\s*rgba\(125,\s*199,\s*238,\s*0\.46\);[^}]*background:\s*rgba\(30,\s*41,\s*59,\s*0\.92\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-quality-list\s*{[^}]*border-color:\s*#344256;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.42\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-quality-row\s*{[^}]*border-color:\s*#46566d;[^}]*background:\s*rgba\(31,\s*41,\s*55,\s*0\.74\);[^}]*color:\s*var\(--text-secondary\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.provider-quality-row\[data-quality-selected="true"\]\s*{[^}]*border-color:\s*rgba\(125,\s*211,\s*252,\s*0\.46\);[^}]*background:\s*rgba\(14,\s*116,\s*144,\s*0\.36\);[^}]*color:\s*#e0f2fe;[^}]*}/s,
   );
 });
 
@@ -194,6 +258,14 @@ test("styles chat messages as directional bubbles", () => {
   assert.match(
     styles,
     /\.chat-system-message\s*{[^}]*align-self:\s*center;[^}]*max-width:\s*90%;[^}]*text-align:\s*center;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.chat-message\s+p\s*{[^}]*border-color:\s*#58708e;[^}]*background:\s*rgba\(31,\s*41,\s*55,\s*0\.88\);[^}]*color:\s*#e5edf8;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.chat-message\.is-other\s+p\s*{[^}]*border-color:\s*rgba\(125,\s*211,\s*252,\s*0\.38\);[^}]*background:\s*rgba\(14,\s*116,\s*144,\s*0\.28\);[^}]*}/s,
   );
   assert.match(
     styles,
@@ -274,15 +346,32 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
   );
   assert.match(
     styles,
+    /\.player-controls\s*{[^}]*gap:\s*0;[^}]*right:\s*8px;[^}]*bottom:\s*4px;[^}]*left:\s*8px;[^}]*border:\s*1px solid rgba\(248,\s*250,\s*252,\s*0\.14\);[^}]*border-radius:\s*7px;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.78\);[^}]*--media-control-background:\s*transparent;[^}]*--media-control-hover-background:\s*rgba\(248,\s*250,\s*252,\s*0\.12\);[^}]*--media-control-padding:\s*0 8px;[^}]*}/s,
+  );
+  assert.match(styles, /\.player-controls > \*\s*{[^}]*margin:\s*0;[^}]*}/s);
+  assert.match(
+    styles,
+    /\.player-controls media-play-button,\s*\.player-controls media-mute-button,\s*\.player-controls media-playback-rate-button,\s*\.player-controls media-pip-button,\s*\.player-controls media-fullscreen-button\s*{[^}]*background:\s*transparent;[^}]*border-radius:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-time-pair\s*{[^}]*display:\s*inline-flex;[^}]*align-items:\s*center;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.player-controls media-time-range\[disabled\]\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
   );
   assert.match(
     styles,
-    /\.player-danmaku-inline\s*{[^}]*display:\s*inline-flex;[^}]*flex:\s*0 1 200px;[^}]*min-width:\s*132px;[^}]*max-width:\s*min\(20vw,\s*220px\);[^}]*}/s,
+    /\.player-controls media-play-button\[disabled\],\s*\.player-controls media-playback-rate-button\[disabled\]\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
   );
   assert.match(
     styles,
-    /\.player-danmaku-send\s*{[^}]*width:\s*28px;[^}]*padding:\s*0;[^}]*}/s,
+    /\.player-danmaku-inline\s*{[^}]*display:\s*inline-flex;[^}]*flex:\s*0 1 200px;[^}]*min-width:\s*132px;[^}]*max-width:\s*min\(20vw,\s*220px\);[^}]*gap:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-danmaku-send\s*{[^}]*width:\s*28px;[^}]*border-left:\s*0;[^}]*border-radius:\s*0 999px 999px 0;[^}]*padding:\s*0;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -299,6 +388,25 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
   assert.match(
     styles,
     /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-danmaku-inline\s*{[^}]*display:\s*none;[^}]*}[\s\S]*\.player-danmaku-toggle\s*{[^}]*display:\s*inline-flex;[^}]*}/s,
+  );
+});
+
+test("styles app fullscreen mode as player-only chrome", () => {
+  assert.match(
+    styles,
+    /#app:fullscreen\s+\.web-room-workspace\s*{[^}]*width:\s*100vw;[^}]*height:\s*100vh;[^}]*padding:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /#app:fullscreen\s+\.announcement-strip,\s*#app:fullscreen\s+\.chat-panel,\s*#app:fullscreen\s+\.bottom-grid\s*{[^}]*display:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /#app:fullscreen\s+\.player-chat-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*height:\s*100vh;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /#app:fullscreen\s+\.player-controls\s*{[^}]*right:\s*8px;[^}]*bottom:\s*6px;[^}]*left:\s*8px;[^}]*}/s,
   );
 });
 
@@ -386,7 +494,23 @@ test("styles settings header actions with bounded errors", () => {
   );
   assert.match(
     styles,
-    /\.authorization-modal-close\s*{[^}]*width:\s*30px;[^}]*padding:\s*0;[^}]*}/s,
+    /\.authorization-modal-heading\s*{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;[^}]*align-items:\s*center;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.authorization-modal-close\s*{[^}]*width:\s*30px;[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.platform-auth-item\s*{[^}]*border-color:\s*#344256;[^}]*background:\s*rgba\(15,\s*23,\s*42,\s*0\.42\);[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-shell\[data-theme-mode="dark"\]\s+\.auth-method-qr\s*{[^}]*border-top-color:\s*#344256;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.provider-url-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto auto;[^}]*}/s,
   );
   assert.match(
     styles,
@@ -444,7 +568,7 @@ test("keeps mobile player controls and chat composer visible", () => {
   );
   assert.match(
     styles,
-    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-controls\s*{[^}]*right:\s*10px;[^}]*bottom:\s*12px;[^}]*left:\s*10px;[^}]*}/s,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-controls\s*{[^}]*right:\s*8px;[^}]*bottom:\s*6px;[^}]*left:\s*8px;[^}]*}/s,
   );
   assert.match(
     styles,

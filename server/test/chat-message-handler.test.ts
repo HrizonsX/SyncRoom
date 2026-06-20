@@ -19,6 +19,7 @@ const CONFIG = {
     syncPingPerSecond: 1,
     syncPingBurst: 2,
     chatMessagePer5Seconds: 1,
+    danmakuMessagePer5Seconds: 2,
   },
 };
 
@@ -80,10 +81,31 @@ function createRoomServiceStub() {
 
 test("chat messages from joined members publish room chat events", async () => {
   const published: RoomEventBusMessage[] = [];
+  const appended: unknown[] = [];
   const session = createSession("session-1");
+  const roomService = {
+    ...createRoomServiceStub(),
+    async appendChatMessageForSession(
+      receivedSession: Session,
+      memberToken: string,
+      message: {
+        memberId: string;
+        displayName: string;
+        content: string;
+        timestamp: number;
+      },
+    ) {
+      appended.push({ receivedSession, memberToken, message });
+      return {
+        room: {
+          code: "ABC123",
+        },
+      };
+    },
+  };
   const handler = createMessageHandler({
     config: CONFIG,
-    roomService: createRoomServiceStub(),
+    roomService,
     logEvent() {},
     send() {},
     sendError() {
@@ -105,6 +127,18 @@ test("chat messages from joined members publish room chat events", async () => {
   });
   await handler.flushPendingPublishes();
 
+  assert.deepEqual(appended, [
+    {
+      receivedSession: session,
+      memberToken: "valid-member-token-123",
+      message: {
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "hello",
+        timestamp: 1_000,
+      },
+    },
+  ]);
   assert.equal(published.length, 1);
   assert.deepEqual(published[0], {
     type: "room_chat_message",
@@ -166,6 +200,81 @@ test("chat messages are rate limited per websocket session", async () => {
       {
         messageType: "chat:message",
         retryAfterMs: 4_000,
+      },
+    ],
+  ]);
+});
+
+test("danmaku messages are limited to one per second", async () => {
+  const errors: unknown[][] = [];
+  const published: RoomEventBusMessage[] = [];
+  let now = 0;
+  const config = {
+    ...CONFIG,
+    rateLimits: {
+      ...CONFIG.rateLimits,
+      chatMessagePer5Seconds: 10,
+    },
+  };
+  const session = createSession("session-1", {
+    rateLimitState: createSessionRateLimitState(config, now),
+  });
+  const handler = createMessageHandler({
+    config,
+    roomService: createRoomServiceStub(),
+    logEvent() {},
+    send() {},
+    sendError(...args) {
+      errors.push(args);
+    },
+    async publishRoomEvent(message) {
+      published.push(message);
+    },
+    instanceId: "node-a",
+    now: () => now,
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "first",
+      videoTime: 1,
+    },
+  });
+  now = 500;
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "second",
+      videoTime: 2,
+    },
+  });
+  now = 1_000;
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "third",
+      videoTime: 3,
+    },
+  });
+  await handler.flushPendingPublishes();
+
+  assert.equal(
+    published.filter((message) => message.type === "room_danmaku_message")
+      .length,
+    2,
+  );
+  assert.deepEqual(errors, [
+    [
+      session.socket,
+      "chat_rate_limited",
+      "Danmaku messages are limited to one message every second.",
+      {
+        messageType: "danmaku:message",
+        retryAfterMs: 500,
       },
     ],
   ]);
@@ -304,6 +413,76 @@ test("danmaku messages from joined members publish ephemeral room danmaku events
     sourceInstanceId: "node-a",
     emittedAt: 1_000,
   });
+});
+
+test("danmaku messages use a separate rate limit from text chat", async () => {
+  const errors: unknown[][] = [];
+  const published: RoomEventBusMessage[] = [];
+  let now = 0;
+  const session = createSession("session-1", {
+    rateLimitState: createSessionRateLimitState(CONFIG, now),
+  });
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: createRoomServiceStub(),
+    logEvent() {},
+    send() {},
+    sendError(...args) {
+      errors.push(args);
+    },
+    async publishRoomEvent(message) {
+      published.push(message);
+    },
+    instanceId: "node-a",
+    now: () => now,
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "chat:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "hello",
+    },
+  });
+  now = 1_000;
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "first danmaku",
+      videoTime: 12,
+    },
+  });
+  now = 2_000;
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "second danmaku",
+      videoTime: 13,
+    },
+  });
+  now = 3_000;
+  await handler.handleClientMessage(session, {
+    type: "danmaku:message",
+    payload: {
+      memberToken: "valid-member-token-123",
+      content: "third danmaku",
+      videoTime: 14,
+    },
+  });
+  await handler.flushPendingPublishes();
+
+  assert.equal(
+    published.filter((message) => message.type === "room_chat_message").length,
+    1,
+  );
+  assert.equal(
+    published.filter((message) => message.type === "room_danmaku_message")
+      .length,
+    3,
+  );
+  assert.deepEqual(errors, []);
 });
 
 test("room event consumer broadcasts danmaku without loading durable room state", async () => {

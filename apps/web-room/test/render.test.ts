@@ -139,6 +139,8 @@ test("renders the supplied joined-room desktop layout regions", () => {
   assert.match(html, /<svg class="icon" viewBox="0 0 24 24"/);
   assert.match(html, />SyncRoom</);
   assert.match(html, />同频观影，好友同声</);
+  assert.match(html, /class="announcement-message"/);
+  assert.match(html, /data-ui-icon="announcement"/);
   assert.match(html, /class="announcement-text"/);
   assert.match(html, /data-action="toggle-theme-mode"/);
   assert.match(html, /aria-pressed="false"/);
@@ -207,6 +209,10 @@ test("renders the supplied joined-room desktop layout regions", () => {
     roomInfoIndex,
   );
   const roomMetaIndex = html.indexOf('class="room-meta"', roomInfoIndex);
+  const roomMetaHtml = html.slice(
+    roomMetaIndex,
+    html.indexOf("</dl>", roomMetaIndex),
+  );
   assert.ok(roomVideoInfoIndex > roomInfoIndex);
   assert.ok(roomMetaIndex > roomVideoInfoIndex);
   assert.match(html, /视频标题/);
@@ -230,6 +236,21 @@ test("renders the supplied joined-room desktop layout regions", () => {
   );
   assert.match(diagnosticsHtml, /data-ui-icon="info"/);
   assert.match(html, /valid-join-token-123/);
+  assert.doesNotMatch(roomMetaHtml, /valid-join-token-123/);
+  assert.doesNotMatch(roomMetaHtml, /加入口令/);
+});
+
+test("renders room clock sync metrics in the room metadata card", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    clockOffsetMs: -18,
+    rttMs: 42,
+  } as WebRoomState);
+
+  assert.match(html, /data-clock-offset-ms="-18"/);
+  assert.match(html, /data-clock-rtt-ms="42"/);
+  assert.match(html, /-18ms/);
+  assert.match(html, /42ms/);
 });
 
 test("renders the joined room in dark theme mode", () => {
@@ -260,10 +281,20 @@ test("renders the player controls even before a video source is selected", () =>
 
   assert.match(html, /<video\b/);
   assert.match(html, /<media-controller\b/);
+  assert.match(html, /fullscreenelement="app"/);
+  assert.doesNotMatch(html, /fullscreenelement="#app"/);
   assert.match(html, /<media-control-bar\b/);
   assert.match(html, /data-playback-video="true"/);
   assert.match(html, /data-player-empty="true"/);
+  assert.match(
+    html,
+    /<media-play-button notooltip disabled><\/media-play-button>/,
+  );
   assert.match(html, /<media-time-range disabled><\/media-time-range>/);
+  assert.match(
+    html,
+    /class="player-time-pair"[\s\S]*<media-time-display notoggle><\/media-time-display>[\s\S]*<media-duration-display><\/media-duration-display>/,
+  );
   assert.match(html, /data-player-danmaku-controls="inline"/);
   assert.match(html, /name="playerDanmaku"/);
   assert.match(html, /data-action="send-player-danmaku"/);
@@ -283,6 +314,19 @@ test("renders the player controls even before a video source is selected", () =>
     html.indexOf("</media-control-bar>"),
   );
   assert.doesNotMatch(controlBarHtml, /slot="tooltip-/);
+  assert.match(controlBarHtml, /<media-mute-button notooltip\b/);
+  assert.match(
+    controlBarHtml,
+    /<media-playback-rate-button notooltip disabled><\/media-playback-rate-button>/,
+  );
+  assert.match(
+    controlBarHtml,
+    /<media-pip-button notooltip><\/media-pip-button>/,
+  );
+  assert.match(
+    controlBarHtml,
+    /<media-fullscreen-button notooltip><\/media-fullscreen-button>/,
+  );
   assert.doesNotMatch(controlBarHtml, /<media-play-button[^>]*title=/);
   assert.doesNotMatch(controlBarHtml, /<media-playback-rate-button[^>]*title=/);
   assert.doesNotMatch(controlBarHtml, /<media-pip-button[^>]*title=/);
@@ -319,6 +363,12 @@ test("renders a real video host for Shaka playback sources", () => {
   assert.match(html, /data-playback-video="true"/);
   assert.match(html, /data-source-type="mpd"/);
   assert.match(html, /data-playback-engine="shaka"/);
+  assert.match(html, /<media-play-button notooltip><\/media-play-button>/);
+  assert.match(
+    html,
+    /class="player-time-pair"[\s\S]*<media-time-display notoggle><\/media-time-display>[\s\S]*<media-duration-display><\/media-duration-display>/,
+  );
+  assert.doesNotMatch(html, /<media-play-button[^>]*disabled/);
   assert.doesNotMatch(html, /<media-time-range disabled>/);
   assert.doesNotMatch(html, /\scontrols(\s|>)/);
   assert.match(
@@ -339,6 +389,7 @@ test("renders an escaped private danmaku overlay above the Shaka video", () => {
       },
       danmakuMessages: [
         {
+          renderKey: "danmaku-render-key-1",
           memberId: "member-2",
           displayName: "Bob",
           content: "<img src=x onerror=alert(1)>",
@@ -352,8 +403,9 @@ test("renders an escaped private danmaku overlay above the Shaka video", () => {
   );
 
   assert.match(html, /data-danmaku-layer="true"/);
+  assert.match(html, /data-danmaku-layer="true"[^>]*noautohide/);
   assert.match(html, /data-danmaku-paused="false"/);
-  assert.match(html, /data-danmaku-key=/);
+  assert.match(html, /data-danmaku-key="danmaku-render-key-1"/);
   assert.match(html, /data-danmaku-video-time="42\.25"/);
   assert.match(html, /class="danmaku-item is-scroll"/);
   assert.match(html, /--danmaku-lane-y:\s*0px;/);
@@ -514,6 +566,74 @@ test("renders voice controls inside the chat room instead of settings", () => {
   assert.match(html, /<svg\b[^>]*viewBox="0 0 24 24"/);
 });
 
+test("renders host member management actions for other members", () => {
+  const html = renderWebRoomApp(joinedRoomState);
+
+  assert.match(html, /data-action="set-member-permission"/);
+  assert.match(html, /data-member-permission="voice"/);
+  assert.match(html, /data-member-permission="playbackControl"/);
+  assert.match(html, /data-member-permission="chat"/);
+  assert.match(html, /data-member-permission="danmaku"/);
+  assert.match(html, /data-action="transfer-host"/);
+  assert.match(html, /data-action="kick-member"/);
+  const managedMemberStart = html.indexOf('data-member-id="member-2"');
+  const memberRowStart = html.lastIndexOf(
+    '<li class="member-row">',
+    managedMemberStart,
+  );
+  const memberRowHtml = html.slice(
+    memberRowStart,
+    html.indexOf("</li>", memberRowStart),
+  );
+  assert.match(memberRowHtml, /class="member-main"/);
+  assert.ok(
+    memberRowHtml.indexOf('class="member-name"') <
+      memberRowHtml.indexOf('class="member-actions"'),
+  );
+});
+
+test("renders denied member permissions as disabled controls", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    currentMemberId: "member-2",
+    hostMemberId: "member-host",
+    members: [
+      { id: "member-host", name: "Alice" },
+      {
+        id: "member-2",
+        name: "Bob",
+        permissions: {
+          voice: false,
+          playbackControl: false,
+          chat: false,
+          danmaku: false,
+        },
+      },
+    ],
+  });
+
+  assert.match(html, /<media-play-button notooltip disabled>/);
+  assert.match(html, /<media-time-range disabled>/);
+  assert.match(html, /<media-playback-rate-button notooltip disabled>/);
+  assert.match(html, /name="chat" maxlength="500" disabled/);
+  assert.match(html, /data-action="voice-toggle"[\s\S]*disabled/);
+  assert.match(html, /data-action="send-player-danmaku"[\s\S]*disabled/);
+  assert.doesNotMatch(html, /data-action="kick-member"/);
+});
+
+test("disables danmaku sending during the one-second send cooldown", () => {
+  const html = withMockedNow(10_250, () =>
+    renderWebRoomApp({
+      ...joinedRoomState,
+      danmakuCooldownUntil: 11_000,
+    }),
+  );
+
+  assert.match(html, /data-danmaku-cooldown="true"/);
+  assert.match(html, /data-danmaku-cooldown-seconds="1"/);
+  assert.match(html, /data-action="send-player-danmaku"[\s\S]*disabled/);
+});
+
 test("renders shell boundaries for provider auth and host picker", () => {
   const html = renderWebRoomApp(joinedRoomState);
 
@@ -607,6 +727,15 @@ test("renders authorization management as a platform list with Bilibili QR only"
   assert.match(html, /role="dialog"/);
   assert.match(html, /aria-modal="true"/);
   assert.match(html, /data-action="close-authorization-management"/);
+  assert.match(html, /class="authorization-modal-heading"/);
+  const modalHeadingStart = html.indexOf('class="authorization-modal-heading"');
+  const modalCloseIndex = html.indexOf(
+    'data-action="close-authorization-management"',
+    modalHeadingStart,
+  );
+  assert.ok(
+    html.indexOf("settings-tile-heading", modalHeadingStart) < modalCloseIndex,
+  );
   assert.match(
     html,
     /<button type="button" class="icon-button authorization-modal-close" data-action="close-authorization-management" aria-label="关闭授权管理">[\s\S]*data-ui-icon="close"[\s\S]*<span class="visually-hidden">关闭授权管理<\/span>[\s\S]*<\/button>/,
@@ -625,14 +754,36 @@ test("renders authorization management as a platform list with Bilibili QR only"
   assert.match(html, /class="platform-logo platform-logo-bilibili"/);
   assert.match(html, /class="platform-logo-svg"/);
   assert.match(html, /aria-label="Bilibili 官方 Logo"/);
-  assert.match(html, /data-action="bilibili-login-qr"/);
-  assert.match(html, /二维码授权/);
+  assert.match(html, /正在准备二维码登录。/);
+  assert.match(html, /data-action="collapse-bilibili-auth"/);
+  assert.match(html, />收起二维码<\/span>/);
+  assert.doesNotMatch(html, /data-action="bilibili-login-qr"/);
   assert.doesNotMatch(html, /data-action="bilibili-logout"/);
   assert.doesNotMatch(html, /退出授权/);
   assert.doesNotMatch(html, /data-action="bilibili-login-sms"/);
   assert.doesNotMatch(html, /name="bilibiliPhone"/);
   assert.doesNotMatch(html, /name="bilibiliSmsCode"/);
   assert.doesNotMatch(html, />SMS</);
+});
+
+test("renders authorization retry action instead of QR placeholder after verification fails", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "unauthorized",
+    authPanel: {
+      open: true,
+      method: "qr",
+      phase: "failed",
+      message: "Bilibili authorization could not be verified.",
+    },
+  });
+
+  assert.match(html, /B 站授权未通过验证。/);
+  assert.doesNotMatch(html, /Bilibili authorization could not be verified/);
+  assert.match(html, /data-action="bilibili-login-qr"/);
+  assert.match(html, /platform-auth-action/);
+  assert.doesNotMatch(html, /class="auth-method auth-method-qr"/);
+  assert.doesNotMatch(html, /auth-qr-placeholder/);
 });
 
 test("keeps Bilibili QR method hidden until the authorization action starts", () => {
@@ -657,6 +808,26 @@ test("keeps Bilibili QR method hidden until the authorization action starts", ()
   assert.doesNotMatch(html, /data-action="bilibili-logout"/);
 });
 
+test("localizes pending QR authorization and offers a collapse action", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "checking",
+    authPanel: {
+      open: true,
+      method: "qr",
+      phase: "pending",
+      qrCodeUrl: "data:image/png;base64,qr",
+      message: "Waiting for scan.",
+    },
+  });
+
+  assert.match(html, /等待扫码/);
+  assert.doesNotMatch(html, /Waiting for scan/);
+  assert.match(html, /data-action="collapse-bilibili-auth"/);
+  assert.match(html, />收起二维码<\/span>/);
+  assert.match(html, /class="auth-method auth-method-qr"/);
+});
+
 test("omits text-chat danmaku controls from the chat input", () => {
   const html = renderWebRoomApp(joinedRoomState);
 
@@ -676,10 +847,12 @@ test("renders Bilibili QR auth data url as an image source", () => {
       method: "qr",
       phase: "pending",
       qrCodeUrl: "data:image/png;base64,qr",
-      message: "Scan the Bilibili QR code.",
+      message: "Scan the Bilibili QR code to authorize playback.",
     },
   });
 
+  assert.match(html, /请使用 B 站 App 扫描二维码。/);
+  assert.doesNotMatch(html, /Scan the Bilibili QR code/);
   assert.match(
     html,
     /<img class="auth-qr" src="data:image\/png;base64,qr" alt="Bilibili QR" \/>/,
@@ -775,12 +948,30 @@ test("renders host picker controls for Bilibili parse results and playback polic
   assert.match(html, /data-action="select-provider-item"/);
   assert.match(html, /data-item-id="cid-1"/);
   assert.match(html, /data-item-selected="true"/);
+  const selectedItemStart = html.indexOf('data-item-id="cid-1"');
+  const selectedItemHtml = html.slice(
+    html.lastIndexOf("<button", selectedItemStart),
+    html.indexOf("</button>", selectedItemStart),
+  );
+  assert.match(selectedItemHtml, /Bilibili video/);
+  assert.doesNotMatch(selectedItemHtml, />Part 1</);
   assert.match(html, /data-action="select-provider-quality"/);
   assert.match(html, /data-candidate-id="dash-avc-720p"/);
   assert.match(html, /data-quality-selected="true"/);
   assert.match(html, /1080P/);
   assert.match(html, /720P/);
   assert.match(html, /data-action="share-provider-item"/);
+  const providerUrlRowStart = html.indexOf('class="provider-url-row"');
+  const providerUrlRowHtml = html.slice(
+    providerUrlRowStart,
+    html.indexOf("</div>", providerUrlRowStart),
+  );
+  assert.match(providerUrlRowHtml, /data-action="parse-bilibili-url"/);
+  assert.match(providerUrlRowHtml, /data-action="share-provider-item"/);
+  assert.ok(
+    providerUrlRowHtml.indexOf('data-action="parse-bilibili-url"') <
+      providerUrlRowHtml.indexOf('data-action="share-provider-item"'),
+  );
 });
 
 test("omits the default provider picker helper copy", () => {

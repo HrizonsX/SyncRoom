@@ -54,6 +54,17 @@ export const MAX_ANNOUNCEMENT_ITEMS = 8;
 export const ANNOUNCEMENT_TEXT_MAX_LENGTH = 160;
 export const ANNOUNCEMENT_ID_MAX_LENGTH = 64;
 export const CHAT_MESSAGE_MAX_LENGTH = 500;
+export const ROOM_CHAT_HISTORY_LIMIT = 200;
+export const ROOM_CHAT_MESSAGE_KINDS = ["user", "system"] as const;
+export type RoomChatMessageKind = (typeof ROOM_CHAT_MESSAGE_KINDS)[number];
+export const ROOM_SYSTEM_CHAT_EVENT_TYPES = [
+  "member_joined",
+  "member_left",
+  "voice_unmuted",
+  "voice_muted",
+] as const;
+export type RoomSystemChatEventType =
+  (typeof ROOM_SYSTEM_CHAT_EVENT_TYPES)[number];
 export const DANMAKU_MESSAGE_MAX_LENGTH = 120;
 export const DANMAKU_MODES = ["scroll", "top", "bottom"] as const;
 export type DanmakuMode = (typeof DANMAKU_MODES)[number];
@@ -147,6 +158,39 @@ export interface PlaybackState {
 export interface RoomMember {
   id: string;
   name: string;
+  permissions?: RoomMemberPermissions;
+}
+
+export const ROOM_MEMBER_PERMISSION_NAMES = [
+  "voice",
+  "playbackControl",
+  "chat",
+  "danmaku",
+] as const;
+
+export type RoomMemberPermissionName =
+  (typeof ROOM_MEMBER_PERMISSION_NAMES)[number];
+
+export type RoomMemberPermissions = Record<RoomMemberPermissionName, boolean>;
+
+export const DEFAULT_ROOM_MEMBER_PERMISSIONS: RoomMemberPermissions = {
+  voice: true,
+  playbackControl: true,
+  chat: true,
+  danmaku: true,
+};
+
+export function createDefaultRoomMemberPermissions(): RoomMemberPermissions {
+  return { ...DEFAULT_ROOM_MEMBER_PERMISSIONS };
+}
+
+export interface RoomChatMessage {
+  kind?: RoomChatMessageKind;
+  systemEventType?: RoomSystemChatEventType;
+  memberId: string;
+  displayName: string;
+  content: string;
+  timestamp: number;
 }
 
 export interface RoomState {
@@ -155,6 +199,7 @@ export interface RoomState {
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
   members: RoomMember[];
+  chatMessages?: RoomChatMessage[];
 }
 
 export interface AnnouncementItem {

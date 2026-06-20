@@ -8,6 +8,7 @@ import type {
 export const WINDOW_MINUTE_MS = 60_000;
 export const WINDOW_10_SECONDS_MS = 10_000;
 export const WINDOW_5_SECONDS_MS = 5_000;
+export const WINDOW_SECOND_MS = 1_000;
 
 export function createWindowCounter(now: number = Date.now()): WindowCounter {
   return { windowStart: now, count: 0 };
@@ -33,6 +34,7 @@ export function createSessionRateLimitState(
     videoShare: createWindowCounter(now),
     syncRequest: createWindowCounter(now),
     chatMessage: createWindowCounter(now),
+    danmakuMessage: createWindowCounter(now),
     playbackUpdate: createTokenBucket(
       config.rateLimits.playbackUpdateBurst,
       now,

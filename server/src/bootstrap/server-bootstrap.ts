@@ -223,6 +223,7 @@ export function getDefaultSecurityConfig(): SecurityConfig {
       playbackUpdateBurst: 12,
       syncRequestPer10Seconds: 6,
       chatMessagePer5Seconds: 1,
+      danmakuMessagePer5Seconds: 8,
       syncPingPerSecond: 1,
       syncPingBurst: 2,
       adminLoginFailuresPerIpPerMinute: 10,

@@ -54,7 +54,76 @@ test("applies room state messages to renderable web-room state", () => {
     actorId: "member-1",
     seq: 1,
   });
-  assert.match(nextState.diagnostics.at(-1) ?? "", /room:state/);
+  assert.match(
+    nextState.diagnostics.at(-1) ?? "",
+    /room:state applied members:2 chat:0 source:- playback:playing/,
+  );
+});
+
+test("restores room chat history from room state after refresh rejoin", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-2",
+    displayName: "Bob",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: null,
+      playback: null,
+      members: [
+        { id: "member-1", name: "Alice" },
+        { id: "member-2", name: "Bob" },
+      ],
+      chatMessages: [
+        {
+          memberId: "member-1",
+          displayName: "Alice",
+          content: "hello",
+          timestamp: 1_000,
+        },
+        {
+          kind: "system",
+          systemEventType: "member_joined",
+          memberId: "member-1",
+          displayName: "Alice",
+          content: "Alice 加入了房间",
+          timestamp: 1_500,
+        },
+        {
+          memberId: "member-2",
+          displayName: "Bob",
+          content: "收到",
+          timestamp: 2_000,
+        },
+      ],
+    },
+  });
+
+  assert.deepEqual(nextState.chatMessages, [
+    {
+      memberId: "member-1",
+      displayName: "Alice",
+      content: "hello",
+      timestamp: 1_000,
+    },
+    {
+      kind: "system",
+      systemEventType: "member_joined",
+      memberId: "member-1",
+      displayName: "Alice",
+      content: "Alice 加入了房间",
+      timestamp: 1_500,
+    },
+    {
+      memberId: "member-2",
+      displayName: "Bob",
+      content: "收到",
+      timestamp: 2_000,
+    },
+  ]);
 });
 
 test("restores host identity from room state after refresh rejoin", () => {
@@ -142,6 +211,47 @@ test("extracts member-safe provider playback status from room state", () => {
   );
 });
 
+test("uses provider video titles for refreshed shared Bilibili room state", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-2",
+    hostMemberId: "member-host",
+    displayName: "Bob",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "BV1xx411c7mD",
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        title: "anthropic_成片_白板版",
+        provider: {
+          providerId: "bilibili",
+          title: "Anthropic史：从OpenAI叛逃者，到估值万亿的AI帝国",
+          item: {
+            itemId: "BV1xx411c7mD:cid-987654",
+            title: "anthropic_成片_白板版",
+            kind: "part",
+          },
+          policy: {
+            proxy: true,
+            shared: true,
+          },
+        },
+      },
+      playback: null,
+      members: [],
+    },
+  });
+
+  assert.equal(
+    nextState.videoTitle,
+    "Anthropic史：从OpenAI叛逃者，到估值万亿的AI帝国",
+  );
+});
+
 test("applies chat rate-limit errors as a client cooldown", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",
@@ -218,6 +328,68 @@ test("does not start a chat cooldown for other members messages", () => {
 
   assert.equal(nextState.chatMessages.length, 1);
   assert.equal(nextState.chatCooldownUntil, undefined);
+});
+
+test("records non-chat server errors in diagnostics with code and message", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "error",
+    payload: {
+      code: "invalid_payload",
+      message: "Invalid provider request.",
+      messageType: "video:share",
+    },
+  });
+
+  assert.match(nextState.diagnostics.at(-1) ?? "", /invalid_payload/);
+  assert.match(nextState.diagnostics.at(-1) ?? "", /Invalid provider request/);
+  assert.match(nextState.diagnostics.at(-1) ?? "", /video:share/);
+});
+
+test("applies sync pong samples as room clock metrics", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const firstState = applyServerMessage(
+    state,
+    {
+      type: "sync:pong",
+      payload: {
+        clientSendTime: 1_000,
+        serverReceiveTime: 1_120,
+        serverSendTime: 1_130,
+      },
+    },
+    { now: () => 1_250 },
+  );
+
+  assert.equal(firstState.rttMs, 240);
+  assert.equal(firstState.clockOffsetMs, 0);
+  assert.match(firstState.diagnostics.at(-1) ?? "", /sync:pong/);
+
+  const secondState = applyServerMessage(
+    firstState,
+    {
+      type: "sync:pong",
+      payload: {
+        clientSendTime: 2_000,
+        serverReceiveTime: 2_170,
+        serverSendTime: 2_170,
+      },
+    },
+    { now: () => 2_260 },
+  );
+
+  assert.equal(secondState.rttMs, 246);
+  assert.equal(secondState.clockOffsetMs, 12);
 });
 
 test("applies announcement updates and chat broadcasts", () => {
@@ -445,4 +617,66 @@ test("applies private room danmaku broadcasts as ephemeral joined-state messages
     "<script>alert(1)</script>",
   );
   assert.equal(withRoomState.danmakuMessages.length, 1);
+});
+
+test("assigns unique render keys to rapid duplicate danmaku messages", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+  const payload = {
+    roomCode: "ABC123",
+    memberId: "member-2",
+    displayName: "Bob",
+    content: "same",
+    videoTime: 42.25,
+    mode: "scroll",
+    color: "#ffffff",
+    timestamp: 1_725_000_000_000,
+  };
+
+  const first = applyServerMessage(state, {
+    type: "danmaku:message",
+    payload,
+  });
+  const second = applyServerMessage(first, {
+    type: "danmaku:message",
+    payload,
+  });
+
+  assert.equal(second.danmakuMessages.length, 2);
+  assert.notEqual(
+    second.danmakuMessages[0]?.renderKey,
+    second.danmakuMessages[1]?.renderKey,
+  );
+});
+
+test("starts a one-second danmaku cooldown after the current member message is accepted", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(
+    state,
+    {
+      type: "danmaku:message",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "front row",
+        videoTime: 42.25,
+        mode: "scroll",
+        color: "#ffffff",
+        timestamp: 1_725_000_000_000,
+      },
+    },
+    { now: () => 10_000 },
+  );
+
+  assert.equal(nextState.danmakuMessages.length, 1);
+  assert.equal(nextState.danmakuCooldownUntil, 11_000);
 });

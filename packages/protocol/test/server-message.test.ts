@@ -49,6 +49,141 @@ test("accepts a valid room:state message", () => {
   );
 });
 
+test("accepts room:state messages with transient chat history", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: null,
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+        chatMessages: [
+          {
+            memberId: "member-1",
+            displayName: "Alice",
+            content: "hello",
+            timestamp: 1_000,
+          },
+          {
+            kind: "system",
+            systemEventType: "member_joined",
+            memberId: "member-1",
+            displayName: "Alice",
+            content: "Alice joined room",
+            timestamp: 1_100,
+          },
+        ],
+      },
+    }),
+    true,
+  );
+});
+
+test("accepts room:state with member permissions", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-1",
+        sharedVideo: null,
+        playback: null,
+        members: [
+          {
+            id: "member-1",
+            name: "Alice",
+          },
+          {
+            id: "member-2",
+            name: "Bob",
+            permissions: {
+              voice: false,
+              playbackControl: true,
+              chat: false,
+              danmaku: false,
+            },
+          },
+        ],
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects room:state messages with invalid chat history", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: null,
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+        chatMessages: [
+          {
+            memberId: "",
+            displayName: "Alice",
+            content: "hello",
+            timestamp: 1_000,
+          },
+        ],
+      },
+    }),
+    false,
+  );
+});
+
+test("rejects room:state system chat messages without an event type", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: null,
+        playback: null,
+        members: [{ id: "member-1", name: "Alice" }],
+        chatMessages: [
+          {
+            kind: "system",
+            memberId: "member-1",
+            displayName: "Alice",
+            content: "Alice joined room",
+            timestamp: 1_000,
+          },
+        ],
+      },
+    }),
+    false,
+  );
+});
+
+test("rejects room:state with malformed member permissions", () => {
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        sharedVideo: null,
+        playback: null,
+        members: [
+          {
+            id: "member-2",
+            name: "Bob",
+            permissions: {
+              voice: "no",
+              playbackControl: true,
+              chat: true,
+              danmaku: true,
+            },
+          },
+        ],
+      },
+    }),
+    false,
+  );
+});
+
 test("rejects room:state when hostMemberId format is invalid", () => {
   assert.equal(
     isServerMessage({

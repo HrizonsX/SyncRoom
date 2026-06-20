@@ -14,11 +14,25 @@ import {
   preservePlaybackVideoElement,
 } from "./playback-video-preservation.js";
 import {
+  captureDanmakuLayerAnimationSnapshots,
   findDanmakuLayerElement,
   parkDanmakuLayerElement,
   preserveDanmakuLayerElement,
   removeDanmakuLayerParkingElement,
+  restoreDanmakuLayerAnimationSnapshots,
 } from "./danmaku-layer-preservation.js";
+import {
+  readChatScrollState,
+  restoreChatScrollState,
+} from "./chat-scroll-state.js";
+import {
+  readChatInputDraftState,
+  restoreChatInputDraftState,
+} from "./chat-input-draft-state.js";
+import {
+  readDisclosureOpenState,
+  restoreDisclosureOpenState,
+} from "./disclosure-state.js";
 import { createProviderApiClient } from "./provider-api-client.js";
 import {
   getPlaybackErrorMessage,
@@ -83,20 +97,55 @@ if (app) {
   const appRoot = app;
   let lastPlaybackErrorKey: string | undefined;
   let playbackSeq = 0;
+  let activeDanmakuRoomKey: string | undefined;
+  const renderedDanmakuKeys = new Set<string>();
   const playbackControllerRef: {
     current?: ReturnType<typeof createWebRoomPlaybackController>;
   } = {};
 
+  function getDanmakuRoomKey(state: WebRoomState): string | undefined {
+    return state.view === "joined"
+      ? `${state.roomCode}:${state.currentMemberId}`
+      : undefined;
+  }
+
   function render(state: WebRoomState): void {
+    const nextDanmakuRoomKey = getDanmakuRoomKey(state);
+    const shouldPreserveDanmakuLayer =
+      nextDanmakuRoomKey !== undefined &&
+      nextDanmakuRoomKey === activeDanmakuRoomKey;
+    if (nextDanmakuRoomKey !== activeDanmakuRoomKey) {
+      renderedDanmakuKeys.clear();
+      activeDanmakuRoomKey = nextDanmakuRoomKey;
+    }
+
     const existingPlaybackVideo = findPlaybackVideoElement(appRoot);
-    const existingDanmakuLayer = findDanmakuLayerElement(appRoot);
+    const existingDanmakuLayer = shouldPreserveDanmakuLayer
+      ? findDanmakuLayerElement(appRoot)
+      : null;
+    const chatInputDraftState = readChatInputDraftState(appRoot);
+    const chatScrollState = readChatScrollState(appRoot);
+    const disclosureOpenState = readDisclosureOpenState(appRoot);
     const danmakuLayerParking = parkDanmakuLayerElement(existingDanmakuLayer);
+    const danmakuAnimationSnapshots =
+      captureDanmakuLayerAnimationSnapshots(existingDanmakuLayer);
     document.documentElement.dataset.webRoomTheme =
       state.themeMode === "dark" ? "dark" : "light";
     try {
       appRoot.innerHTML = renderWebRoomApp(state);
+      restoreChatInputDraftState(appRoot, chatInputDraftState);
+      restoreChatScrollState(appRoot, chatScrollState);
+      restoreDisclosureOpenState(appRoot, disclosureOpenState);
       preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
-      preserveDanmakuLayerElement(appRoot, existingDanmakuLayer);
+      preserveDanmakuLayerElement(
+        appRoot,
+        existingDanmakuLayer,
+        renderedDanmakuKeys,
+      );
+      restoreDanmakuLayerAnimationSnapshots(
+        findDanmakuLayerElement(appRoot),
+        danmakuAnimationSnapshots,
+      );
       void playbackControllerRef.current?.sync(appRoot, state);
     } finally {
       removeDanmakuLayerParkingElement(danmakuLayerParking);
@@ -213,6 +262,19 @@ if (app) {
     }
   }
 
+  function sendChatInput(input: HTMLInputElement | null): void {
+    if (
+      !input ||
+      input.closest<HTMLElement>(".chat-input-row")?.dataset.chatCooldown ===
+        "true"
+    ) {
+      return;
+    }
+
+    controller.sendChat(input.value);
+    input.value = "";
+  }
+
   appRoot.addEventListener("click", (event) => {
     const targetElement = event.target instanceof Element ? event.target : null;
     updatePlayerVolumePanelFromClick(targetElement);
@@ -261,12 +323,9 @@ if (app) {
     }
 
     if (action === "send-chat") {
-      const chatInput =
-        appRoot.querySelector<HTMLInputElement>('input[name="chat"]');
-      controller.sendChat(chatInput?.value ?? "");
-      if (chatInput) {
-        chatInput.value = "";
-      }
+      sendChatInput(
+        appRoot.querySelector<HTMLInputElement>('input[name="chat"]'),
+      );
       return;
     }
 
@@ -286,6 +345,34 @@ if (app) {
       return;
     }
 
+    if (action === "set-member-permission") {
+      const targetMemberId = actionElement.dataset.memberId ?? "";
+      const permission = actionElement.dataset.memberPermission;
+      if (
+        permission === "voice" ||
+        permission === "playbackControl" ||
+        permission === "chat" ||
+        permission === "danmaku"
+      ) {
+        controller.setRoomMemberPermission({
+          targetMemberId,
+          permission,
+          allowed: actionElement.dataset.memberPermissionAllowed === "true",
+        });
+      }
+      return;
+    }
+
+    if (action === "kick-member") {
+      controller.kickRoomMember(actionElement.dataset.memberId ?? "");
+      return;
+    }
+
+    if (action === "transfer-host") {
+      controller.transferRoomHost(actionElement.dataset.memberId ?? "");
+      return;
+    }
+
     if (action === "authorization-management") {
       controller.openAuthorizationPanel();
       return;
@@ -298,6 +385,11 @@ if (app) {
 
     if (action === "bilibili-login-qr") {
       controller.startBilibiliAuth({ method: "qr" });
+      return;
+    }
+
+    if (action === "collapse-bilibili-auth") {
+      controller.collapseBilibiliAuth();
       return;
     }
 
@@ -359,10 +451,21 @@ if (app) {
 
   appRoot.addEventListener("keydown", (event) => {
     const input = event.target;
-    if (
-      !(input instanceof HTMLInputElement) ||
-      input.dataset.playerDanmakuInput !== "true"
-    ) {
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+
+    if (input.name === "chat") {
+      if (event.key !== "Enter" || event.isComposing) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      sendChatInput(input);
+      return;
+    }
+
+    if (input.dataset.playerDanmakuInput !== "true") {
       return;
     }
 
@@ -390,6 +493,7 @@ if (app) {
     controller.setProviderPlaybackPolicy({
       proxy: getInputChecked(appRoot, "providerProxy"),
       shared: getInputChecked(appRoot, "providerShared"),
+      url: getInputValue(appRoot, "bilibiliUrl"),
     });
   });
 

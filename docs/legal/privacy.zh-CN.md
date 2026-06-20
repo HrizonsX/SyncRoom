@@ -52,7 +52,7 @@ LiveKit 仅用于房间语音，不用于分发共享观影的主视频流。网
 
 ### 1.6 临时视频站点授权
 
-当网页房间房主主动使用 Bilibili 二维码或短信登录时，服务端可能会临时保存完成 Bilibili API 请求所需的授权凭据，例如 Cookie、CSRF 或等效令牌。这些凭据仅保存在服务端临时授权状态中，用于房主所在房间的 Bilibili 解析和 proxy 播放。
+当网页房间房主主动使用 Bilibili 二维码授权时，服务端可能会临时保存完成 Bilibili API 请求所需的授权凭据，例如 Cookie、CSRF 或等效令牌。这些凭据仅保存在服务端临时授权状态中，用于房主所在房间的 Bilibili 解析和 proxy 播放。
 
 临时授权凭据不会写入持久化 room store、Admin 页面、审计日志、错误响应或成员可见 payload。成员不会收到房主的 Bilibili 凭据。
 

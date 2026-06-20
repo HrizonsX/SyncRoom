@@ -1127,6 +1127,154 @@ test("Bilibili provider parses normal video parts into safe playback candidates"
   assert.match(mock.requests[3]?.headers.get("user-agent") ?? "", /Mozilla/);
 });
 
+test("Bilibili provider expands accepted video qualities into selectable candidates", async () => {
+  const mock = createMockFetch([
+    {
+      body: {
+        code: 0,
+        data: {
+          aid: 123456,
+          bvid: "BV1quality",
+          title: "Quality Video",
+          pages: [
+            {
+              cid: 111,
+              page: 1,
+              part: "Part 1",
+              duration: 60,
+            },
+          ],
+        },
+      },
+    },
+    {
+      body: {
+        code: 0,
+        data: {
+          b_3: "parse-buvid-3",
+          b_4: "parse-buvid-4",
+        },
+      },
+    },
+    {
+      body: {
+        code: -101,
+        message: "not logged in",
+        data: {
+          isLogin: false,
+          wbi_img: {
+            img_url:
+              "https://i0.hdslb.com/bfs/wbi/abcdefghijklmnopqrstuvwxyzabcdef.png",
+            sub_url:
+              "https://i0.hdslb.com/bfs/wbi/0123456789abcdef0123456789abcdef.png",
+          },
+        },
+      },
+    },
+    {
+      body: {
+        code: 0,
+        data: {
+          quality: 80,
+          accept_quality: [80, 64],
+          accept_description: ["1080P", "720P"],
+          durl: [
+            {
+              order: 1,
+              url: "https://upos.example.test/video-cid-111-1080p.mp4",
+              length: 60_000,
+              size: 9_000_000,
+            },
+          ],
+          support_formats: [
+            {
+              quality: 80,
+              new_description: "1080P",
+              codecs: ["avc1.640028"],
+            },
+            {
+              quality: 64,
+              new_description: "720P",
+              codecs: ["avc1.64001f"],
+            },
+          ],
+        },
+      },
+    },
+    {
+      body: {
+        code: 0,
+        data: {
+          quality: 64,
+          accept_quality: [80, 64],
+          accept_description: ["1080P", "720P"],
+          durl: [
+            {
+              order: 1,
+              url: "https://upos.example.test/video-cid-111-720p.mp4",
+              length: 60_000,
+              size: 6_000_000,
+            },
+          ],
+          support_formats: [
+            {
+              quality: 80,
+              new_description: "1080P",
+              codecs: ["avc1.640028"],
+            },
+            {
+              quality: 64,
+              new_description: "720P",
+              codecs: ["avc1.64001f"],
+            },
+          ],
+        },
+      },
+    },
+  ]);
+  const provider = createBilibiliProvider({
+    fetch: mock.fetch,
+    now: () => 1_700_000_000_000,
+  });
+
+  const result = await provider.parse({
+    matchedUrl: {
+      providerId: "bilibili",
+      kind: "ugc",
+      rawId: "BV1quality",
+      page: 1,
+      normalizedUrl: "https://www.bilibili.com/video/BV1quality",
+      requiresResolution: false,
+    },
+    policy: { proxy: true, shared: true },
+    credentials: {
+      cookies: "SESSDATA=session-secret; bili_jct=csrf-secret",
+      csrf: "csrf-secret",
+    },
+  });
+
+  assert.deepEqual(
+    result.items[0]?.candidates.map((candidate) => candidate.qualityLabel),
+    ["1080P", "720P"],
+  );
+  assert.deepEqual(
+    result.items[0]?.candidates.map((candidate) => candidate.url),
+    [
+      "https://upos.example.test/video-cid-111-1080p.mp4",
+      "https://upos.example.test/video-cid-111-720p.mp4",
+    ],
+  );
+  assert.equal(result.items[0]?.defaultCandidateId, "mp4-80-1");
+  assert.equal(
+    new URL(mock.requests[3]?.url ?? "").searchParams.get("qn"),
+    "0",
+  );
+  assert.equal(
+    new URL(mock.requests[4]?.url ?? "").searchParams.get("qn"),
+    "64",
+  );
+});
+
 test("Bilibili provider parses shared=false video without host credentials", async () => {
   const mock = createMockFetch([
     {

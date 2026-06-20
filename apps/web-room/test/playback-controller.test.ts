@@ -76,7 +76,9 @@ async function waitForCondition(
   assert.fail(message);
 }
 
-function createJoinedPlaybackState(sourceUrl: string): WebRoomState {
+function createJoinedPlaybackState(
+  sourceUrl: string,
+): Extract<WebRoomState, { view: "joined" }> {
   return {
     view: "joined",
     connectionState: "connected",
@@ -385,6 +387,73 @@ test("applies persisted self playback after a refreshed media element loads", as
   video.currentTime = 0;
   now = 8_100;
   await controller.sync(createPlaybackRoot(video), state);
+
+  assert.equal(video.currentTime, 0);
+});
+
+test("hydrates persisted self playback when a refreshed controller sees an already loaded source", async () => {
+  const video = new FakeEventedVideoElement();
+  let now = 8_000;
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-host",
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    }),
+    nextSeq: () => 1,
+    dispatchPlaybackUpdate: () => undefined,
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+
+  video.currentTime = 0;
+  video.paused = true;
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      currentTime: 42,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 9,
+    },
+  });
+
+  assert.equal(video.currentTime, 45);
+  assert.equal(video.paused, false);
+
+  video.currentTime = 0;
+  now = 8_100;
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      currentTime: 42,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 9,
+    },
+  });
 
   assert.equal(video.currentTime, 0);
 });

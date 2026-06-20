@@ -1,4 +1,8 @@
-import type { ClientMessage } from "@syncroom/protocol";
+import type {
+  ClientMessage,
+  RoomChatMessage,
+  RoomSystemChatEventType,
+} from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import { performance } from "node:perf_hooks";
 import type {
@@ -11,9 +15,12 @@ import {
   WINDOW_10_SECONDS_MS,
   WINDOW_5_SECONDS_MS,
   WINDOW_MINUTE_MS,
+  WINDOW_SECOND_MS,
 } from "./rate-limit.js";
 import {
   CHAT_RATE_LIMITED_MESSAGE,
+  DANMAKU_RATE_LIMITED_MESSAGE,
+  MEMBER_KICKED_MESSAGE,
   MEMBER_TOKEN_INVALID_MESSAGE,
   RATE_LIMITED_MESSAGE,
   UNSUPPORTED_PROTOCOL_VERSION_MESSAGE,
@@ -42,6 +49,7 @@ export function createMessageHandler(options: {
       playbackUpdateBurst: number;
       syncRequestPer10Seconds: number;
       chatMessagePer5Seconds: number;
+      danmakuMessagePer5Seconds: number;
       syncPingPerSecond: number;
       syncPingBurst: number;
     };
@@ -68,7 +76,33 @@ export function createMessageHandler(options: {
       room: { code: string } | null;
       notifyRoom?: boolean;
       memberRemoved?: boolean;
+      hostTransferred?: boolean;
     }>;
+    setRoomMemberPermissionForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+      permission: Extract<
+        ClientMessage,
+        { type: "room:member-permission:set" }
+      >["payload"]["permission"],
+      allowed: boolean,
+    ) => Promise<{ room: { code: string } }>;
+    kickRoomMemberForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+    ) => Promise<{
+      room: { code: string };
+      targetSession: Session;
+      targetMemberId: string;
+      targetMemberToken: string;
+    }>;
+    transferRoomHostForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+    ) => Promise<{ room: { code: string } }>;
     shareVideoForSession: (
       session: Session,
       memberToken: string,
@@ -100,6 +134,15 @@ export function createMessageHandler(options: {
       memberToken: string,
       messageType: ClientMessage["type"],
     ) => Promise<import("./types.js").RoomStoreRoomState>;
+    appendChatMessageForSession?: (
+      session: Session,
+      memberToken: string,
+      message: RoomChatMessage,
+    ) => Promise<{ room: { code: string } }>;
+    appendSystemChatMessageForRoom?: (
+      roomCode: string,
+      message: RoomChatMessage,
+    ) => Promise<{ room: { code: string } } | null>;
     getVoiceMemberAccessForSession?: (
       session: Session,
       memberToken: string,
@@ -159,6 +202,13 @@ export function createMessageHandler(options: {
   const maxPendingPublishes = options.maxPendingPublishes ?? 256;
   const backpressureWaitMs = options.backpressureWaitMs ?? 5_000;
   const publishTimeoutMs = options.publishTimeoutMs ?? 5_000;
+
+  const systemChatSuffix: Record<RoomSystemChatEventType, string> = {
+    member_joined: "加入了房间",
+    member_left: "离开了房间",
+    voice_unmuted: "开启了麦克风",
+    voice_muted: "关闭了麦克风",
+  };
 
   function recordPlaybackReport(
     roomCode: string,
@@ -431,6 +481,41 @@ export function createMessageHandler(options: {
     }
   }
 
+  async function appendSystemChatHistory(args: {
+    roomCode: string;
+    memberId: string;
+    displayName: string;
+    eventType: RoomSystemChatEventType;
+    timestamp: number;
+    session: Session;
+    reason: string;
+  }): Promise<void> {
+    if (!roomService.appendSystemChatMessageForRoom) {
+      return;
+    }
+    try {
+      await roomService.appendSystemChatMessageForRoom(args.roomCode, {
+        kind: "system",
+        systemEventType: args.eventType,
+        memberId: args.memberId,
+        displayName: args.displayName,
+        content: `${args.displayName} ${systemChatSuffix[args.eventType]}`,
+        timestamp: args.timestamp,
+      });
+    } catch (error) {
+      logEvent("chat_history_system_persist_failed", {
+        sessionId: args.session.id,
+        roomCode: args.roomCode,
+        memberId: args.memberId,
+        remoteAddress: args.session.remoteAddress,
+        origin: args.session.origin,
+        result: "error",
+        reason: args.reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   async function leaveRoom(
     session: Session,
     reason: LeaveRoomOptions["reason"] = "disconnect",
@@ -438,7 +523,7 @@ export function createMessageHandler(options: {
     const roomCode = session.roomCode;
     const memberId = session.memberId ?? session.id;
     const displayName = session.displayName;
-    const { room, notifyRoom, memberRemoved } =
+    const { room, notifyRoom, memberRemoved, hostTransferred } =
       await roomService.leaveRoomForSession(session, { reason });
     if (!roomCode || (!room && !notifyRoom)) {
       return;
@@ -447,6 +532,16 @@ export function createMessageHandler(options: {
     if (!memberRemoved && !notifyRoom) {
       return;
     }
+
+    await appendSystemChatHistory({
+      roomCode,
+      memberId,
+      displayName,
+      eventType: "member_left",
+      timestamp: now(),
+      session,
+      reason: "member_left_history_failed",
+    });
 
     await firePublishRoomEvent(
       {
@@ -462,6 +557,20 @@ export function createMessageHandler(options: {
         origin: session.origin,
       },
     );
+    if (hostTransferred && room) {
+      await firePublishRoomEvent(
+        {
+          type: "room_state_updated",
+          roomCode: room.code,
+        },
+        {
+          reason: "host_transfer_broadcast_failed",
+          sessionId: session.id,
+          remoteAddress: session.remoteAddress,
+          origin: session.origin,
+        },
+      );
+    }
   }
 
   function handleRateLimitedMessage(
@@ -585,6 +694,15 @@ export function createMessageHandler(options: {
             runRoomLeftHook(session, previousRoomCode);
           }
           await runRoomJoinedHook(session, room.code, previousRoomCode);
+          await appendSystemChatHistory({
+            roomCode: room.code,
+            memberId: session.memberId ?? session.id,
+            displayName: session.displayName,
+            eventType: "member_joined",
+            timestamp: currentTime,
+            session,
+            reason: "member_joined_history_failed",
+          });
           send(socket, {
             type: "room:created",
             payload: {
@@ -646,6 +764,15 @@ export function createMessageHandler(options: {
             const joinedRoomCode = room.code;
             const joinedMemberId = session.memberId ?? session.id;
             const joinedDisplayName = session.displayName;
+            await appendSystemChatHistory({
+              roomCode: joinedRoomCode,
+              memberId: joinedMemberId,
+              displayName: joinedDisplayName,
+              eventType: "member_joined",
+              timestamp: currentTime,
+              session,
+              reason: "member_joined_history_failed",
+            });
             send(socket, {
               type: "room:joined",
               payload: {
@@ -712,6 +839,78 @@ export function createMessageHandler(options: {
           }
           await measureMessageHandling("room:leave", () =>
             leaveRoom(session, "explicit"),
+          );
+          return;
+        }
+        case "room:member-permission:set": {
+          const result = await roomService.setRoomMemberPermissionForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+            message.payload.permission,
+            message.payload.allowed,
+          );
+          await firePublishRoomEvent(
+            {
+              type: "room_state_updated",
+              roomCode: result.room.code,
+            },
+            {
+              reason: "member_permission_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          return;
+        }
+        case "room:member:kick": {
+          const result = await roomService.kickRoomMemberForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+          );
+          if (hasAttachedSocket(result.targetSession)) {
+            sendError(
+              result.targetSession.socket,
+              "member_kicked",
+              MEMBER_KICKED_MESSAGE,
+              { messageType: message.type },
+            );
+          }
+          await firePublishRoomEvent(
+            {
+              type: "room_member_left",
+              roomCode: result.room.code,
+              memberId: result.targetMemberId,
+              displayName: result.targetSession.displayName,
+            },
+            {
+              reason: "member_kick_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          return;
+        }
+        case "room:host:transfer": {
+          const result = await roomService.transferRoomHostForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+          );
+          await firePublishRoomEvent(
+            {
+              type: "room_state_updated",
+              roomCode: result.room.code,
+            },
+            {
+              reason: "host_transfer_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
           );
           return;
         }
@@ -862,12 +1061,25 @@ export function createMessageHandler(options: {
             return;
           }
 
-          await roomService.getRoomStateForSession(
+          const chatMessage = {
+            memberId: session.memberId ?? session.id,
+            displayName: session.displayName,
+            content: message.payload.content,
+            timestamp: currentTime,
+          };
+          const stored = await roomService.appendChatMessageForSession?.(
             session,
             message.payload.memberToken,
-            message.type,
+            chatMessage,
           );
-          const roomCode = session.roomCode;
+          if (!stored) {
+            await roomService.getRoomStateForSession(
+              session,
+              message.payload.memberToken,
+              message.type,
+            );
+          }
+          const roomCode = stored?.room.code ?? session.roomCode;
           if (!roomCode) {
             sendError(socket, "not_in_room", "Join a room first.");
             return;
@@ -877,10 +1089,7 @@ export function createMessageHandler(options: {
             {
               type: "room_chat_message",
               roomCode,
-              memberId: session.memberId ?? session.id,
-              displayName: session.displayName,
-              content: message.payload.content,
-              timestamp: currentTime,
+              ...chatMessage,
             },
             {
               reason: "chat_message_broadcast_failed",
@@ -902,22 +1111,27 @@ export function createMessageHandler(options: {
         case "danmaku:message": {
           if (
             !consumeFixedWindow(
-              session.rateLimitState.chatMessage,
-              config.rateLimits.chatMessagePer5Seconds,
-              WINDOW_5_SECONDS_MS,
+              session.rateLimitState.danmakuMessage,
+              1,
+              WINDOW_SECOND_MS,
               currentTime,
             )
           ) {
             const retryAfterMs = getFixedWindowRetryAfterMs({
-              windowStart: session.rateLimitState.chatMessage.windowStart,
-              windowMs: WINDOW_5_SECONDS_MS,
+              windowStart: session.rateLimitState.danmakuMessage.windowStart,
+              windowMs: WINDOW_SECOND_MS,
               currentTime,
             });
             handleRateLimitedMessage(session, message.type);
-            sendError(socket, "chat_rate_limited", CHAT_RATE_LIMITED_MESSAGE, {
-              messageType: message.type,
-              retryAfterMs,
-            });
+            sendError(
+              socket,
+              "chat_rate_limited",
+              DANMAKU_RATE_LIMITED_MESSAGE,
+              {
+                messageType: message.type,
+                retryAfterMs,
+              },
+            );
             return;
           }
 
@@ -1037,6 +1251,8 @@ export function createMessageHandler(options: {
             return;
           }
 
+          const previousMicrophoneEnabled =
+            session.voiceState?.microphoneEnabled ?? false;
           const memberAccess = roomService.updateVoiceStateForSession
             ? await roomService.updateVoiceStateForSession(
                 session,
@@ -1050,6 +1266,19 @@ export function createMessageHandler(options: {
                 session,
                 message.payload.memberToken,
               );
+          const microphoneEnabled =
+            message.payload.connected && !message.payload.muted;
+          if (previousMicrophoneEnabled !== microphoneEnabled) {
+            await appendSystemChatHistory({
+              roomCode: memberAccess.roomCode,
+              memberId: memberAccess.memberId,
+              displayName: memberAccess.displayName,
+              eventType: microphoneEnabled ? "voice_unmuted" : "voice_muted",
+              timestamp: currentTime,
+              session,
+              reason: "voice_state_history_failed",
+            });
+          }
           await firePublishRoomEvent(
             {
               type: "voice_state_updated",

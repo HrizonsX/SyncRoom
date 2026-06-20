@@ -17,6 +17,7 @@ test("room store persists create, update, delete, and expiry behaviors", async (
   assert.equal(createdRoom.version, 0);
   assert.equal(createdRoom.ownerMemberId, "member-owner");
   assert.equal(createdRoom.ownerDisplayName, "Alice");
+  assert.deepEqual(createdRoom.chatMessages, []);
 
   const updated = await store.updateRoom(
     createdRoom.code,
@@ -76,6 +77,14 @@ test("roomStateOf serializes persisted room state with active members", () => {
       actorId: "member-1",
       seq: 2,
     },
+    chatMessages: [
+      {
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "hello",
+        timestamp: 2,
+      },
+    ],
     version: 3,
     lastActiveAt: 1,
     expiresAt: null,
@@ -92,5 +101,6 @@ test("roomStateOf serializes persisted room state with active members", () => {
     sharedVideo: persistedRoom.sharedVideo,
     playback: persistedRoom.playback,
     members: [{ id: "member-1", name: "Alice" }],
+    chatMessages: persistedRoom.chatMessages,
   });
 });

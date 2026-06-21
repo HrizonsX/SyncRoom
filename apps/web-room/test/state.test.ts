@@ -211,6 +211,62 @@ test("extracts member-safe provider playback status from room state", () => {
   );
 });
 
+test("marks live provider playback sources for non-seekable controls", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-2",
+    hostMemberId: "member-host",
+    displayName: "Bob",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "22889518",
+        url: "https://live.bilibili.com/22889518",
+        title: "Live Room",
+        provider: {
+          providerId: "bilibili",
+          sourceId: "22889518",
+          sourceUrl: "https://live.bilibili.com/22889518",
+          title: "Live Room",
+          item: {
+            itemId: "live-22889518",
+            title: "Live Room",
+            kind: "live",
+            roomId: "22889518",
+          },
+          policy: {
+            proxy: true,
+            shared: true,
+          },
+          candidates: [
+            {
+              id: "hls-live",
+              sourceType: "m3u8",
+              url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+              qualityLabel: "超清",
+              default: true,
+            },
+          ],
+          defaultCandidateId: "hls-live",
+        },
+      },
+      playback: null,
+      members: [],
+    },
+  });
+
+  assert.deepEqual(nextState.playbackSource, {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8",
+    engine: "shaka",
+    isLive: true,
+  });
+});
+
 test("uses provider video titles for refreshed shared Bilibili room state", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",

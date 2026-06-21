@@ -23,6 +23,7 @@ test("playback proxy expires manifest and segment mappings by TTL", async () => 
     manifest: `#EXTM3U
 #EXTINF:4.000,
 segment.ts
+#EXT-X-ENDLIST
 `,
   });
 
@@ -80,6 +81,7 @@ test("playback proxy clears resources by room and provider auth lifecycle", asyn
     manifest: `#EXTM3U
 #EXTINF:4.000,
 segment-a.ts
+#EXT-X-ENDLIST
 `,
   });
   service.registerM3u8Manifest({
@@ -89,6 +91,7 @@ segment-a.ts
     manifest: `#EXTM3U
 #EXTINF:4.000,
 segment-b.ts
+#EXT-X-ENDLIST
 `,
   });
 

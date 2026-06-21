@@ -23,6 +23,7 @@ export type PlaybackAdapterSelection = {
 
 export type PlaybackSource = PlaybackAdapterSelection & {
   url: string;
+  isLive?: boolean;
 };
 
 export type PlaybackStartupError = {

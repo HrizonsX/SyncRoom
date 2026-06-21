@@ -406,6 +406,8 @@ function getProviderPlaybackSource(
   if (!provider || !Array.isArray(provider.candidates)) {
     return undefined;
   }
+  const item = isRecord(provider.item) ? provider.item : null;
+  const isLive = getString(item?.kind) === "live";
 
   const candidates = provider.candidates
     .filter(isRecord)
@@ -445,6 +447,7 @@ function getProviderPlaybackSource(
     return {
       ...selectPlaybackAdapter({ sourceType: selectedCandidate.sourceType }),
       url: selectedCandidate.url,
+      ...(isLive ? { isLive: true } : {}),
     };
   } catch {
     return undefined;

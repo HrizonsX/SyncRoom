@@ -363,6 +363,14 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
   );
   assert.match(
     styles,
+    /\.player-live-progress\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-live-progress::before\s*{[^}]*width:\s*100%;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.player-controls media-play-button\[disabled\],\s*\.player-controls media-playback-rate-button\[disabled\]\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
   );
   assert.match(
@@ -456,7 +464,11 @@ test("styles settings header actions with bounded errors", () => {
   );
   assert.match(
     styles,
-    /\.playback-error\s*{[^}]*grid-column:\s*1 \/ span 2;[^}]*max-width:\s*520px;[^}]*}/s,
+    /\.playback-error\s*{[^}]*display:\s*flex;[^}]*grid-column:\s*1 \/ -1;[^}]*font-size:\s*11px;[^}]*white-space:\s*nowrap;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.playback-error\s+span\s*{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*}/s,
   );
   assert.match(
     styles,

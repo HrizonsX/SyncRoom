@@ -660,9 +660,20 @@ function renderPlayerTimePair(): string {
   `;
 }
 
+function renderPlayerProgressControl(
+  source: PlaybackSource | undefined,
+  timeRangeDisabled: string,
+): string {
+  if (source?.isLive) {
+    return `<div class="player-live-progress" data-player-live-progress="true" aria-label="直播进度"></div>`;
+  }
+  return `<media-time-range${timeRangeDisabled}></media-time-range>`;
+}
+
 function renderPlayerSurface(state: WebRoomJoinedState): string {
   const isEmpty = state.playbackSource ? "false" : "true";
   const hasPlaybackSource = Boolean(state.playbackSource);
+  const isLivePlayback = state.playbackSource?.isLive === true;
   const canControlPlayback =
     hasPlaybackSource && canCurrentMember(state, "playbackControl");
   const danmakuCooldownRemainingMs =
@@ -680,14 +691,14 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
   const playerDisabled = canControlPlayback ? "" : " disabled";
   const timeRangeDisabled = canControlPlayback ? "" : " disabled";
   return `
-            <media-controller class="player-media-controller" fullscreenelement="app" data-player-empty="${isEmpty}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
+            <media-controller class="player-media-controller" fullscreenelement="app" data-player-empty="${isEmpty}" data-player-live="${isLivePlayback ? "true" : "false"}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
               ${renderPlaybackVideo(state.playbackSource)}
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}
               ${renderPlayerDanmakuPopover(canSendDanmaku)}
               <media-control-bar class="player-controls">
                 <media-play-button notooltip${playerDisabled}></media-play-button>
-                <media-time-range${timeRangeDisabled}></media-time-range>
+                ${renderPlayerProgressControl(state.playbackSource, timeRangeDisabled)}
                 ${renderPlayerTimePair()}
                 ${renderPlayerDanmakuInlineControls(canSendDanmaku)}
                 ${renderPlayerVolumeControl()}
@@ -910,7 +921,14 @@ function renderProviderPickerItems(picker: WebRoomProviderPickerState): string {
     .map((item) => {
       const selected = item.itemId === picker.selectedItemId;
       const title = item.providerDescriptor?.title.trim() || item.title;
-      const meta = [item.kind, item.qualityLabel, item.sourceType]
+      const selectedCandidate = selected
+        ? getProviderPickerSelectedCandidate(picker, item)
+        : undefined;
+      const meta = [
+        item.kind,
+        selectedCandidate?.qualityLabel ?? item.qualityLabel,
+        selectedCandidate?.sourceType ?? item.sourceType,
+      ]
         .filter(Boolean)
         .join(" / ");
       return `
@@ -927,6 +945,20 @@ function getProviderPickerSelectedItem(
   picker: WebRoomProviderPickerState,
 ): WebRoomProviderPickerItem | undefined {
   return picker.items.find((item) => item.itemId === picker.selectedItemId);
+}
+
+function getProviderPickerSelectedCandidate(
+  picker: WebRoomProviderPickerState,
+  item: WebRoomProviderPickerItem,
+): ProviderPlaybackDescriptor["candidates"][number] | undefined {
+  const descriptor = item.providerDescriptor;
+  if (!descriptor) {
+    return undefined;
+  }
+  const selectedCandidateId = getSelectedQualityCandidateId(picker, descriptor);
+  return descriptor.candidates.find(
+    (candidate) => candidate.id === selectedCandidateId,
+  );
 }
 
 function getProviderCandidateLabel(
@@ -1012,8 +1044,9 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   };
   const proxyChecked = picker.proxy ? " checked" : "";
   const sharedChecked = picker.shared ? " checked" : "";
-  const message = picker.errorMessage ?? picker.message ?? "";
-  const messageHtml = message ? `<small>${escapeHtml(message)}</small>` : "";
+  const messageHtml = picker.errorMessage
+    ? `<small>${escapeHtml(picker.errorMessage)}</small>`
+    : "";
   const shareDisabled = picker.selectedItemId ? "" : " disabled";
 
   if (!isHost) {

@@ -55,6 +55,7 @@ const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
 const CLOCK_SYNC_INTERVAL_MS = 15_000;
 const DANMAKU_SEND_COOLDOWN_MS = 1_000;
 const TRANSIENT_VOICE_ERROR_MS = 3_000;
+const TRANSIENT_PLAYBACK_ERROR_MS = 10_000;
 const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 const DISPLAY_NAME_SUFFIX_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const SERVER_MESSAGE_TYPES = new Set([
@@ -439,6 +440,8 @@ export function createWebRoomAppController(
   let danmakuCooldownTimerUntil: number | null = null;
   let voiceErrorTimer: AuthPollTimeoutHandle | null = null;
   let voiceErrorTimerKey: string | null = null;
+  let playbackErrorTimer: AuthPollTimeoutHandle | null = null;
+  let playbackErrorTimerKey: string | null = null;
   let clockSyncTimer: ClockSyncIntervalHandle | null = null;
   const authPollIntervalMs =
     options.authPollIntervalMs ?? DEFAULT_AUTH_POLL_INTERVAL_MS;
@@ -500,6 +503,15 @@ export function createWebRoomAppController(
     voiceErrorTimerKey = null;
   }
 
+  function clearPlaybackErrorTimer(): void {
+    if (playbackErrorTimer === null) {
+      return;
+    }
+    clearAuthPollTimeout(playbackErrorTimer);
+    playbackErrorTimer = null;
+    playbackErrorTimerKey = null;
+  }
+
   function handleChatCooldownTimer(): void {
     chatCooldownTimer = null;
     chatCooldownTimerUntil = null;
@@ -557,11 +569,35 @@ export function createWebRoomAppController(
     });
   }
 
+  function getPlaybackErrorKey(
+    error: Extract<WebRoomState, { view: "joined" }>["playbackError"],
+  ): string | null {
+    return error
+      ? `${error.code}:${error.stage}:${error.message}:${String(error.canUseProxyFallback)}`
+      : null;
+  }
+
+  function handlePlaybackErrorTimer(errorKey: string): void {
+    playbackErrorTimer = null;
+    playbackErrorTimerKey = null;
+    if (
+      state.view !== "joined" ||
+      getPlaybackErrorKey(state.playbackError) !== errorKey
+    ) {
+      return;
+    }
+    emit({
+      ...state,
+      playbackError: undefined,
+    });
+  }
+
   function syncTransientUiTimers(): void {
     if (state.view !== "joined") {
       clearChatCooldownTimer();
       clearDanmakuCooldownTimer();
       clearVoiceErrorTimer();
+      clearPlaybackErrorTimer();
       return;
     }
 
@@ -624,6 +660,20 @@ export function createWebRoomAppController(
       }
     } else {
       clearVoiceErrorTimer();
+    }
+
+    const playbackErrorKey = getPlaybackErrorKey(state.playbackError);
+    if (playbackErrorKey) {
+      if (playbackErrorTimerKey !== playbackErrorKey) {
+        clearPlaybackErrorTimer();
+        playbackErrorTimerKey = playbackErrorKey;
+        playbackErrorTimer = setAuthPollTimeout(
+          () => handlePlaybackErrorTimer(playbackErrorKey),
+          TRANSIENT_PLAYBACK_ERROR_MS,
+        );
+      }
+    } else {
+      clearPlaybackErrorTimer();
     }
   }
 

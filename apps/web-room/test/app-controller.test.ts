@@ -2246,6 +2246,38 @@ test("switches direct-link failures back to proxy playback for the selected item
   );
 });
 
+test("clears direct playback failure after ten seconds", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const { controller } = createJoinedHostController();
+
+  controller.showDirectPlaybackFailure({
+    stage: "decode",
+    message: "Direct link decode failed.",
+  });
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.playbackError?.message, "Direct link decode failed.");
+
+  t.mock.timers.tick(9_999);
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.playbackError?.message, "Direct link decode failed.");
+
+  t.mock.timers.tick(1);
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.playbackError, undefined);
+});
+
 test("applies room state and LiveKit voice messages after refresh rejoin", async () => {
   const storage = new MemoryStorage();
   const recorder = createSocketRecorder();

@@ -294,6 +294,53 @@ test("waits for native MP4 metadata before applying refreshed playback", async (
   assert.equal(video.currentTime, 18);
 });
 
+test("keeps waiting for slow native MP4 metadata without reporting timeout", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const video = new FakeEventedVideoElement();
+  video.readyState = 0;
+  const playbackErrors: unknown[] = [];
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    onPlaybackError: (error) => playbackErrors.push(error),
+  });
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const syncPromise = controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      currentTime: 18,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-guest",
+      seq: 2,
+    },
+  });
+
+  await Promise.resolve();
+  assert.equal(video.loadCount, 1);
+  t.mock.timers.tick(8_000);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.deepEqual(playbackErrors, []);
+  assert.equal(video.currentTime, 0);
+
+  video.readyState = 1;
+  video.emit("loadedmetadata");
+  await syncPromise;
+
+  assert.equal(video.currentTime, 18);
+});
+
 test("reports native MP4 load errors during refreshed playback hydration", async () => {
   const video = new FakeEventedVideoElement();
   video.readyState = 0;

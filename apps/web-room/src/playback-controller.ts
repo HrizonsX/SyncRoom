@@ -75,7 +75,6 @@ type NativePlaybackVideoElement = PlaybackVideoElement & {
 };
 
 const HAVE_METADATA_READY_STATE = 1;
-const NATIVE_METADATA_TIMEOUT_MS = 8_000;
 
 function hasNativeMetadata(video: NativePlaybackVideoElement): boolean {
   return (
@@ -116,7 +115,6 @@ function waitForNativeMetadata(video: PlaybackVideoElement): Promise<void> {
       removeEventListener("loadeddata", handleReady);
       removeEventListener("canplay", handleReady);
       removeEventListener("error", handleError);
-      clearTimeout(timeoutId);
     };
     const finish = (): void => {
       if (settled) {
@@ -141,9 +139,6 @@ function waitForNativeMetadata(video: PlaybackVideoElement): Promise<void> {
       fail(new Error(getNativeMediaErrorMessage(nativeVideo)));
     }
 
-    const timeoutId = setTimeout(() => {
-      fail(new Error("Native media metadata load timed out."));
-    }, NATIVE_METADATA_TIMEOUT_MS);
     addEventListener("loadedmetadata", handleReady);
     addEventListener("loadeddata", handleReady);
     addEventListener("canplay", handleReady);

@@ -657,7 +657,8 @@ input:focus {
   margin: 0;
 }
 
-.player-controls media-time-range {
+.player-controls media-time-range,
+.player-live-progress {
   flex: 1 1 160px;
   min-width: 74px;
 }
@@ -665,6 +666,24 @@ input:focus {
 .player-controls media-time-range[disabled] {
   pointer-events: none;
   opacity: 0.62;
+}
+
+.player-live-progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.22);
+}
+
+.player-live-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border-radius: inherit;
+  background: #f8fafc;
 }
 
 .player-controls media-play-button,
@@ -989,25 +1008,34 @@ input:focus {
 }
 
 .playback-error {
-  display: grid;
-  grid-column: 1 / span 2;
-  gap: 8px;
-  width: min(100%, 520px);
-  max-width: 520px;
-  padding: 10px;
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  padding: 7px 9px;
   border: 1px solid rgba(228, 186, 196, 0.86);
   border-radius: 8px;
   background: rgba(255, 247, 248, 0.96);
   color: var(--danger-text);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 750;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
+  line-height: 1.25;
+  white-space: nowrap;
 }
 
 .playback-error strong {
+  flex: 0 0 auto;
   color: var(--danger-text);
   text-transform: uppercase;
+}
+
+.playback-error span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel-heading {

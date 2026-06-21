@@ -63,3 +63,69 @@ https://live.example.test/hls/segment-2.ts
   );
   assert.doesNotMatch(rewritten, /live\.example\.test/);
 });
+
+test("refreshes live m3u8 manifests when the proxied manifest is requested again", async () => {
+  const ids = ["live.m3u8", "segment-1", "segment-2", "segment-3"];
+  const upstreamManifests = [
+    `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:101
+#EXTINF:4.000,
+segment-101.ts
+`,
+    `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:102
+#EXTINF:4.000,
+segment-102.ts
+`,
+  ];
+  const upstreamRequests: string[] = [];
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "https://syncroom.example.test",
+    createResourceId: () => ids.shift() ?? "extra-id",
+    now: () => 2_000,
+    defaultTtlMs: 30_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async (url) => {
+      upstreamRequests.push(String(url));
+      return new Response(upstreamManifests.shift() ?? "", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    },
+  });
+
+  service.registerM3u8Manifest({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    manifestUrl: "https://live.example.test/hls/live.m3u8",
+    manifest: `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:100
+#EXTINF:4.000,
+segment-100.ts
+`,
+  });
+
+  const firstManifest = await service.resolveResource({
+    kind: "manifest",
+    resourceId: "live.m3u8",
+    headers: {},
+  });
+  const secondManifest = await service.resolveResource({
+    kind: "manifest",
+    resourceId: "live.m3u8",
+    headers: {},
+  });
+
+  assert.match(firstManifest?.body.toString() ?? "", /MEDIA-SEQUENCE:101/);
+  assert.match(secondManifest?.body.toString() ?? "", /MEDIA-SEQUENCE:102/);
+  assert.deepEqual(upstreamRequests, [
+    "https://live.example.test/hls/live.m3u8",
+    "https://live.example.test/hls/live.m3u8",
+  ]);
+});

@@ -89,6 +89,9 @@ type StoredProxyResource =
       roomCode: string;
       providerId: string;
       expiresAt: number;
+      refreshM3u8Url?: string;
+      refreshPublicBaseUrl?: string;
+      refreshUpstreamHeaders?: Record<string, string>;
     } & PlaybackProxyResource)
   | {
       kind: "segment";
@@ -130,6 +133,10 @@ function createProxyUrl(
 
 function createProxyBaseUrl(publicBaseUrl: string, resourceId: string): string {
   return `${createProxyUrl(publicBaseUrl, "segment", resourceId)}/`;
+}
+
+function isLiveM3u8Manifest(manifest: string): boolean {
+  return !/^#EXT-X-ENDLIST\s*$/im.test(manifest);
 }
 
 function decodeXmlEntities(value: string): string {
@@ -525,6 +532,52 @@ export function createPlaybackProxyService(
     return copied;
   }
 
+  async function resolveStoredM3u8Manifest(
+    resource: Extract<StoredProxyResource, { kind: "manifest" }> & {
+      refreshM3u8Url: string;
+      refreshPublicBaseUrl: string;
+    },
+  ): Promise<PlaybackProxyResource> {
+    await assertSafeUpstreamUrl(resource.refreshM3u8Url);
+    const upstreamResponse = await fetchUpstream(resource.refreshM3u8Url, {
+      headers: resource.refreshUpstreamHeaders,
+    });
+    const body = await upstreamResponse.text();
+    if (upstreamResponse.status >= 400) {
+      options.logEvent?.("playback_proxy_upstream_http_error", {
+        roomCode: resource.roomCode,
+        providerId: resource.providerId,
+        resourceKind: resource.kind,
+        statusCode: upstreamResponse.status,
+        upstreamHost: readUpstreamHost(resource.refreshM3u8Url),
+        contentType: upstreamResponse.headers.get("content-type") ?? null,
+        result: "upstream_error",
+      });
+      return {
+        statusCode: upstreamResponse.status,
+        contentType:
+          upstreamResponse.headers.get("content-type") ??
+          "application/vnd.apple.mpegurl",
+        body,
+      };
+    }
+
+    const rewritten = rewriteM3u8Manifest(
+      resource.refreshPublicBaseUrl,
+      resource.roomCode,
+      resource.providerId,
+      body,
+      resource.refreshM3u8Url,
+      resource.expiresAt,
+      resource.refreshUpstreamHeaders,
+    );
+    resource.body = rewritten;
+    return {
+      contentType: "application/vnd.apple.mpegurl",
+      body: rewritten,
+    };
+  }
+
   function deleteResourcesWhere(
     shouldDelete: (resource: StoredProxyResource) => boolean,
   ): number {
@@ -546,6 +599,18 @@ export function createPlaybackProxyService(
       );
       if (!resource || resource.expiresAt <= now()) {
         return null;
+      }
+      if (
+        resource.kind === "manifest" &&
+        resource.refreshM3u8Url &&
+        resource.refreshPublicBaseUrl
+      ) {
+        return await resolveStoredM3u8Manifest(
+          resource as Extract<StoredProxyResource, { kind: "manifest" }> & {
+            refreshM3u8Url: string;
+            refreshPublicBaseUrl: string;
+          },
+        );
       }
       if (resource.kind === "segment") {
         let upstreamResponse: Response | null = null;
@@ -656,6 +721,10 @@ export function createPlaybackProxyService(
       const resourcePublicBaseUrl = getEffectivePublicBaseUrl(
         input.publicBaseUrl,
       );
+      const refreshM3u8Url =
+        input.manifestUrl && isLiveM3u8Manifest(input.manifest)
+          ? resolveHttpUrl(input.manifestUrl, undefined)
+          : null;
       resources.set(resourceKey("manifest", manifestId), {
         kind: "manifest",
         roomCode: input.roomCode,
@@ -671,6 +740,15 @@ export function createPlaybackProxyService(
           expiresAt,
           input.upstreamHeaders,
         ),
+        ...(refreshM3u8Url
+          ? {
+              refreshM3u8Url,
+              refreshPublicBaseUrl: resourcePublicBaseUrl,
+              ...(input.upstreamHeaders
+                ? { refreshUpstreamHeaders: input.upstreamHeaders }
+                : {}),
+            }
+          : {}),
       });
       return {
         manifestId,

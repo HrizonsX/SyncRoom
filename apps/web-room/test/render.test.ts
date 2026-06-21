@@ -378,6 +378,27 @@ test("renders a real video host for Shaka playback sources", () => {
   assert.doesNotMatch(html, /<div class="player-placeholder">播放器<\/div>/);
 });
 
+test("renders live playback with a full non-seekable progress bar", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    playbackSource: {
+      url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+      sourceType: "m3u8",
+      engine: "shaka",
+      isLive: true,
+    },
+  } as WebRoomState);
+
+  assert.match(html, /<media-controller\b[^>]*data-player-live="true"/);
+  const controlBarHtml = html.slice(
+    html.indexOf("<media-control-bar"),
+    html.indexOf("</media-control-bar>"),
+  );
+  assert.match(controlBarHtml, /data-player-live-progress="true"/);
+  assert.match(controlBarHtml, /aria-label="直播进度"/);
+  assert.doesNotMatch(controlBarHtml, /<media-time-range/);
+});
+
 test("renders an escaped private danmaku overlay above the Shaka video", () => {
   const html = withMockedNow(DANMAKU_TEST_RENDERED_AT, () =>
     renderWebRoomApp({
@@ -887,6 +908,7 @@ test("renders host picker controls for Bilibili parse results and playback polic
       shared: true,
       selectedItemId: "cid-1",
       selectedQualityCandidateId: "dash-avc-720p",
+      message: "Parsed title should stay out of the header",
       items: [
         {
           itemId: "cid-1",
@@ -945,6 +967,19 @@ test("renders host picker controls for Bilibili parse results and playback polic
   assert.match(html, /data-action="parse-bilibili-url"/);
   assert.match(html, /name="providerProxy" checked/);
   assert.match(html, /name="providerShared" checked/);
+  const pickerStart = html.indexOf('data-panel="host-picker"');
+  const headingStart = html.indexOf(
+    'class="settings-tile-heading"',
+    pickerStart,
+  );
+  const headingHtml = html.slice(
+    headingStart,
+    html.indexOf("</div>", headingStart),
+  );
+  assert.doesNotMatch(
+    headingHtml,
+    /Parsed title should stay out of the header/,
+  );
   assert.match(html, /data-action="select-provider-item"/);
   assert.match(html, /data-item-id="cid-1"/);
   assert.match(html, /data-item-selected="true"/);
@@ -954,6 +989,8 @@ test("renders host picker controls for Bilibili parse results and playback polic
     html.indexOf("</button>", selectedItemStart),
   );
   assert.match(selectedItemHtml, /Bilibili video/);
+  assert.match(selectedItemHtml, /part \/ 720P \/ mpd/);
+  assert.doesNotMatch(selectedItemHtml, /part \/ 1080P \/ mp4/);
   assert.doesNotMatch(selectedItemHtml, />Part 1</);
   assert.match(html, /data-action="select-provider-quality"/);
   assert.match(html, /data-candidate-id="dash-avc-720p"/);

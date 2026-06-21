@@ -41,7 +41,7 @@ test("restores chat scroll to the bottom after rerender when it was already at l
   assert.equal(after.scrollTop, 260);
 });
 
-test("restores chat scroll to the previous offset when the user was reading older messages", () => {
+test("restores chat scroll by distance from the latest message when the user was reading older messages", () => {
   const before = {
     className: "chat-list",
     clientHeight: 100,
@@ -58,5 +58,5 @@ test("restores chat scroll to the previous offset when the user was reading olde
 
   restoreChatScrollState(createRoot(after), scrollState);
 
-  assert.equal(after.scrollTop, 80);
+  assert.equal(after.scrollTop, 140);
 });

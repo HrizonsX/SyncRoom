@@ -53,7 +53,7 @@ export const WEB_ROOM_THEME_STORAGE_KEY = "syncroom:web-room-theme";
 
 const DEFAULT_DISPLAY_NAME = "网页用户";
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
-const CLOCK_SYNC_INTERVAL_MS = 15_000;
+const CLOCK_SYNC_INTERVAL_MS = 60_000;
 const DANMAKU_SEND_COOLDOWN_MS = 1_000;
 const TRANSIENT_VOICE_ERROR_MS = 3_000;
 const TRANSIENT_PLAYBACK_ERROR_MS = 10_000;
@@ -1136,8 +1136,8 @@ export function createWebRoomAppController(
       providerPicker: {
         ...(state.providerPicker ?? {
           open: true,
-          proxy: true,
-          shared: true,
+          proxy: false,
+          shared: false,
           items: [],
         }),
         status: "failed",
@@ -1832,8 +1832,8 @@ export function createWebRoomAppController(
       providerPicker: state.providerPicker ?? {
         open: true,
         status: "idle",
-        proxy: true,
-        shared: true,
+        proxy: false,
+        shared: false,
         items: [],
       },
     });
@@ -1919,8 +1919,8 @@ export function createWebRoomAppController(
         open: true,
         status: "ready",
         url: previous?.url,
-        proxy: previous?.proxy ?? true,
-        shared: previous?.shared ?? true,
+        proxy: previous?.proxy ?? false,
+        shared: previous?.shared ?? false,
         items: input.items,
         selectedItemId: selectedItem?.itemId,
         selectedQualityCandidateId: getDefaultProviderCandidateId(selectedItem),
@@ -1981,8 +1981,8 @@ export function createWebRoomAppController(
     const picker = state.providerPicker ?? {
       open: true,
       status: "idle" as const,
-      proxy: true,
-      shared: true,
+      proxy: false,
+      shared: false,
       items: [],
     };
     emit({

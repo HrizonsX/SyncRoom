@@ -34,7 +34,8 @@ export function restoreChatScrollState(
     return;
   }
 
-  chatList.scrollTop = state.atBottom
-    ? chatList.scrollHeight - chatList.clientHeight
-    : state.scrollTop;
+  chatList.scrollTop =
+    chatList.scrollHeight -
+    chatList.clientHeight -
+    (state.atBottom ? 0 : state.scrollBottom);
 }

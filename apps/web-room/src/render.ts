@@ -1064,8 +1064,8 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const picker = state.providerPicker ?? {
     open: false,
     status: "idle" as const,
-    proxy: true,
-    shared: true,
+    proxy: false,
+    shared: false,
     items: [],
   };
   const proxyChecked = picker.proxy ? " checked" : "";

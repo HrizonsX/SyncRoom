@@ -899,6 +899,18 @@ test("renders verified Bilibili auth profile details", () => {
   assert.match(html, /Alice Bili - annual/);
 });
 
+test("renders provider proxy and shared unchecked by default", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    providerPicker: undefined,
+  });
+
+  assert.match(html, /name="providerProxy" type="checkbox"/);
+  assert.match(html, /name="providerShared" type="checkbox"/);
+  assert.doesNotMatch(html, /name="providerProxy" checked type="checkbox"/);
+  assert.doesNotMatch(html, /name="providerShared" checked type="checkbox"/);
+});
+
 test("renders host picker controls for Bilibili parse results and playback policy", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,

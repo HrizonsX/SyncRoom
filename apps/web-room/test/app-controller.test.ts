@@ -474,7 +474,7 @@ test("starts web clock sync after joining and applies pong metrics", () => {
     },
   });
   assert.equal(clockSyncIntervals.length, 1);
-  assert.equal(clockSyncIntervals[0]?.delayMs, 15_000);
+  assert.equal(clockSyncIntervals[0]?.delayMs, 60_000);
 
   now = 1_250;
   recorder.sockets[0]?.emit(
@@ -497,12 +497,12 @@ test("starts web clock sync after joining and applies pong metrics", () => {
   assert.equal(state.rttMs, 240);
   assert.equal(state.clockOffsetMs, 0);
 
-  now = 16_000;
+  now = 61_000;
   clockSyncIntervals[0]?.callback();
   assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
     type: "sync:ping",
     payload: {
-      clientSendTime: 16_000,
+      clientSendTime: 61_000,
     },
   });
 
@@ -1111,12 +1111,20 @@ test("manages host Bilibili picker local parse and policy states", () => {
   );
 
   controller.openProviderPicker();
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.proxy, false);
+  assert.equal(state.providerPicker?.shared, false);
+
   controller.parseBilibiliUrl({
     url: "https://www.bilibili.com/video/BV1TEST",
     proxy: true,
     shared: true,
   });
-  let state = controller.getState();
+  state = controller.getState();
   assert.equal(state.view, "joined");
   if (state.view !== "joined") {
     throw new Error("Expected joined state.");

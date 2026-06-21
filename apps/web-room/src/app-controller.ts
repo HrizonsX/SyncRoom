@@ -1160,11 +1160,26 @@ export function createWebRoomAppController(
     if (providerError.code === "unsupported_source") {
       return "暂不支持这个 Bilibili 链接。";
     }
+    if (providerError.reason === "live_room_offline") {
+      return "直播间当前未开播。";
+    }
+    if (providerError.reason === "anonymous_no_playback_candidates") {
+      return "Bilibili 未返回匿名可播放流，请开启 shared 并完成授权后重试。";
+    }
+    if (providerError.reason === "no_live_hls_candidates") {
+      return "直播间没有可播放的 HLS 流。";
+    }
+    if (
+      providerError.reason === "live_room_failed" ||
+      providerError.reason === "live_playurl_failed"
+    ) {
+      return "直播解析失败，请稍后重试。";
+    }
     if (
       providerError.code === "provider_parse_failed" ||
       (error instanceof Error && error.message === "Provider request failed.")
     ) {
-      return "解析失败，请确认 Bilibili 授权有效，或关闭 shared/proxy 后重试。";
+      return "解析失败，请稍后重试；如果开启了 shared，请确认 Bilibili 授权有效。";
     }
     return error instanceof Error ? error.message : fallbackMessage;
   }
@@ -1177,6 +1192,7 @@ export function createWebRoomAppController(
     return [
       `provider API ${panel} failed`,
       typeof providerError.code === "string" ? providerError.code : "",
+      typeof providerError.reason === "string" ? providerError.reason : "",
       error instanceof Error ? error.message : "",
     ]
       .filter(Boolean)

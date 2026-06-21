@@ -1843,6 +1843,69 @@ test("shows actionable parse guidance when shared playback needs authorization",
   );
 });
 
+test("shows live room offline parse guidance without shared/proxy fallback noise", async () => {
+  const recorder = createSocketRecorder();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => {
+        throw Object.assign(
+          new ProviderApiError(
+            "provider_parse_failed",
+            "Provider request failed.",
+            400,
+          ),
+          { reason: "live_room_offline" },
+        );
+      },
+    }),
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.parseBilibiliUrl({
+    url: "https://live.bilibili.com/1977907472",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "failed");
+  assert.equal(state.providerPicker?.errorMessage, "直播间当前未开播。");
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /关闭/);
+  assert.match(state.diagnostics.at(-1) ?? "", /live_room_offline/);
+});
+
 test("shares the selected Bilibili item with the final proxy and shared policy", () => {
   const recorder = createSocketRecorder();
   const controller = createWebRoomAppController({

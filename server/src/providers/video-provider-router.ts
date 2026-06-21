@@ -94,12 +94,14 @@ function sendError(
   statusCode: number,
   code: string,
   message: string,
+  reason?: string,
 ): void {
   sendJson(response, statusCode, {
     ok: false,
     error: {
       code,
       message,
+      ...(reason ? { reason } : {}),
     },
   });
 }
@@ -718,7 +720,13 @@ export function createVideoProviderRouter(
       }
       if (error instanceof VideoProviderError) {
         const safeError = toSafeProviderError(error);
-        sendError(response, 400, safeError.code, safeError.message);
+        sendError(
+          response,
+          400,
+          safeError.code,
+          safeError.message,
+          safeError.reason,
+        );
         return;
       }
       sendError(response, 500, "internal_error", "Internal server error.");

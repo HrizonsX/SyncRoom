@@ -8,6 +8,7 @@ import { createPlaybackProxyService } from "../src/playback-proxy/service.js";
 import {
   createVideoProviderRegistry,
   type ProviderParseInput,
+  VideoProviderError,
   type VideoProviderAdapter,
 } from "../src/providers/video-provider.js";
 import { createVideoProviderRouter } from "../src/providers/video-provider-router.js";
@@ -94,7 +95,11 @@ async function createRoomFixture() {
   return { roomStore, runtimeStore };
 }
 
-function createProviderFixture() {
+function createProviderFixture(
+  options: {
+    parse?: VideoProviderAdapter["parse"];
+  } = {},
+) {
   const parseInputs: ProviderParseInput[] = [];
   const authService = createVideoAuthSessionService({
     store: createInMemoryVideoAuthSessionStore(),
@@ -165,6 +170,9 @@ function createProviderFixture() {
     },
     async parse(input) {
       parseInputs.push(input);
+      if (options.parse) {
+        return options.parse(input);
+      }
       return {
         providerId: "bilibili",
         sourceId: "BV1TEST",
@@ -583,6 +591,57 @@ test("video provider router requires owner authorization for shared playback par
       },
     });
     assert.equal(parseInputs.length, 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router returns safe provider parse reasons", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture({
+    async parse() {
+      throw new VideoProviderError(
+        "provider_parse_failed",
+        "Bilibili live room is not currently live.",
+        "live_room_offline",
+      );
+    },
+  });
+  const proxyService = createPlaybackProxyService();
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://live.bilibili.com/123456",
+      policy: { proxy: false, shared: false },
+    });
+
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.body, {
+      ok: false,
+      error: {
+        code: "provider_parse_failed",
+        message: "Provider request failed.",
+        reason: "live_room_offline",
+      },
+    });
+    assert.equal(parseInputs.length, 1);
   } finally {
     await close(server);
   }

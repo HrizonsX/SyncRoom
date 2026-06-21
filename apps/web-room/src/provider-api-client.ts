@@ -11,6 +11,7 @@ export class ProviderApiError extends Error {
     readonly code: string,
     message: string,
     readonly statusCode: number,
+    readonly reason?: string,
   ) {
     super(message);
     this.name = "ProviderApiError";
@@ -127,7 +128,11 @@ async function postJson<T>(
       isRecord(error) && typeof error.message === "string"
         ? error.message
         : "Provider request failed.";
-    throw new ProviderApiError(code, message, response.status);
+    const reason =
+      isRecord(error) && typeof error.reason === "string"
+        ? error.reason
+        : undefined;
+    throw new ProviderApiError(code, message, response.status, reason);
   }
   return payload.data as T;
 }

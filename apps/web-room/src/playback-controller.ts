@@ -74,19 +74,76 @@ function getSourceKey(source: PlaybackSource): string {
 function configureShakaPlayerForSource(
   player: ShakaPlayerInstance,
   source: PlaybackSource,
+  options: { continueLiveLoadingWhenPaused?: boolean } = {},
 ): void {
   if (typeof player.configure !== "function") {
     return;
   }
+  const isLive = source.isLive === true;
 
   player.configure({
     manifest: {
-      continueLoadingWhenPaused: source.isLive !== true,
+      continueLoadingWhenPaused: isLive
+        ? options.continueLiveLoadingWhenPaused === true
+        : true,
     },
     streaming: {
-      stopFetchingOnPause: source.isLive === true,
+      stopFetchingOnPause: isLive,
     },
   });
+}
+
+type LiveResumeVideoElement = PlaybackVideoElement & {
+  addEventListener?: (type: "play" | "pause", listener: () => void) => void;
+  removeEventListener?: (type: "play" | "pause", listener: () => void) => void;
+};
+
+function bindLivePlaybackResume(args: {
+  player: ShakaPlayerInstance;
+  video: PlaybackVideoElement;
+  source: PlaybackSource;
+}): { dispose: () => void } | undefined {
+  if (args.source.isLive !== true) {
+    return undefined;
+  }
+  const video = args.video as LiveResumeVideoElement;
+  if (
+    typeof video.addEventListener !== "function" ||
+    typeof video.removeEventListener !== "function"
+  ) {
+    return undefined;
+  }
+
+  let pausedSinceLastPlay = false;
+  let resumeLoadInFlight: Promise<unknown> | undefined;
+  const handlePause = (): void => {
+    pausedSinceLastPlay = true;
+    configureShakaPlayerForSource(args.player, args.source, {
+      continueLiveLoadingWhenPaused: false,
+    });
+  };
+  const handlePlay = (): void => {
+    configureShakaPlayerForSource(args.player, args.source, {
+      continueLiveLoadingWhenPaused: true,
+    });
+    if (!pausedSinceLastPlay || resumeLoadInFlight) {
+      return;
+    }
+    pausedSinceLastPlay = false;
+    resumeLoadInFlight = args.player.load(args.source.url).finally(() => {
+      resumeLoadInFlight = undefined;
+    });
+    void resumeLoadInFlight.catch(() => undefined);
+  };
+
+  video.addEventListener("pause", handlePause);
+  video.addEventListener("play", handlePlay);
+  return {
+    dispose() {
+      video.removeEventListener?.("pause", handlePause);
+      video.removeEventListener?.("play", handlePlay);
+    },
+  };
 }
 
 type NativePlaybackVideoElement = PlaybackVideoElement & {
@@ -181,6 +238,7 @@ export function createPlaybackElementController(
   let currentSourceKey: string | undefined;
   let currentVideo: PlaybackVideoElement | undefined;
   let shakaPlayer: ShakaPlayerInstance | undefined;
+  let livePlaybackResumeBinding: { dispose: () => void } | undefined;
   let pendingLoad:
     | {
         sourceKey: string;
@@ -189,7 +247,13 @@ export function createPlaybackElementController(
       }
     | undefined;
 
+  function disposeLivePlaybackResumeBinding(): void {
+    livePlaybackResumeBinding?.dispose();
+    livePlaybackResumeBinding = undefined;
+  }
+
   async function destroyShakaPlayer(): Promise<void> {
+    disposeLivePlaybackResumeBinding();
     if (!shakaPlayer) {
       return;
     }
@@ -244,6 +308,7 @@ export function createPlaybackElementController(
         pendingLoad = nextPendingLoad;
         nextPendingLoad.promise = (async () => {
           await destroyShakaPlayer();
+          disposeLivePlaybackResumeBinding();
           currentSourceKey = undefined;
           video.src = source.url;
           video.load();
@@ -264,6 +329,7 @@ export function createPlaybackElementController(
       configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
       currentSourceKey = undefined;
+      disposeLivePlaybackResumeBinding();
       const nextPendingLoad = {
         sourceKey: nextSourceKey,
         video,
@@ -274,6 +340,11 @@ export function createPlaybackElementController(
         .then(() => {
           if (pendingLoad === nextPendingLoad) {
             currentSourceKey = nextSourceKey;
+            livePlaybackResumeBinding = bindLivePlaybackResume({
+              player,
+              video,
+              source,
+            });
           }
         })
         .finally(() => {

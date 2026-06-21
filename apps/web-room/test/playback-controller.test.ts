@@ -182,6 +182,54 @@ test("configures Shaka live playback to stop fetching while paused", async () =>
   ]);
 });
 
+test("reloads live playback on the first play after pausing", async () => {
+  const configs: Array<Record<string, unknown>> = [];
+  const loadedUrls: string[] = [];
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    configure(config: Record<string, unknown>): void {
+      configs.push(config);
+    }
+
+    async load(url: string): Promise<void> {
+      loadedUrls.push(url);
+    }
+  }
+  const controller = createPlaybackElementController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+  const video = new FakeEventedVideoElement();
+  const source = {
+    url: "https://syncroom.example.test/proxy/live/playlist.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+
+  await controller.load(video, source);
+  video.paused = true;
+  video.emit("pause");
+  video.paused = false;
+  video.emit("play");
+  await waitForCondition(
+    () => loadedUrls.length === 2,
+    "live playback did not reload on first play after pause",
+  );
+
+  assert.deepEqual(loadedUrls, [source.url, source.url]);
+  assert.deepEqual(configs.at(-1), {
+    manifest: {
+      continueLoadingWhenPaused: true,
+    },
+    streaming: {
+      stopFetchingOnPause: true,
+    },
+  });
+});
+
 test("restores Shaka paused fetching defaults for non-live playback", async () => {
   const configs: Array<Record<string, unknown>> = [];
   class FakeShakaPlayer {

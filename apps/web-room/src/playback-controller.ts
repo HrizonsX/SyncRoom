@@ -68,7 +68,7 @@ function getShakaPlayerConstructor(
 }
 
 function getSourceKey(source: PlaybackSource): string {
-  return `${source.engine}:${source.sourceType}:${source.url}`;
+  return `${source.engine}:${source.sourceType}:${source.url}:${source.candidateId ?? ""}`;
 }
 
 function configureShakaPlayerForSource(

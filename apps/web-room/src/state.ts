@@ -452,6 +452,7 @@ function getProviderPlaybackSource(
     return {
       ...selectPlaybackAdapter({ sourceType: selectedCandidate.sourceType }),
       url: selectedCandidate.url,
+      candidateId: selectedCandidate.id,
       ...(isLive ? { isLive: true } : {}),
     };
   } catch {

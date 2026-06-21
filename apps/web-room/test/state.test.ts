@@ -422,7 +422,66 @@ test("marks live provider playback sources for non-seekable controls", () => {
     sourceType: "m3u8",
     engine: "shaka",
     isLive: true,
+    candidateId: "hls-live",
   });
+});
+
+test("uses the selected live provider candidate as the playback source identity", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-2",
+    hostMemberId: "member-host",
+    displayName: "Bob",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "22889518",
+        url: "https://live.bilibili.com/22889518",
+        title: "Live Room",
+        provider: {
+          providerId: "bilibili",
+          sourceId: "22889518",
+          sourceUrl: "https://live.bilibili.com/22889518",
+          title: "Live Room",
+          item: {
+            itemId: "live-22889518",
+            title: "Live Room",
+            kind: "live",
+            roomId: "22889518",
+          },
+          policy: {
+            proxy: true,
+            shared: true,
+          },
+          candidates: [
+            {
+              id: "hls-live-1080p",
+              sourceType: "m3u8",
+              url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+              qualityLabel: "1080P",
+              default: false,
+            },
+            {
+              id: "hls-live-720p",
+              sourceType: "m3u8",
+              url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+              qualityLabel: "720P",
+              default: true,
+            },
+          ],
+          defaultCandidateId: "hls-live-720p",
+        },
+      },
+      playback: null,
+      members: [],
+    },
+  });
+
+  assert.equal(nextState.playbackSource?.candidateId, "hls-live-720p");
 });
 
 test("uses provider video titles for refreshed shared Bilibili room state", () => {

@@ -763,3 +763,47 @@ test("starts live playback from a user initiated shared state", async () => {
 
   assert.equal(video.paused, false);
 });
+
+test("reloads live playback when the provider candidate changes but the URL stays the same", async () => {
+  const video = new FakeEventedVideoElement();
+  const loadedUrls: string[] = [];
+  const sharedUrl = "https://live.bilibili.com/22889518";
+  const liveUrl = "https://syncroom.example.test/proxy/manifest/live.m3u8";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(url: string): Promise<void> {
+      loadedUrls.push(url);
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(liveUrl),
+    playbackUrl: sharedUrl,
+    playbackSource: {
+      url: liveUrl,
+      sourceType: "m3u8",
+      engine: "shaka",
+      isLive: true,
+      candidateId: "hls-live-1080p",
+    },
+  });
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(liveUrl),
+    playbackUrl: sharedUrl,
+    playbackSource: {
+      url: liveUrl,
+      sourceType: "m3u8",
+      engine: "shaka",
+      isLive: true,
+      candidateId: "hls-live-720p",
+    },
+  });
+
+  assert.deepEqual(loadedUrls, [liveUrl, liveUrl]);
+});

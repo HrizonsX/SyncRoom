@@ -2484,6 +2484,7 @@ test("applies room state and LiveKit voice messages after refresh rejoin", async
     url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
     sourceType: "mpd",
     engine: "shaka",
+    candidateId: "dash-avc-1080p",
   });
   assert.deepEqual(state.playback, {
     url: "https://www.bilibili.com/video/BV1xx411c7mD",
@@ -2579,5 +2580,6 @@ test("extracts the default provider candidate as the active Shaka playback sourc
     url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
     sourceType: "mpd",
     engine: "shaka",
+    candidateId: "dash-avc-1080p",
   });
 });

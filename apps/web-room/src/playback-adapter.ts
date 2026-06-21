@@ -23,6 +23,7 @@ export type PlaybackAdapterSelection = {
 
 export type PlaybackSource = PlaybackAdapterSelection & {
   url: string;
+  candidateId?: string;
   isLive?: boolean;
 };
 

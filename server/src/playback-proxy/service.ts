@@ -17,7 +17,7 @@ export type PlaybackProxyResourceRequest = {
 export type PlaybackProxyResource = {
   statusCode?: number;
   contentType: string;
-  body: string | Uint8Array;
+  body: string | Uint8Array | ReadableStream<Uint8Array>;
   headers?: Record<string, string>;
 };
 
@@ -532,6 +532,27 @@ export function createPlaybackProxyService(
     return copied;
   }
 
+  function createMeteredStream(
+    body: ReadableStream<Uint8Array>,
+    onChunk: (bytes: number) => void,
+  ): ReadableStream<Uint8Array> {
+    const reader = body.getReader();
+    return new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const result = await reader.read();
+        if (result.done) {
+          controller.close();
+          return;
+        }
+        onChunk(result.value.byteLength);
+        controller.enqueue(result.value);
+      },
+      cancel(reason) {
+        return reader.cancel(reason);
+      },
+    });
+  }
+
   async function resolveStoredM3u8Manifest(
     resource: Extract<StoredProxyResource, { kind: "manifest" }> & {
       refreshM3u8Url: string;
@@ -646,14 +667,15 @@ export function createPlaybackProxyService(
         const body =
           request.method === "HEAD"
             ? new Uint8Array()
-            : new Uint8Array(await upstreamResponse.arrayBuffer());
-        if (request.method !== "HEAD") {
-          options.metricsCollector?.recordProxyTraffic({
-            roomCode: resource.roomCode,
-            providerId: resource.providerId,
-            bytes: body.byteLength,
-          });
-        }
+            : upstreamResponse.body
+              ? createMeteredStream(upstreamResponse.body, (bytes) => {
+                  options.metricsCollector?.recordProxyTraffic({
+                    roomCode: resource.roomCode,
+                    providerId: resource.providerId,
+                    bytes,
+                  });
+                })
+              : new Uint8Array();
         return {
           statusCode: upstreamResponse.status,
           contentType:

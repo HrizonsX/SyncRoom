@@ -4,6 +4,7 @@ const PLAYBACK_VIDEO_IDENTITY_ATTRIBUTES = [
   "data-source-type",
   "data-playback-engine",
 ] as const;
+const PLAYBACK_VIDEO_RUNTIME_ATTRIBUTES = new Set(["src"]);
 
 export type PlaybackVideoIdentityElement = {
   getAttribute: (name: string) => string | null;
@@ -43,6 +44,9 @@ export function canReusePlaybackVideoElement(
 
 function syncElementAttributes(target: Element, source: Element): void {
   for (const attribute of Array.from(target.attributes)) {
+    if (PLAYBACK_VIDEO_RUNTIME_ATTRIBUTES.has(attribute.name)) {
+      continue;
+    }
     if (!source.hasAttribute(attribute.name)) {
       target.removeAttribute(attribute.name);
     }

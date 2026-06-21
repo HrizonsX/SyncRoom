@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   canReusePlaybackVideoElement,
   getPlaybackVideoReuseKey,
+  preservePlaybackVideoElement,
   type PlaybackVideoIdentityElement,
 } from "../src/playback-video-preservation.js";
 
@@ -14,6 +15,44 @@ function elementWithAttributes(
       return attributes[name] ?? null;
     },
   };
+}
+
+class FakePlaybackVideoElement {
+  private readonly attributeMap = new Map<string, string>();
+  replacedWith?: unknown;
+
+  constructor(attributes: Record<string, string>) {
+    for (const [name, value] of Object.entries(attributes)) {
+      this.attributeMap.set(name, value);
+    }
+  }
+
+  get attributes(): Array<{ name: string; value: string }> {
+    return Array.from(this.attributeMap.entries()).map(([name, value]) => ({
+      name,
+      value,
+    }));
+  }
+
+  getAttribute(name: string): string | null {
+    return this.attributeMap.get(name) ?? null;
+  }
+
+  hasAttribute(name: string): boolean {
+    return this.attributeMap.has(name);
+  }
+
+  setAttribute(name: string, value: string): void {
+    this.attributeMap.set(name, value);
+  }
+
+  removeAttribute(name: string): void {
+    this.attributeMap.delete(name);
+  }
+
+  replaceWith(value: unknown): void {
+    this.replacedWith = value;
+  }
 }
 
 describe("playback video preservation", () => {
@@ -58,5 +97,40 @@ describe("playback video preservation", () => {
     });
 
     assert.equal(canReusePlaybackVideoElement(existing, next), true);
+  });
+
+  it("keeps the runtime video src when reusing the same playback source", () => {
+    const sourceAttributes = {
+      "data-source-url": "http://localhost:8787/proxy/segment/1",
+      "data-source-type": "mp4",
+      "data-playback-engine": "native",
+    };
+    const existing = new FakePlaybackVideoElement({
+      ...sourceAttributes,
+      src: "http://localhost:8787/proxy/segment/1",
+      preload: "metadata",
+    });
+    const next = new FakePlaybackVideoElement({
+      ...sourceAttributes,
+      preload: "metadata",
+      playsinline: "",
+    });
+    const root = {
+      querySelector() {
+        return next;
+      },
+    };
+
+    preservePlaybackVideoElement(
+      root as unknown as ParentNode,
+      existing as unknown as HTMLVideoElement,
+    );
+
+    assert.equal(
+      existing.getAttribute("src"),
+      "http://localhost:8787/proxy/segment/1",
+    );
+    assert.equal(existing.replacedWith, undefined);
+    assert.equal(next.replacedWith, existing);
   });
 });

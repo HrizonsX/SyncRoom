@@ -1,7 +1,12 @@
-import type { PlaybackState } from "@syncroom/protocol";
+import type {
+  PlaybackState,
+  ProviderPlaybackDescriptor,
+} from "@syncroom/protocol";
 import type {
   WebRoomChatMessage,
   WebRoomJoinedState,
+  WebRoomProviderPickerItem,
+  WebRoomProviderPickerState,
   WebRoomProviderPlaybackStatus,
   WebRoomSystemChatEventType,
   WebRoomThemeMode,
@@ -454,6 +459,106 @@ function getProviderPlaybackSource(
   }
 }
 
+function getProviderPickerItemKind(
+  value: unknown,
+): WebRoomProviderPickerItem["kind"] | undefined {
+  return value === "part" || value === "episode" || value === "live"
+    ? value
+    : undefined;
+}
+
+function getDefaultProviderCandidateId(
+  provider: RecordLike,
+): string | undefined {
+  const candidates = Array.isArray(provider.candidates)
+    ? provider.candidates.filter(isRecord)
+    : [];
+  const defaultCandidateId = getString(provider.defaultCandidateId);
+  if (
+    defaultCandidateId &&
+    candidates.some(
+      (candidate) => getString(candidate.id) === defaultCandidateId,
+    )
+  ) {
+    return defaultCandidateId;
+  }
+
+  const flaggedCandidateId = getString(
+    candidates.find((candidate) => candidate.default === true)?.id,
+  );
+  if (flaggedCandidateId) {
+    return flaggedCandidateId;
+  }
+
+  return getString(candidates[0]?.id) || undefined;
+}
+
+function createProviderPickerFromSharedVideo(
+  state: WebRoomJoinedState,
+  sharedVideo: RecordLike | null,
+): WebRoomProviderPickerState | undefined {
+  if (state.currentMemberId !== state.hostMemberId) {
+    return state.providerPicker;
+  }
+  if (state.providerPicker?.status === "loading") {
+    return state.providerPicker;
+  }
+  if (state.providerPicker && state.providerPicker.items.length > 0) {
+    return state.providerPicker;
+  }
+
+  const provider = isRecord(sharedVideo?.provider)
+    ? sharedVideo.provider
+    : null;
+  const policy = isRecord(provider?.policy) ? provider.policy : null;
+  const item = isRecord(provider?.item) ? provider.item : null;
+  const kind = getProviderPickerItemKind(item?.kind);
+  const itemId = getString(item?.itemId);
+  const itemTitle = getString(item?.title, getString(provider?.title));
+  if (
+    !provider ||
+    !policy ||
+    !item ||
+    !kind ||
+    itemId.length === 0 ||
+    itemTitle.length === 0 ||
+    typeof policy.proxy !== "boolean" ||
+    typeof policy.shared !== "boolean" ||
+    !Array.isArray(provider.candidates) ||
+    provider.candidates.length === 0
+  ) {
+    return state.providerPicker;
+  }
+
+  const selectedQualityCandidateId = getDefaultProviderCandidateId(provider);
+  const selectedCandidate = provider.candidates
+    .filter(isRecord)
+    .find(
+      (candidate) => getString(candidate.id) === selectedQualityCandidateId,
+    );
+  return {
+    open: true,
+    status: "ready",
+    url: getString(provider.sourceUrl, getString(sharedVideo?.url)),
+    proxy: policy.proxy,
+    shared: policy.shared,
+    items: [
+      {
+        itemId,
+        title: itemTitle,
+        kind,
+        qualityLabel: getString(selectedCandidate?.qualityLabel) || undefined,
+        sourceType: getString(selectedCandidate?.sourceType) || undefined,
+        durationSeconds: getFiniteNumber(item.durationSeconds),
+        providerDescriptor: provider as unknown as ProviderPlaybackDescriptor,
+      },
+    ],
+    selectedItemId: itemId,
+    selectedQualityCandidateId,
+    message: getString(provider.title) || undefined,
+  };
+}
+
 function applyRoomState(
   state: WebRoomJoinedState,
   payload: RecordLike,
@@ -476,6 +581,10 @@ function applyRoomState(
     : state.members;
   const playback = readPlaybackState(payload.playback);
   const playbackSource = getProviderPlaybackSource(sharedVideo);
+  const providerPicker = createProviderPickerFromSharedVideo(
+    state,
+    sharedVideo,
+  );
   const chatMessages = mergeChatMessages(
     state.chatMessages,
     readRoomChatHistory(payload.chatMessages),
@@ -488,6 +597,7 @@ function applyRoomState(
     videoTitle: sharedVideo
       ? getSharedVideoTitle(sharedVideo, state.videoTitle)
       : state.videoTitle,
+    providerPicker,
     providerPlaybackStatus: getProviderPlaybackStatus(sharedVideo),
     playbackSource,
     playbackUrl: sharedVideo

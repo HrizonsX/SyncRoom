@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
 import type {
   PlaybackProxyResourceKind,
   PlaybackProxyService,
@@ -38,6 +39,34 @@ function sendJsonError(
       error: { code, message },
     }),
   );
+}
+
+function isReadableStreamBody(
+  value: unknown,
+): value is ReadableStream<Uint8Array> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ReadableStream<Uint8Array>).getReader === "function"
+  );
+}
+
+function sendResourceBody(
+  response: ServerResponse,
+  body: string | Uint8Array | ReadableStream<Uint8Array>,
+): void {
+  if (!isReadableStreamBody(body)) {
+    response.end(body);
+    return;
+  }
+
+  const stream = Readable.fromWeb(
+    body as Parameters<typeof Readable.fromWeb>[0],
+  );
+  stream.on("error", (error) => {
+    response.destroy(error);
+  });
+  stream.pipe(response);
 }
 
 export function createPlaybackProxyController(args: {
@@ -115,7 +144,11 @@ export function createPlaybackProxyController(args: {
           ...createCorsHeaders(request),
           ...(resource.headers ?? {}),
         });
-        response.end(request.method === "HEAD" ? undefined : resource.body);
+        if (request.method === "HEAD") {
+          response.end();
+          return;
+        }
+        sendResourceBody(response, resource.body);
       } catch (error) {
         if (error instanceof PlaybackProxyError) {
           sendJsonError(

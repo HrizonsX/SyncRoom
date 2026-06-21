@@ -211,6 +211,164 @@ test("extracts member-safe provider playback status from room state", () => {
   );
 });
 
+test("restores host provider picker from shared provider room state after refresh", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-host",
+    hostMemberId: "member-host",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "BV1xx411c7mD",
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        title: "Shared Bilibili title",
+        provider: {
+          providerId: "bilibili",
+          sourceId: "BV1xx411c7mD",
+          sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          item: {
+            itemId: "BV1xx411c7mD:cid-987654",
+            title: "Part 1",
+            kind: "part",
+            cid: "987654",
+            bvid: "BV1xx411c7mD",
+          },
+          policy: {
+            proxy: true,
+            shared: false,
+          },
+          candidates: [
+            {
+              id: "mp4-360p",
+              sourceType: "mp4",
+              url: "https://syncroom.example.test/proxy/segment/video-360.mp4",
+              qualityLabel: "360P",
+              default: false,
+            },
+            {
+              id: "mp4-720p",
+              sourceType: "mp4",
+              url: "https://syncroom.example.test/proxy/segment/video-720.mp4",
+              qualityLabel: "720P",
+              default: true,
+            },
+          ],
+          defaultCandidateId: "mp4-720p",
+        },
+      },
+      playback: null,
+      members: [{ id: "member-host", name: "Alice" }],
+    },
+  });
+
+  assert.equal(nextState.providerPicker?.status, "ready");
+  assert.equal(
+    nextState.providerPicker?.url,
+    "https://www.bilibili.com/video/BV1xx411c7mD",
+  );
+  assert.equal(nextState.providerPicker?.proxy, true);
+  assert.equal(nextState.providerPicker?.shared, false);
+  assert.equal(
+    nextState.providerPicker?.selectedItemId,
+    "BV1xx411c7mD:cid-987654",
+  );
+  assert.equal(
+    nextState.providerPicker?.selectedQualityCandidateId,
+    "mp4-720p",
+  );
+  assert.equal(nextState.providerPicker?.items.length, 1);
+  assert.deepEqual(nextState.providerPicker?.items[0]?.providerDescriptor, {
+    providerId: "bilibili",
+    sourceId: "BV1xx411c7mD",
+    sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: "Bilibili video",
+    item: {
+      itemId: "BV1xx411c7mD:cid-987654",
+      title: "Part 1",
+      kind: "part",
+      cid: "987654",
+      bvid: "BV1xx411c7mD",
+    },
+    policy: {
+      proxy: true,
+      shared: false,
+    },
+    candidates: [
+      {
+        id: "mp4-360p",
+        sourceType: "mp4",
+        url: "https://syncroom.example.test/proxy/segment/video-360.mp4",
+        qualityLabel: "360P",
+        default: false,
+      },
+      {
+        id: "mp4-720p",
+        sourceType: "mp4",
+        url: "https://syncroom.example.test/proxy/segment/video-720.mp4",
+        qualityLabel: "720P",
+        default: true,
+      },
+    ],
+    defaultCandidateId: "mp4-720p",
+  });
+});
+
+test("restores host provider picker with the first candidate when no default is marked", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-host",
+    hostMemberId: "member-host",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "BV1xx411c7mD",
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        title: "Shared Bilibili title",
+        provider: {
+          providerId: "bilibili",
+          sourceId: "BV1xx411c7mD",
+          sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          item: {
+            itemId: "BV1xx411c7mD:cid-987654",
+            title: "Part 1",
+            kind: "part",
+          },
+          policy: {
+            proxy: true,
+            shared: true,
+          },
+          candidates: [
+            {
+              id: "mp4-360p",
+              sourceType: "mp4",
+              url: "https://syncroom.example.test/proxy/segment/video-360.mp4",
+            },
+          ],
+        },
+      },
+      playback: null,
+      members: [{ id: "member-host", name: "Alice" }],
+    },
+  });
+
+  assert.equal(
+    nextState.providerPicker?.selectedQualityCandidateId,
+    "mp4-360p",
+  );
+});
+
 test("marks live provider playback sources for non-seekable controls", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",

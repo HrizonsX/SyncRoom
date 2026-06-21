@@ -31,6 +31,44 @@ async function close(server: ReturnType<typeof createServer>): Promise<void> {
   });
 }
 
+function withTimeout<T>(
+  promise: Promise<T>,
+  message: string,
+  timeoutMs = 1_000,
+): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]);
+}
+
+async function readResourceBody(
+  body: string | Uint8Array | ReadableStream<Uint8Array> | undefined,
+): Promise<Uint8Array> {
+  if (!body) {
+    return new Uint8Array();
+  }
+  if (typeof body === "string") {
+    return new TextEncoder().encode(body);
+  }
+  if (body instanceof Uint8Array) {
+    return body;
+  }
+
+  const chunks: Uint8Array[] = [];
+  const reader = body.getReader();
+  while (true) {
+    const result = await reader.read();
+    if (result.done) {
+      break;
+    }
+    chunks.push(result.value);
+  }
+  return new Uint8Array(chunks.flatMap((chunk) => Array.from(chunk)));
+}
+
 test("segment proxy fetches only cached opaque resource mappings", async () => {
   const upstreamRequests: string[] = [];
   const ids = ["live.m3u8", "segment-1"];
@@ -90,6 +128,81 @@ segment-1.ts
       "https://live.example.test/hls/segment-1.ts",
     ]);
   } finally {
+    await close(server);
+  }
+});
+
+test("segment proxy streams un-ranged media before the upstream body completes", async () => {
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("first-chunk"));
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "video/mp4",
+          },
+        },
+      ),
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const router = createPlaybackProxyRouter({
+    controller: createPlaybackProxyController({ service }),
+  });
+  const server = createServer(async (request, response) => {
+    if (await router.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+  const abortController = new AbortController();
+
+  try {
+    const segment = await withTimeout(
+      fetch(`${baseUrl}/proxy/segment/movie-mp4`, {
+        signal: abortController.signal,
+      }).catch((error: unknown) => {
+        if (abortController.signal.aborted) {
+          throw new Error(
+            "segment response did not start before upstream body completion",
+          );
+        }
+        throw error;
+      }),
+      "segment response did not start before upstream body completion",
+    ).catch((error: unknown) => {
+      abortController.abort();
+      throw error;
+    });
+    assert.equal(segment.status, 200);
+    assert.equal(segment.headers.get("content-type"), "video/mp4");
+
+    const reader = segment.body?.getReader();
+    assert.ok(reader);
+    const firstChunk = await withTimeout(
+      reader.read(),
+      "segment first chunk was not streamed",
+    );
+    assert.equal(new TextDecoder().decode(firstChunk.value), "first-chunk");
+    await reader.cancel();
+  } finally {
+    abortController.abort();
+    server.closeAllConnections();
     await close(server);
   }
 });
@@ -408,6 +521,10 @@ segment-1.ts
   });
 
   assert.equal(segment?.statusCode, 206);
+  assert.deepEqual(
+    Array.from(await readResourceBody(segment?.body)),
+    [1, 2, 3, 4],
+  );
   assert.deepEqual(records, [
     { roomCode: "ABC123", providerId: "bilibili", bytes: 4 },
   ]);

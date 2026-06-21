@@ -93,6 +93,7 @@ type StoredProxyResource =
       refreshPublicBaseUrl?: string;
       refreshUpstreamHeaders?: Record<string, string>;
       m3u8SegmentMappings?: Map<string, string>;
+      m3u8PlaylistMappings?: Map<string, string>;
     } & PlaybackProxyResource)
   | {
       kind: "segment";
@@ -114,6 +115,13 @@ function createStableSegmentMappingKey(
     .map(([name, value]) => `${name}:${value}`)
     .join("\n");
   return `${upstreamUrls.join("\n")}\n\n${headerKey}`;
+}
+
+function createStableM3u8ManifestMappingKey(
+  upstreamUrl: string,
+  upstreamHeaders: Record<string, string> | undefined,
+): string {
+  return createStableSegmentMappingKey([upstreamUrl], upstreamHeaders);
 }
 
 export class PlaybackProxyError extends Error {
@@ -149,6 +157,14 @@ function createProxyBaseUrl(publicBaseUrl: string, resourceId: string): string {
 
 function isLiveM3u8Manifest(manifest: string): boolean {
   return !/^#EXT-X-ENDLIST\s*$/im.test(manifest);
+}
+
+function isM3u8PlaylistUrl(upstreamUrl: string): boolean {
+  try {
+    return /\.m3u8$/i.test(new URL(upstreamUrl).pathname);
+  } catch {
+    return /\.m3u8(?:$|[?#])/i.test(upstreamUrl);
+  }
 }
 
 function decodeXmlEntities(value: string): string {
@@ -346,6 +362,51 @@ export function createPlaybackProxyService(
     return urls.length > 0 ? urls : [upstreamUrl];
   }
 
+  function setM3u8ManifestMapping(
+    resourcePublicBaseUrl: string,
+    roomCode: string,
+    providerId: string,
+    upstreamUrl: string,
+    expiresAt: number,
+    upstreamHeaders: Record<string, string> | undefined,
+    stableSegmentMappings?: Map<string, string>,
+    stablePlaylistMappings?: Map<string, string>,
+  ): string {
+    const resolvedUpstreamUrl = resolveHttpUrl(upstreamUrl, undefined);
+    const manifestUrl = resolvedUpstreamUrl ?? upstreamUrl;
+    const stableMappingKey = stablePlaylistMappings
+      ? createStableM3u8ManifestMappingKey(manifestUrl, upstreamHeaders)
+      : undefined;
+    const existingManifestId = stableMappingKey
+      ? stablePlaylistMappings?.get(stableMappingKey)
+      : undefined;
+    if (
+      existingManifestId &&
+      resources.has(resourceKey("manifest", existingManifestId))
+    ) {
+      return existingManifestId;
+    }
+
+    const manifestId = createResourceId();
+    resources.set(resourceKey("manifest", manifestId), {
+      kind: "manifest",
+      roomCode,
+      providerId,
+      expiresAt,
+      contentType: "application/vnd.apple.mpegurl",
+      body: "",
+      refreshM3u8Url: manifestUrl,
+      refreshPublicBaseUrl: resourcePublicBaseUrl,
+      m3u8SegmentMappings: stableSegmentMappings,
+      m3u8PlaylistMappings: stablePlaylistMappings,
+      ...(upstreamHeaders ? { refreshUpstreamHeaders: upstreamHeaders } : {}),
+    });
+    if (stablePlaylistMappings && stableMappingKey) {
+      stablePlaylistMappings.set(stableMappingKey, manifestId);
+    }
+    return manifestId;
+  }
+
   function rewriteBaseUrls(
     resourcePublicBaseUrl: string,
     roomCode: string,
@@ -415,12 +476,26 @@ export function createPlaybackProxyService(
     manifestUrl: string | undefined,
     expiresAt: number,
     upstreamHeaders: Record<string, string> | undefined,
-    stableMappings?: Map<string, string>,
+    stableSegmentMappings?: Map<string, string>,
+    stablePlaylistMappings?: Map<string, string>,
   ): string {
     return line.replace(/\bURI="([^"]+)"/gi, (match, value: string) => {
       const upstreamUrl = resolveHttpUrl(value, manifestUrl);
       if (!upstreamUrl) {
         return match;
+      }
+      if (isM3u8PlaylistUrl(upstreamUrl)) {
+        const manifestId = setM3u8ManifestMapping(
+          resourcePublicBaseUrl,
+          roomCode,
+          providerId,
+          upstreamUrl,
+          expiresAt,
+          upstreamHeaders,
+          stableSegmentMappings,
+          stablePlaylistMappings,
+        );
+        return `URI="${createProxyUrl(resourcePublicBaseUrl, "manifest", manifestId)}"`;
       }
       const segmentId = setSegmentMapping(
         roomCode,
@@ -428,7 +503,7 @@ export function createPlaybackProxyService(
         createUpstreamUrls(upstreamUrl, undefined),
         expiresAt,
         upstreamHeaders,
-        stableMappings,
+        stableSegmentMappings,
       );
       return `URI="${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}"`;
     });
@@ -442,42 +517,78 @@ export function createPlaybackProxyService(
     manifestUrl: string | undefined,
     expiresAt: number,
     upstreamHeaders: Record<string, string> | undefined,
-    stableMappings?: Map<string, string>,
+    stableSegmentMappings?: Map<string, string>,
+    stablePlaylistMappings?: Map<string, string>,
   ): string {
-    return manifest
-      .split(/\r?\n/)
-      .map((line) => {
-        const lineWithProxyUris = rewriteM3u8UriAttributes(
+    const rewrittenLines: string[] = [];
+    let nextUriIsPlaylist = false;
+
+    for (const line of manifest.split(/\r?\n/)) {
+      const lineWithProxyUris = rewriteM3u8UriAttributes(
+        resourcePublicBaseUrl,
+        roomCode,
+        providerId,
+        line,
+        manifestUrl,
+        expiresAt,
+        upstreamHeaders,
+        stableSegmentMappings,
+        stablePlaylistMappings,
+      );
+      const trimmedLine = lineWithProxyUris.trim();
+      if (trimmedLine.length === 0) {
+        rewrittenLines.push(lineWithProxyUris);
+        continue;
+      }
+      if (trimmedLine.startsWith("#")) {
+        if (/^#EXT-X-STREAM-INF\b/i.test(trimmedLine)) {
+          nextUriIsPlaylist = true;
+        }
+        rewrittenLines.push(lineWithProxyUris);
+        continue;
+      }
+
+      const upstreamUrl = resolveHttpUrl(trimmedLine, manifestUrl);
+      if (!upstreamUrl) {
+        nextUriIsPlaylist = false;
+        rewrittenLines.push(lineWithProxyUris);
+        continue;
+      }
+
+      const leadingWhitespace = lineWithProxyUris.match(/^\s*/)?.[0] ?? "";
+      if (nextUriIsPlaylist || isM3u8PlaylistUrl(upstreamUrl)) {
+        const manifestId = setM3u8ManifestMapping(
           resourcePublicBaseUrl,
           roomCode,
           providerId,
-          line,
-          manifestUrl,
+          upstreamUrl,
           expiresAt,
           upstreamHeaders,
-          stableMappings,
+          stableSegmentMappings,
+          stablePlaylistMappings,
         );
-        const trimmedLine = lineWithProxyUris.trim();
-        if (trimmedLine.length === 0 || trimmedLine.startsWith("#")) {
-          return lineWithProxyUris;
-        }
+        rewrittenLines.push(
+          `${leadingWhitespace}${createProxyUrl(resourcePublicBaseUrl, "manifest", manifestId)}`,
+        );
+        nextUriIsPlaylist = false;
+        continue;
+      }
 
-        const upstreamUrl = resolveHttpUrl(trimmedLine, manifestUrl);
-        if (!upstreamUrl) {
-          return lineWithProxyUris;
-        }
-        const segmentId = setSegmentMapping(
-          roomCode,
-          providerId,
-          createUpstreamUrls(upstreamUrl, undefined),
-          expiresAt,
-          upstreamHeaders,
-          stableMappings,
-        );
-        const leadingWhitespace = lineWithProxyUris.match(/^\s*/)?.[0] ?? "";
-        return `${leadingWhitespace}${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}`;
-      })
-      .join("\n");
+      const segmentId = setSegmentMapping(
+        roomCode,
+        providerId,
+        createUpstreamUrls(upstreamUrl, undefined),
+        expiresAt,
+        upstreamHeaders,
+        stableSegmentMappings,
+      );
+      rewrittenLines.push(
+        `${leadingWhitespace}${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}`,
+      );
+      nextUriIsPlaylist = false;
+    }
+
+    return rewrittenLines.join("\n");
   }
 
   async function assertSafeUpstreamUrl(upstreamUrl: string): Promise<void> {
@@ -626,6 +737,7 @@ export function createPlaybackProxyService(
       resource.expiresAt,
       resource.refreshUpstreamHeaders,
       resource.m3u8SegmentMappings,
+      resource.m3u8PlaylistMappings,
     );
     resource.body = rewritten;
     return {
@@ -785,6 +897,9 @@ export function createPlaybackProxyService(
       const stableSegmentMappings = refreshM3u8Url
         ? new Map<string, string>()
         : undefined;
+      const stablePlaylistMappings = refreshM3u8Url
+        ? new Map<string, string>()
+        : undefined;
       resources.set(resourceKey("manifest", manifestId), {
         kind: "manifest",
         roomCode: input.roomCode,
@@ -800,12 +915,14 @@ export function createPlaybackProxyService(
           expiresAt,
           input.upstreamHeaders,
           stableSegmentMappings,
+          stablePlaylistMappings,
         ),
         ...(refreshM3u8Url
           ? {
               refreshM3u8Url,
               refreshPublicBaseUrl: resourcePublicBaseUrl,
               m3u8SegmentMappings: stableSegmentMappings,
+              m3u8PlaylistMappings: stablePlaylistMappings,
               ...(input.upstreamHeaders
                 ? { refreshUpstreamHeaders: input.upstreamHeaders }
                 : {}),

@@ -539,7 +539,12 @@ function renderPlaybackVideo(source: PlaybackSource | undefined): string {
     ? `
                 data-source-url="${escapeHtml(source.url)}"
                 data-source-type="${escapeHtml(source.sourceType)}"
-                data-playback-engine="${escapeHtml(source.engine)}"`
+                data-playback-engine="${escapeHtml(source.engine)}"${
+                  source.candidateId
+                    ? `
+                data-source-candidate-id="${escapeHtml(source.candidateId)}"`
+                    : ""
+                }`
     : "";
 
   return `

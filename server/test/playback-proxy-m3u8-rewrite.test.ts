@@ -65,7 +65,13 @@ https://live.example.test/hls/segment-2.ts
 });
 
 test("refreshes live m3u8 manifests when the proxied manifest is requested again", async () => {
-  const ids = ["live.m3u8", "segment-1", "segment-2", "segment-3"];
+  const ids = [
+    "live.m3u8",
+    "initial-segment",
+    "segment-1",
+    "segment-2",
+    "segment-3",
+  ];
   const upstreamManifests = [
     `#EXTM3U
 #EXT-X-VERSION:3
@@ -128,4 +134,87 @@ segment-100.ts
     "https://live.example.test/hls/live.m3u8",
     "https://live.example.test/hls/live.m3u8",
   ]);
+});
+
+test("keeps proxy segment URLs stable across live m3u8 refreshes", async () => {
+  const ids = ["live.m3u8", "segment-1", "segment-2", "segment-3"];
+  const upstreamManifests = [
+    `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:101
+#EXTINF:4.000,
+segment-101.ts
+#EXTINF:4.000,
+segment-102.ts
+`,
+    `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:101
+#EXTINF:4.000,
+segment-101.ts
+#EXTINF:4.000,
+segment-102.ts
+#EXTINF:4.000,
+segment-103.ts
+`,
+  ];
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "https://syncroom.example.test",
+    createResourceId: () => ids.shift() ?? "extra-id",
+    now: () => 2_000,
+    defaultTtlMs: 30_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () =>
+      new Response(upstreamManifests.shift() ?? "", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      }),
+  });
+
+  service.registerM3u8Manifest({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    manifestUrl: "https://live.example.test/hls/live.m3u8",
+    manifest: `#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:100
+#EXTINF:4.000,
+segment-100.ts
+`,
+  });
+
+  const firstManifest = await service.resolveResource({
+    kind: "manifest",
+    resourceId: "live.m3u8",
+    headers: {},
+  });
+  const secondManifest = await service.resolveResource({
+    kind: "manifest",
+    resourceId: "live.m3u8",
+    headers: {},
+  });
+  const readSegmentUrls = (manifest: string): string[] =>
+    Array.from(
+      manifest.matchAll(
+        /https:\/\/syncroom\.example\.test\/proxy\/segment\/[^\s"]+/g,
+      ),
+      (match) => match[0],
+    );
+
+  const firstSegmentUrls = readSegmentUrls(
+    firstManifest?.body.toString() ?? "",
+  );
+  const secondSegmentUrls = readSegmentUrls(
+    secondManifest?.body.toString() ?? "",
+  );
+
+  assert.deepEqual(secondSegmentUrls.slice(0, 2), firstSegmentUrls);
+  assert.match(
+    secondSegmentUrls[2] ?? "",
+    /^https:\/\/syncroom\.example\.test\/proxy\/segment\//,
+  );
+  assert.ok(!firstSegmentUrls.includes(secondSegmentUrls[2] ?? ""));
 });

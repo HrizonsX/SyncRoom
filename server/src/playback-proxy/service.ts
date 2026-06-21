@@ -92,6 +92,7 @@ type StoredProxyResource =
       refreshM3u8Url?: string;
       refreshPublicBaseUrl?: string;
       refreshUpstreamHeaders?: Record<string, string>;
+      m3u8SegmentMappings?: Map<string, string>;
     } & PlaybackProxyResource)
   | {
       kind: "segment";
@@ -103,6 +104,17 @@ type StoredProxyResource =
     };
 
 const DEFAULT_PROXY_RESOURCE_TTL_MS = 10 * 60_000;
+
+function createStableSegmentMappingKey(
+  upstreamUrls: readonly string[],
+  upstreamHeaders: Record<string, string> | undefined,
+): string {
+  const headerKey = Object.entries(upstreamHeaders ?? {})
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}:${value}`)
+    .join("\n");
+  return `${upstreamUrls.join("\n")}\n\n${headerKey}`;
+}
 
 export class PlaybackProxyError extends Error {
   constructor(
@@ -290,7 +302,21 @@ export function createPlaybackProxyService(
     upstreamUrls: string[],
     expiresAt: number,
     upstreamHeaders: Record<string, string> | undefined,
+    stableMappings?: Map<string, string>,
   ): string {
+    const stableMappingKey = stableMappings
+      ? createStableSegmentMappingKey(upstreamUrls, upstreamHeaders)
+      : undefined;
+    const existingSegmentId = stableMappingKey
+      ? stableMappings?.get(stableMappingKey)
+      : undefined;
+    if (
+      existingSegmentId &&
+      resources.has(resourceKey("segment", existingSegmentId))
+    ) {
+      return existingSegmentId;
+    }
+
     const segmentId = createResourceId();
     resources.set(resourceKey("segment", segmentId), {
       kind: "segment",
@@ -300,6 +326,9 @@ export function createPlaybackProxyService(
       upstreamHeaders,
       expiresAt,
     });
+    if (stableMappings && stableMappingKey) {
+      stableMappings.set(stableMappingKey, segmentId);
+    }
     return segmentId;
   }
 
@@ -386,6 +415,7 @@ export function createPlaybackProxyService(
     manifestUrl: string | undefined,
     expiresAt: number,
     upstreamHeaders: Record<string, string> | undefined,
+    stableMappings?: Map<string, string>,
   ): string {
     return line.replace(/\bURI="([^"]+)"/gi, (match, value: string) => {
       const upstreamUrl = resolveHttpUrl(value, manifestUrl);
@@ -398,6 +428,7 @@ export function createPlaybackProxyService(
         createUpstreamUrls(upstreamUrl, undefined),
         expiresAt,
         upstreamHeaders,
+        stableMappings,
       );
       return `URI="${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}"`;
     });
@@ -411,6 +442,7 @@ export function createPlaybackProxyService(
     manifestUrl: string | undefined,
     expiresAt: number,
     upstreamHeaders: Record<string, string> | undefined,
+    stableMappings?: Map<string, string>,
   ): string {
     return manifest
       .split(/\r?\n/)
@@ -423,6 +455,7 @@ export function createPlaybackProxyService(
           manifestUrl,
           expiresAt,
           upstreamHeaders,
+          stableMappings,
         );
         const trimmedLine = lineWithProxyUris.trim();
         if (trimmedLine.length === 0 || trimmedLine.startsWith("#")) {
@@ -439,6 +472,7 @@ export function createPlaybackProxyService(
           createUpstreamUrls(upstreamUrl, undefined),
           expiresAt,
           upstreamHeaders,
+          stableMappings,
         );
         const leadingWhitespace = lineWithProxyUris.match(/^\s*/)?.[0] ?? "";
         return `${leadingWhitespace}${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}`;
@@ -591,6 +625,7 @@ export function createPlaybackProxyService(
       resource.refreshM3u8Url,
       resource.expiresAt,
       resource.refreshUpstreamHeaders,
+      resource.m3u8SegmentMappings,
     );
     resource.body = rewritten;
     return {
@@ -747,6 +782,9 @@ export function createPlaybackProxyService(
         input.manifestUrl && isLiveM3u8Manifest(input.manifest)
           ? resolveHttpUrl(input.manifestUrl, undefined)
           : null;
+      const stableSegmentMappings = refreshM3u8Url
+        ? new Map<string, string>()
+        : undefined;
       resources.set(resourceKey("manifest", manifestId), {
         kind: "manifest",
         roomCode: input.roomCode,
@@ -761,11 +799,13 @@ export function createPlaybackProxyService(
           input.manifestUrl,
           expiresAt,
           input.upstreamHeaders,
+          stableSegmentMappings,
         ),
         ...(refreshM3u8Url
           ? {
               refreshM3u8Url,
               refreshPublicBaseUrl: resourcePublicBaseUrl,
+              m3u8SegmentMappings: stableSegmentMappings,
               ...(input.upstreamHeaders
                 ? { refreshUpstreamHeaders: input.upstreamHeaders }
                 : {}),

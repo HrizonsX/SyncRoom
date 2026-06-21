@@ -4,6 +4,9 @@ const PLAYBACK_VIDEO_IDENTITY_ATTRIBUTES = [
   "data-source-type",
   "data-playback-engine",
 ] as const;
+const PLAYBACK_VIDEO_OPTIONAL_IDENTITY_ATTRIBUTES = [
+  "data-source-candidate-id",
+] as const;
 const PLAYBACK_VIDEO_RUNTIME_ATTRIBUTES = new Set(["src"]);
 
 export type PlaybackVideoIdentityElement = {
@@ -28,7 +31,13 @@ export function getPlaybackVideoReuseKey(
   if (values.some((value) => !value)) {
     return undefined;
   }
-  return values.join("\n");
+  const optionalValues = PLAYBACK_VIDEO_OPTIONAL_IDENTITY_ATTRIBUTES.map(
+    (name) => element.getAttribute(name) ?? "",
+  );
+  if (optionalValues.every((value) => value.length === 0)) {
+    return values.join("\n");
+  }
+  return [...values, ...optionalValues].join("\n");
 }
 
 export function canReusePlaybackVideoElement(

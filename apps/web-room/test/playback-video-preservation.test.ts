@@ -84,6 +84,23 @@ describe("playback video preservation", () => {
     assert.equal(canReusePlaybackVideoElement(existing, next), false);
   });
 
+  it("does not reuse when candidate identity changes", () => {
+    const existing = elementWithAttributes({
+      "data-source-url": "http://localhost:8787/proxy/manifest/1",
+      "data-source-type": "m3u8",
+      "data-playback-engine": "shaka",
+      "data-source-candidate-id": "hls-avc-720p",
+    });
+    const next = elementWithAttributes({
+      "data-source-url": "http://localhost:8787/proxy/manifest/1",
+      "data-source-type": "m3u8",
+      "data-playback-engine": "shaka",
+      "data-source-candidate-id": "hls-avc-1080p",
+    });
+
+    assert.equal(canReusePlaybackVideoElement(existing, next), false);
+  });
+
   it("reuses when source identity is unchanged", () => {
     const existing = elementWithAttributes({
       "data-source-url": "http://localhost:8787/proxy/manifest/1",

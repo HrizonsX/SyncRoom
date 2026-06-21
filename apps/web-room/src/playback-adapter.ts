@@ -41,8 +41,16 @@ function isLikelyHevc(candidate: PlaybackCandidate): boolean {
   return /(?:hev1|hvc1|hevc|h265)/i.test(candidate.codecs ?? "");
 }
 
+function isLikelyAv1(candidate: PlaybackCandidate): boolean {
+  return /(?:av01|av1)/i.test(candidate.codecs ?? "");
+}
+
 function isLikelyAvc(candidate: PlaybackCandidate): boolean {
   return /(?:avc1|avc3|avc|h264)/i.test(candidate.codecs ?? "");
+}
+
+function isLikelyUnsupportedCodec(candidate: PlaybackCandidate): boolean {
+  return isLikelyHevc(candidate) || isLikelyAv1(candidate);
 }
 
 export function selectPlaybackAdapter(input: {
@@ -69,7 +77,8 @@ export function choosePreferredPlaybackCandidate(
   }
 
   const explicitDefault = supportedCandidates.find(
-    (candidate) => candidate.default === true && !isLikelyHevc(candidate),
+    (candidate) =>
+      candidate.default === true && !isLikelyUnsupportedCodec(candidate),
   );
   if (explicitDefault) {
     return explicitDefault;
@@ -77,7 +86,9 @@ export function choosePreferredPlaybackCandidate(
 
   return (
     supportedCandidates.find(isLikelyAvc) ??
-    supportedCandidates.find((candidate) => !isLikelyHevc(candidate)) ??
+    supportedCandidates.find(
+      (candidate) => !isLikelyUnsupportedCodec(candidate),
+    ) ??
     supportedCandidates[0] ??
     null
   );

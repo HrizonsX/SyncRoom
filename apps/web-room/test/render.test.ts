@@ -355,6 +355,7 @@ test("renders a real video host for Shaka playback sources", () => {
       url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
       sourceType: "mpd",
       engine: "shaka",
+      candidateId: "dash-avc-720p",
     },
   } as WebRoomState);
 
@@ -364,6 +365,7 @@ test("renders a real video host for Shaka playback sources", () => {
   assert.match(html, /data-playback-video="true"/);
   assert.match(html, /data-source-type="mpd"/);
   assert.match(html, /data-playback-engine="shaka"/);
+  assert.match(html, /data-source-candidate-id="dash-avc-720p"/);
   assert.match(html, /<media-play-button notooltip><\/media-play-button>/);
   assert.match(
     html,

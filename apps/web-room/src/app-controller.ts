@@ -1,6 +1,7 @@
 import {
   parseSharedVideoRef,
   type ClientMessage,
+  type PlaybackState,
   type ProviderPlaybackDescriptor,
   type RoomMemberPermissionName,
   type ServerMessage,
@@ -2050,10 +2051,26 @@ export function createWebRoomAppController(
         },
       },
     };
+    const sharePlaybackTime = getCurrentTime();
+    const sharePlayback: PlaybackState | undefined =
+      selectedProviderDescriptor.item.kind === "live"
+        ? {
+            url: sharedRef.normalizedUrl,
+            currentTime: 0,
+            playState: "playing",
+            userInitiated: true,
+            playbackRate: 1,
+            updatedAt: sharePlaybackTime,
+            serverTime: sharePlaybackTime,
+            actorId: state.currentMemberId,
+            seq: 0,
+          }
+        : undefined;
 
     client.shareVideo({
       memberToken: activeSession.memberToken,
       video,
+      playback: sharePlayback,
     });
     appendDiagnostic("provider video share requested");
   }

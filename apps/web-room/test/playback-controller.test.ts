@@ -720,3 +720,46 @@ test("does not seek or pause live playback from persisted room playback state", 
   assert.equal(video.currentTime, 62);
   assert.equal(video.paused, false);
 });
+
+test("starts live playback from a user initiated shared state", async () => {
+  const video = new FakeEventedVideoElement();
+  const sharedUrl = "https://live.bilibili.com/22889518";
+  const playbackSource = {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playbackSource,
+    playback: {
+      url: sharedUrl,
+      currentTime: 0,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  assert.equal(video.paused, false);
+});

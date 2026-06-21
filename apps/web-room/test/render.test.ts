@@ -334,6 +334,7 @@ test("renders the player controls even before a video source is selected", () =>
   assert.doesNotMatch(controlBarHtml, /class="player-danmaku-send"[^>]*title=/);
   assert.doesNotMatch(controlBarHtml, /data-player-video-title="true"/);
   assert.match(html, /data-action="toggle-player-danmaku"/);
+  assert.match(html, /<media-controller\b[^>]*gesturesdisabled/);
   assert.match(html, /aria-controls="player-danmaku-panel"/);
   assert.match(html, /id="player-danmaku-panel"/);
   assert.match(html, /data-player-danmaku-controls="popover"/);
@@ -468,7 +469,7 @@ test("omits expired danmaku messages so they are not replayed", () => {
   assert.doesNotMatch(html, /expired danmaku/);
 });
 
-test("marks the danmaku layer paused when playback is paused", () => {
+test("keeps the danmaku layer moving when playback is paused", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,
     playback: {
@@ -484,7 +485,7 @@ test("marks the danmaku layer paused when playback is paused", () => {
   } as WebRoomState);
 
   assert.match(html, /data-danmaku-layer="true"/);
-  assert.match(html, /data-danmaku-paused="true"/);
+  assert.match(html, /data-danmaku-paused="false"/);
 });
 
 test("renders chat messages as directional bubbles with timestamps", () => {
@@ -634,6 +635,7 @@ test("renders denied member permissions as disabled controls", () => {
   });
 
   assert.match(html, /<media-play-button notooltip disabled>/);
+  assert.match(html, /<media-controller\b[^>]*gesturesdisabled/);
   assert.match(html, /<media-time-range disabled>/);
   assert.match(html, /<media-playback-rate-button notooltip disabled>/);
   assert.match(html, /name="chat" maxlength="500" disabled/);

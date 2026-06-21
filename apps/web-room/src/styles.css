@@ -985,10 +985,6 @@ input:focus {
   animation-delay: var(--danmaku-progress-delay, 0ms);
 }
 
-.danmaku-layer[data-danmaku-paused="true"] .danmaku-item {
-  animation-play-state: paused;
-}
-
 .danmaku-item.is-top,
 .danmaku-item.is-bottom {
   left: 50%;

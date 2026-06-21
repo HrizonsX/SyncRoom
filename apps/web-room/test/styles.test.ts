@@ -308,7 +308,7 @@ test("styles web room icons and member avatars", () => {
   );
 });
 
-test("pauses danmaku animation when playback is paused", () => {
+test("styles danmaku animation without tying it to playback pause", () => {
   assert.match(
     styles,
     /\.danmaku-layer\s*{[^}]*inset:\s*0 0 auto;[^}]*height:\s*25%;[^}]*}/s,
@@ -321,10 +321,7 @@ test("pauses danmaku animation when playback is paused", () => {
     styles,
     /\.danmaku-item\.is-top,\s*\.danmaku-item\.is-bottom\s*{[^}]*animation-name:\s*danmaku-hold;[^}]*animation-duration:\s*4\.5s;[^}]*}/s,
   );
-  assert.match(
-    styles,
-    /\.danmaku-layer\[data-danmaku-paused="true"\]\s+\.danmaku-item\s*{[^}]*animation-play-state:\s*paused;[^}]*}/s,
-  );
+  assert.doesNotMatch(styles, /animation-play-state:\s*paused/);
 });
 
 test("styles player danmaku entry for desktop control bar and mobile popover", () => {

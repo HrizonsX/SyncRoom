@@ -2037,6 +2037,93 @@ test("shares the selected provider quality as the default playback candidate", (
   );
 });
 
+test("shares live provider playback with an initial playing state", () => {
+  const recorder = createSocketRecorder();
+  let now = 10_000;
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    now: () => now,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  controller.setProviderPickerResults({
+    items: [
+      {
+        itemId: "live-22889518",
+        title: "Live room",
+        kind: "live",
+        qualityLabel: "720P",
+        sourceType: "m3u8",
+        providerDescriptor: {
+          providerId: "bilibili",
+          sourceId: "22889518",
+          sourceUrl: "https://live.bilibili.com/22889518",
+          title: "Live room",
+          item: {
+            itemId: "live-22889518",
+            title: "Live room",
+            kind: "live",
+            roomId: "22889518",
+          },
+          policy: {
+            proxy: true,
+            shared: true,
+          },
+          candidates: [
+            {
+              id: "hls-live",
+              sourceType: "m3u8",
+              url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+              qualityLabel: "720P",
+              codecs: "avc",
+              default: true,
+            },
+          ],
+          defaultCandidateId: "hls-live",
+        },
+      },
+    ],
+  });
+  now = 10_200;
+  controller.shareSelectedProviderItem();
+
+  const shared = recorder.sockets[0]?.sent.at(-1) as
+    | {
+        payload?: {
+          playback?: {
+            playState?: string;
+            currentTime?: number;
+            actorId?: string;
+            updatedAt?: number;
+            serverTime?: number;
+          };
+        };
+      }
+    | undefined;
+  assert.equal(shared?.payload?.playback?.playState, "playing");
+  assert.equal(shared?.payload?.playback?.currentTime, 0);
+  assert.equal(shared?.payload?.playback?.actorId, "member-host");
+  assert.equal(shared?.payload?.playback?.updatedAt, 10_200);
+  assert.equal(shared?.payload?.playback?.serverTime, 10_200);
+});
+
 test("exposes playback sync context and sends playback updates", () => {
   const recorder = createSocketRecorder();
   const controller = createWebRoomAppController({

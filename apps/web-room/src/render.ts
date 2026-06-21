@@ -504,7 +504,6 @@ function renderDanmakuLayer(state: WebRoomJoinedState): string {
       getDanmakuAnimationDurationMs(mode)
     );
   });
-  const paused = state.playback?.playState === "paused" ? "true" : "false";
   const items = messages
     .map((message, index) => {
       const mode =
@@ -523,7 +522,7 @@ function renderDanmakuLayer(state: WebRoomJoinedState): string {
       `;
     })
     .join("");
-  return `<div class="danmaku-layer" data-danmaku-layer="true" data-danmaku-paused="${paused}" noautohide aria-hidden="true">${items}</div>`;
+  return `<div class="danmaku-layer" data-danmaku-layer="true" data-danmaku-paused="false" noautohide aria-hidden="true">${items}</div>`;
 }
 
 function renderConnectionState(state: WebRoomConnectionState): string {
@@ -676,6 +675,7 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
   const isLivePlayback = state.playbackSource?.isLive === true;
   const canControlPlayback =
     hasPlaybackSource && canCurrentMember(state, "playbackControl");
+  const gestureDisabled = canControlPlayback ? "" : " gesturesdisabled";
   const danmakuCooldownRemainingMs =
     typeof state.danmakuCooldownUntil === "number"
       ? state.danmakuCooldownUntil - Date.now()
@@ -691,7 +691,7 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
   const playerDisabled = canControlPlayback ? "" : " disabled";
   const timeRangeDisabled = canControlPlayback ? "" : " disabled";
   return `
-            <media-controller class="player-media-controller" fullscreenelement="web-room-fullscreen-root" data-player-empty="${isEmpty}" data-player-live="${isLivePlayback ? "true" : "false"}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
+            <media-controller class="player-media-controller"${gestureDisabled} fullscreenelement="web-room-fullscreen-root" data-player-empty="${isEmpty}" data-player-live="${isLivePlayback ? "true" : "false"}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
               ${renderPlaybackVideo(state.playbackSource)}
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}

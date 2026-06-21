@@ -33,6 +33,7 @@ import {
   readDisclosureOpenState,
   restoreDisclosureOpenState,
 } from "./disclosure-state.js";
+import { syncPlayerFullscreenTarget } from "./fullscreen-target.js";
 import { createProviderApiClient } from "./provider-api-client.js";
 import {
   getPlaybackErrorMessage,
@@ -142,6 +143,7 @@ if (app) {
         existingDanmakuLayer,
         renderedDanmakuKeys,
       );
+      syncPlayerFullscreenTarget(appRoot);
       restoreDanmakuLayerAnimationSnapshots(
         findDanmakuLayerElement(appRoot),
         danmakuAnimationSnapshots,

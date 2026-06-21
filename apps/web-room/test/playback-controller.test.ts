@@ -143,6 +143,87 @@ test("loads DASH and HLS sources through Shaka Player", async () => {
   assert.deepEqual(destroyedPlayers, [1]);
 });
 
+test("configures Shaka live playback to stop fetching while paused", async () => {
+  const configs: Array<Record<string, unknown>> = [];
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    configure(config: Record<string, unknown>): void {
+      configs.push(config);
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createPlaybackElementController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+  const video = new FakeVideoElement();
+
+  await controller.load(video, {
+    url: "https://syncroom.example.test/proxy/live/playlist.m3u8",
+    sourceType: "m3u8",
+    engine: "shaka",
+    isLive: true,
+  });
+
+  assert.deepEqual(configs, [
+    {
+      manifest: {
+        continueLoadingWhenPaused: false,
+      },
+      streaming: {
+        stopFetchingOnPause: true,
+      },
+    },
+  ]);
+});
+
+test("restores Shaka paused fetching defaults for non-live playback", async () => {
+  const configs: Array<Record<string, unknown>> = [];
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    configure(config: Record<string, unknown>): void {
+      configs.push(config);
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createPlaybackElementController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+  const video = new FakeVideoElement();
+
+  await controller.load(video, {
+    url: "https://syncroom.example.test/proxy/live/playlist.m3u8",
+    sourceType: "m3u8",
+    engine: "shaka",
+    isLive: true,
+  });
+  await controller.load(video, {
+    url: "https://syncroom.example.test/proxy/vod/manifest.mpd",
+    sourceType: "mpd",
+    engine: "shaka",
+  });
+
+  assert.deepEqual(configs.at(-1), {
+    manifest: {
+      continueLoadingWhenPaused: true,
+    },
+    streaming: {
+      stopFetchingOnPause: false,
+    },
+  });
+});
+
 test("deduplicates concurrent Shaka loads for the same video source", async () => {
   const loadedUrls: string[] = [];
   let resolveLoad: (() => void) | undefined;
@@ -596,4 +677,46 @@ test("hydrates persisted self playback when a refreshed controller sees an alrea
   });
 
   assert.equal(video.currentTime, 0);
+});
+
+test("does not seek or pause live playback from persisted room playback state", async () => {
+  const video = new FakeEventedVideoElement();
+  video.currentTime = 62;
+  video.paused = false;
+  const playbackSource = {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: playbackSource.url,
+      currentTime: 0,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 0,
+    },
+  });
+
+  assert.equal(video.currentTime, 62);
+  assert.equal(video.paused, false);
 });

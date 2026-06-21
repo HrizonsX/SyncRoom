@@ -18,6 +18,10 @@ export type PlaybackVideoElement = {
 
 export type ShakaPlayerInstance = {
   attach?: (video: PlaybackVideoElement) => Promise<unknown> | unknown;
+  configure?: (
+    config: Record<string, unknown> | string,
+    value?: unknown,
+  ) => void;
   load: (url: string) => Promise<unknown>;
   destroy?: () => Promise<unknown> | unknown;
 };
@@ -65,6 +69,24 @@ function getShakaPlayerConstructor(
 
 function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}`;
+}
+
+function configureShakaPlayerForSource(
+  player: ShakaPlayerInstance,
+  source: PlaybackSource,
+): void {
+  if (typeof player.configure !== "function") {
+    return;
+  }
+
+  player.configure({
+    manifest: {
+      continueLoadingWhenPaused: source.isLive !== true,
+    },
+    streaming: {
+      stopFetchingOnPause: source.isLive === true,
+    },
+  });
 }
 
 type NativePlaybackVideoElement = PlaybackVideoElement & {
@@ -239,6 +261,7 @@ export function createPlaybackElementController(
       }
 
       const player = await ensureShakaPlayer(video);
+      configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
       currentSourceKey = undefined;
       const nextPendingLoad = {
@@ -397,6 +420,11 @@ export function createWebRoomPlaybackController(
       if (!state.playback || !currentUrl) {
         return;
       }
+      const isLivePlayback = state.playbackSource.isLive === true;
+      if (isLivePlayback && state.playback.userInitiated !== true) {
+        needsPlaybackHydration = false;
+        return;
+      }
 
       suppressLocalEventsUntil = getNow() + 500;
       try {
@@ -406,6 +434,9 @@ export function createWebRoomPlaybackController(
           currentUrl,
           playback: state.playback,
           allowLocalEcho: loadedSource || needsPlaybackHydration,
+          ...(isLivePlayback
+            ? { seekToleranceSeconds: Number.POSITIVE_INFINITY }
+            : {}),
           now: options.now,
         });
         if (result.applied || result.reason !== "url_mismatch") {

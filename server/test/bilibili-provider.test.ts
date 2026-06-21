@@ -943,7 +943,7 @@ test("Bilibili provider parses normal video parts into safe playback candidates"
     {
       body: {
         code: -101,
-        message: "账号未登录",
+        message: "?????",
         data: {
           isLogin: false,
           wbi_img: {
@@ -2079,7 +2079,7 @@ test("Bilibili provider parses bangumi season into selectable episodes", async (
   );
 });
 
-test("Bilibili provider parses live room into a real HLS playback descriptor", async () => {
+test("Bilibili provider prefers fMP4 AVC live HLS from web play info", async () => {
   const mock = createMockFetch([
     {
       body: {
@@ -2098,25 +2098,76 @@ test("Bilibili provider parses live room into a real HLS playback descriptor", a
       body: {
         code: 0,
         data: {
-          accept_quality: ["4"],
-          current_quality: 4,
-          current_qn: 4,
-          quality_description: [
-            {
-              qn: 4,
-              desc: "Original",
+          room_id: 987654,
+          live_status: 1,
+          playurl_info: {
+            playurl: {
+              g_qn_desc: [
+                {
+                  qn: 400,
+                  desc: "蓝光",
+                },
+                {
+                  qn: 250,
+                  desc: "超清",
+                },
+              ],
+              stream: [
+                {
+                  protocol_name: "http_hls",
+                  format: [
+                    {
+                      format_name: "ts",
+                      codec: [
+                        {
+                          codec_name: "avc",
+                          current_qn: 400,
+                          base_url: "/live/ts/index.m3u8?",
+                          url_info: [
+                            {
+                              host: "https://live-play.example.test",
+                              extra: "token=ts",
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                    {
+                      format_name: "fmp4",
+                      codec: [
+                        {
+                          codec_name: "hevc",
+                          current_qn: 250,
+                          base_url: "/live/hevc/index.m3u8?",
+                          url_info: [
+                            {
+                              host: "https://live-play.example.test",
+                              extra: "token=hevc",
+                            },
+                          ],
+                        },
+                        {
+                          codec_name: "avc",
+                          current_qn: 400,
+                          base_url: "/live/avc/index.m3u8?",
+                          url_info: [
+                            {
+                              host: "https://live-play.example.test",
+                              extra: "token=avc",
+                            },
+                            {
+                              host: "https://live-backup.example.test",
+                              extra: "token=avc-backup",
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
             },
-          ],
-          durl: [
-            {
-              order: 1,
-              url: "https://live-play.example.test/live-987654/index.m3u8",
-            },
-            {
-              order: 2,
-              url: "https://live-play.example.test/live-987654/index.flv",
-            },
-          ],
+          },
         },
       },
     },
@@ -2154,15 +2205,30 @@ test("Bilibili provider parses live room into a real HLS playback descriptor", a
         },
         candidates: [
           {
-            id: "hls-4-1",
+            id: "hls-fmp4-avc-400-1",
             sourceType: "m3u8",
-            url: "https://live-play.example.test/live-987654/index.m3u8",
+            url: "https://live-play.example.test/live/avc/index.m3u8?token=avc",
             mimeType: "application/vnd.apple.mpegurl",
-            qualityLabel: "Original",
+            qualityLabel: "蓝光",
+            codecs: "avc",
             default: true,
+            upstreamUrlAlternates: {
+              "https://live-play.example.test/live/avc/index.m3u8?token=avc": [
+                "https://live-backup.example.test/live/avc/index.m3u8?token=avc-backup",
+              ],
+            },
+          },
+          {
+            id: "hls-fmp4-hevc-250-1",
+            sourceType: "m3u8",
+            url: "https://live-play.example.test/live/hevc/index.m3u8?token=hevc",
+            mimeType: "application/vnd.apple.mpegurl",
+            qualityLabel: "超清",
+            codecs: "hevc",
+            default: false,
           },
         ],
-        defaultCandidateId: "hls-4-1",
+        defaultCandidateId: "hls-fmp4-avc-400-1",
       },
     ],
   });
@@ -2173,7 +2239,7 @@ test("Bilibili provider parses live room into a real HLS playback descriptor", a
   );
   assert.equal(
     mock.requests[1]?.url,
-    "https://api.live.bilibili.com/room/v1/Room/playUrl?cid=987654&quality=4&platform=h5",
+    "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?room_id=987654&protocol=0%2C1&format=0%2C1%2C2&codec=0%2C1%2C2&qn=10000&platform=web&ptype=8",
   );
   assert.equal(
     mock.requests[1]?.headers.get("cookie"),
@@ -2190,6 +2256,20 @@ test("Bilibili provider rejects live rooms without an HLS playlist", async () =>
           title: "Live Room Title",
           room_id: 987654,
           live_status: 1,
+        },
+      },
+    },
+    {
+      body: {
+        code: 0,
+        data: {
+          room_id: 987654,
+          live_status: 1,
+          playurl_info: {
+            playurl: {
+              stream: [],
+            },
+          },
         },
       },
     },

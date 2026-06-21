@@ -59,6 +59,26 @@ test("keeps explicit default candidate when it is browser compatible", () => {
   assert.equal(selected?.id, "mp4-default");
 });
 
+test("does not honor HEVC defaults that use plain codec names", () => {
+  const selected = choosePreferredPlaybackCandidate([
+    {
+      id: "hevc-default",
+      sourceType: "m3u8",
+      url: "https://syncroom.example.test/hevc.m3u8",
+      codecs: "hevc",
+      default: true,
+    },
+    {
+      id: "avc",
+      sourceType: "m3u8",
+      url: "https://syncroom.example.test/avc.m3u8",
+      codecs: "avc",
+    },
+  ]);
+
+  assert.equal(selected?.id, "avc");
+});
+
 test("creates coarse playback startup errors for reporting", () => {
   assert.deepEqual(createPlaybackStartupError("decode", "HEVC not supported"), {
     code: "unsupported_source",

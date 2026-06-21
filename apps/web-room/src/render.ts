@@ -691,7 +691,7 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
   const playerDisabled = canControlPlayback ? "" : " disabled";
   const timeRangeDisabled = canControlPlayback ? "" : " disabled";
   return `
-            <media-controller class="player-media-controller" fullscreenelement="app" data-player-empty="${isEmpty}" data-player-live="${isLivePlayback ? "true" : "false"}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
+            <media-controller class="player-media-controller" fullscreenelement="web-room-fullscreen-root" data-player-empty="${isEmpty}" data-player-live="${isLivePlayback ? "true" : "false"}" data-danmaku-cooldown="${danmakuCoolingDown ? "true" : "false"}" data-danmaku-cooldown-seconds="${danmakuCooldownSeconds}">
               ${renderPlaybackVideo(state.playbackSource)}
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}
@@ -704,7 +704,7 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
                 ${renderPlayerVolumeControl()}
                 <media-playback-rate-button notooltip${playerDisabled}></media-playback-rate-button>
                 <media-pip-button notooltip></media-pip-button>
-                <media-fullscreen-button notooltip></media-fullscreen-button>
+                <media-fullscreen-button fullscreenelement="web-room-fullscreen-root" notooltip></media-fullscreen-button>
               </media-control-bar>
             </media-controller>
     `;
@@ -926,8 +926,9 @@ function renderProviderPickerItems(picker: WebRoomProviderPickerState): string {
         : undefined;
       const meta = [
         item.kind,
-        selectedCandidate?.qualityLabel ?? item.qualityLabel,
-        selectedCandidate?.sourceType ?? item.sourceType,
+        ...(selectedCandidate
+          ? getProviderCandidateLabelParts(selectedCandidate)
+          : [item.qualityLabel, item.sourceType]),
       ]
         .filter(Boolean)
         .join(" / ");
@@ -961,14 +962,39 @@ function getProviderPickerSelectedCandidate(
   );
 }
 
+function getProviderCandidateCodecLabel(
+  candidate: ProviderPlaybackDescriptor["candidates"][number],
+): string | undefined {
+  const codecs = candidate.codecs?.trim();
+  if (!codecs) {
+    return undefined;
+  }
+  if (/(?:hev1|hvc1|hevc|h265)/i.test(codecs)) {
+    return "HEVC";
+  }
+  if (/(?:av01|av1)/i.test(codecs)) {
+    return "AV1";
+  }
+  if (/(?:avc1|avc3|avc|h264)/i.test(codecs)) {
+    return "AVC";
+  }
+  return codecs.split(",")[0]?.trim().toUpperCase() || undefined;
+}
+
+function getProviderCandidateLabelParts(
+  candidate: ProviderPlaybackDescriptor["candidates"][number],
+): string[] {
+  return [
+    candidate.qualityLabel,
+    getProviderCandidateCodecLabel(candidate),
+    candidate.sourceType,
+  ].filter((value): value is string => Boolean(value));
+}
+
 function getProviderCandidateLabel(
   candidate: ProviderPlaybackDescriptor["candidates"][number],
 ): string {
-  return (
-    [candidate.qualityLabel, candidate.sourceType]
-      .filter(Boolean)
-      .join(" / ") || candidate.id
-  );
+  return getProviderCandidateLabelParts(candidate).join(" / ") || candidate.id;
 }
 
 function getSelectedQualityCandidateId(

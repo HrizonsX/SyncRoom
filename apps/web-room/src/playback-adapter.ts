@@ -37,11 +37,11 @@ function isSupportedSourceType(value: string): value is PlaybackSourceType {
 }
 
 function isLikelyHevc(candidate: PlaybackCandidate): boolean {
-  return /(?:hev1|hvc1)/i.test(candidate.codecs ?? "");
+  return /(?:hev1|hvc1|hevc|h265)/i.test(candidate.codecs ?? "");
 }
 
 function isLikelyAvc(candidate: PlaybackCandidate): boolean {
-  return /(?:avc1|avc3)/i.test(candidate.codecs ?? "");
+  return /(?:avc1|avc3|avc|h264)/i.test(candidate.codecs ?? "");
 }
 
 export function selectPlaybackAdapter(input: {

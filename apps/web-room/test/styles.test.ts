@@ -402,19 +402,23 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
 test("styles app fullscreen mode as player-only chrome", () => {
   assert.match(
     styles,
-    /#app:fullscreen\s+\.web-room-workspace\s*{[^}]*width:\s*100vw;[^}]*height:\s*100vh;[^}]*padding:\s*0;[^}]*}/s,
+    /#web-room-fullscreen-root:fullscreen\s+#app\s*{[^}]*width:\s*100vw;[^}]*height:\s*100vh;[^}]*}/s,
   );
   assert.match(
     styles,
-    /#app:fullscreen\s+\.announcement-strip,\s*#app:fullscreen\s+\.chat-panel,\s*#app:fullscreen\s+\.bottom-grid\s*{[^}]*display:\s*none;[^}]*}/s,
+    /#web-room-fullscreen-root:fullscreen\s+\.web-room-workspace\s*{[^}]*width:\s*100vw;[^}]*height:\s*100vh;[^}]*padding:\s*0;[^}]*}/s,
   );
   assert.match(
     styles,
-    /#app:fullscreen\s+\.player-chat-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*height:\s*100vh;[^}]*}/s,
+    /#web-room-fullscreen-root:fullscreen\s+\.announcement-strip,\s*#web-room-fullscreen-root:fullscreen\s+\.chat-panel,\s*#web-room-fullscreen-root:fullscreen\s+\.bottom-grid\s*{[^}]*display:\s*none;[^}]*}/s,
   );
   assert.match(
     styles,
-    /#app:fullscreen\s+\.player-controls\s*{[^}]*right:\s*8px;[^}]*bottom:\s*6px;[^}]*left:\s*8px;[^}]*}/s,
+    /#web-room-fullscreen-root:fullscreen\s+\.player-chat-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*height:\s*100vh;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /#web-room-fullscreen-root:fullscreen\s+\.player-controls\s*{[^}]*right:\s*8px;[^}]*bottom:\s*6px;[^}]*left:\s*8px;[^}]*}/s,
   );
 });
 

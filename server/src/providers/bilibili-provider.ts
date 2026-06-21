@@ -51,6 +51,8 @@ const BILIBILI_LIVE_ROOM_INFO_URL =
   "https://api.live.bilibili.com/room/v1/Room/get_info";
 const BILIBILI_LIVE_PLAYURL_URL =
   "https://api.live.bilibili.com/room/v1/Room/playUrl";
+const BILIBILI_LIVE_PLAY_INFO_URL =
+  "https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo";
 const BILIBILI_AUTH_REFERER = "https://passport.bilibili.com/login";
 const BILIBILI_WEB_REFERER = "https://www.bilibili.com";
 const BILIBILI_USER_AGENT =
@@ -253,6 +255,12 @@ type BilibiliLivePlayUrlData = {
   current_qn?: unknown;
   quality_description?: unknown;
   durl?: unknown;
+};
+
+type BilibiliLivePlayInfoData = {
+  room_id?: unknown;
+  live_status?: unknown;
+  playurl_info?: unknown;
 };
 
 type ParsedPgcId = {
@@ -1087,6 +1095,18 @@ function createLivePlayUrl(roomId: string): string {
   return url.toString();
 }
 
+function createLivePlayInfoUrl(roomId: string): string {
+  const url = new URL(BILIBILI_LIVE_PLAY_INFO_URL);
+  url.searchParams.set("room_id", roomId);
+  url.searchParams.set("protocol", "0,1");
+  url.searchParams.set("format", "0,1,2");
+  url.searchParams.set("codec", "0,1,2");
+  url.searchParams.set("qn", "10000");
+  url.searchParams.set("platform", "web");
+  url.searchParams.set("ptype", "8");
+  return url.toString();
+}
+
 function getParseCredentials(
   input: ProviderParseInput,
 ): VideoAuthCredentials | null | undefined {
@@ -1690,6 +1710,213 @@ function isM3u8Url(value: string): boolean {
   }
 }
 
+function readLivePlayInfoPlayUrl(
+  playData: BilibiliLivePlayInfoData,
+): Record<string, unknown> | null {
+  const playurlInfo = isRecord(playData.playurl_info)
+    ? playData.playurl_info
+    : null;
+  const playurl = playurlInfo?.playurl;
+  return isRecord(playurl) ? playurl : null;
+}
+
+function readLivePlayInfoQualityLabel(args: {
+  playData: BilibiliLivePlayInfoData;
+  quality: number | null;
+}): string | undefined {
+  if (args.quality === null) {
+    return undefined;
+  }
+  const playurl = readLivePlayInfoPlayUrl(args.playData);
+  if (!playurl) {
+    return undefined;
+  }
+  for (const quality of readRecords(playurl.g_qn_desc)) {
+    if (readInteger(quality.qn) !== args.quality) {
+      continue;
+    }
+    const mediaBaseDesc = isRecord(quality.media_base_desc)
+      ? quality.media_base_desc
+      : null;
+    const briefDesc = isRecord(mediaBaseDesc?.brief_desc)
+      ? mediaBaseDesc.brief_desc
+      : null;
+    const detailDesc = isRecord(mediaBaseDesc?.detail_desc)
+      ? mediaBaseDesc.detail_desc
+      : null;
+    return (
+      readString(detailDesc?.desc) ??
+      readString(briefDesc?.desc) ??
+      readString(quality.desc) ??
+      undefined
+    );
+  }
+  return `Q${args.quality}`;
+}
+
+function readLivePlayInfoCandidateUrl(
+  urlInfo: Record<string, unknown>,
+  codec: Record<string, unknown>,
+): string | null {
+  const baseUrl = readString(readRecordField(codec, "base_url", "baseUrl"));
+  if (!baseUrl) {
+    return null;
+  }
+  const host = readString(urlInfo.host) ?? "";
+  const extra = readString(urlInfo.extra) ?? "";
+  return (
+    readHttpUrl(`${baseUrl}${extra}`) ??
+    readHttpUrl(`${host}${baseUrl}${extra}`)
+  );
+}
+
+function readLivePlayInfoCandidateUrls(
+  urlInfos: readonly Record<string, unknown>[],
+  codec: Record<string, unknown>,
+): string[] {
+  const urls: string[] = [];
+  for (const urlInfo of urlInfos) {
+    const url = readLivePlayInfoCandidateUrl(urlInfo, codec);
+    if (url && isM3u8Url(url) && !urls.includes(url)) {
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
+function buildLiveUpstreamUrlAlternates(
+  urls: readonly string[],
+): Record<string, string[]> | undefined {
+  const [primaryUrl, ...alternateUrls] = urls;
+  if (!primaryUrl || alternateUrls.length === 0) {
+    return undefined;
+  }
+  return {
+    [primaryUrl]: alternateUrls,
+  };
+}
+
+function getLiveFormatRank(formatName: string): number {
+  if (formatName === "fmp4") {
+    return 0;
+  }
+  if (formatName === "ts") {
+    return 1;
+  }
+  return 2;
+}
+
+function getLiveCodecRank(codecName: string): number {
+  if (codecName === "avc") {
+    return 0;
+  }
+  if (codecName === "av1") {
+    return 1;
+  }
+  if (codecName === "hevc" || codecName === "h265") {
+    return 2;
+  }
+  return 3;
+}
+
+function readLivePlayInfoPlaybackCandidates(
+  playData: BilibiliLivePlayInfoData,
+): ProviderPlayableItem["candidates"] {
+  const playurl = readLivePlayInfoPlayUrl(playData);
+  if (!playurl) {
+    return [];
+  }
+  type LiveCandidate = ProviderPlayableItem["candidates"][number] & {
+    formatRank: number;
+    codecRank: number;
+    quality: number;
+    order: number;
+  };
+  const candidates: LiveCandidate[] = [];
+  for (const stream of readRecords(playurl.stream)) {
+    if (readString(stream.protocol_name) !== "http_hls") {
+      continue;
+    }
+    for (const format of readRecords(stream.format)) {
+      const formatName = readString(format.format_name)?.toLowerCase() ?? "";
+      const formatRank = getLiveFormatRank(formatName);
+      if (formatRank > 1) {
+        continue;
+      }
+      for (const codec of readRecords(format.codec)) {
+        const codecName = readString(codec.codec_name)?.toLowerCase() ?? "";
+        const codecRank = getLiveCodecRank(codecName);
+        const quality = readInteger(codec.current_qn) ?? 0;
+        const qualityLabel = readLivePlayInfoQualityLabel({
+          playData,
+          quality,
+        });
+        const urls = readLivePlayInfoCandidateUrls(
+          readRecords(codec.url_info),
+          codec,
+        );
+        const primaryUrl = urls[0];
+        if (!primaryUrl) {
+          continue;
+        }
+        const idPrefix = `hls-${formatName || "hls"}-${codecName || "codec"}-${quality || "default"}`;
+        const order =
+          candidates.filter((candidate) =>
+            candidate.id.startsWith(`${idPrefix}-`),
+          ).length + 1;
+        const upstreamUrlAlternates = buildLiveUpstreamUrlAlternates(urls);
+        candidates.push({
+          id: `${idPrefix}-${order}`,
+          sourceType: "m3u8",
+          url: primaryUrl,
+          mimeType: "application/vnd.apple.mpegurl",
+          ...(qualityLabel ? { qualityLabel } : {}),
+          ...(codecName ? { codecs: codecName } : {}),
+          default: false,
+          ...(upstreamUrlAlternates ? { upstreamUrlAlternates } : {}),
+          formatRank,
+          codecRank,
+          quality,
+          order,
+        });
+      }
+    }
+  }
+
+  const selectedKeys = new Set<string>();
+  return candidates
+    .sort(
+      (left, right) =>
+        left.formatRank - right.formatRank ||
+        left.codecRank - right.codecRank ||
+        right.quality - left.quality ||
+        left.order - right.order,
+    )
+    .filter((candidate) => {
+      const key = `${candidate.quality}:${candidate.codecs ?? ""}`;
+      if (selectedKeys.has(key)) {
+        return false;
+      }
+      selectedKeys.add(key);
+      return true;
+    })
+    .map(
+      (
+        {
+          formatRank: _formatRank,
+          codecRank: _codecRank,
+          quality: _quality,
+          order: _order,
+          ...candidate
+        },
+        index,
+      ) => ({
+        ...candidate,
+        default: index === 0,
+      }),
+    );
+}
+
 function readLivePlaybackCandidates(
   playData: BilibiliLivePlayUrlData,
 ): ProviderPlayableItem["candidates"] {
@@ -2156,21 +2383,34 @@ async function parseLiveRoom(
   }
 
   const title = readString(roomPayload.data.title) ?? `Bilibili Live ${roomId}`;
-  const { payload: playPayload } =
-    await requestBilibiliParseJson<BilibiliLivePlayUrlData>(
+  const { payload: playInfoPayload } =
+    await requestBilibiliParseJson<BilibiliLivePlayInfoData>(
       fetchImpl,
-      createLivePlayUrl(roomId),
+      createLivePlayInfoUrl(roomId),
       parseCredentials,
     );
-  if (playPayload.code !== 0 || !playPayload.data) {
-    throw new VideoProviderError(
-      "provider_parse_failed",
-      "Bilibili live playback metadata request failed.",
-      "live_playurl_failed",
-    );
+  let candidates =
+    playInfoPayload.code === 0 && playInfoPayload.data
+      ? readLivePlayInfoPlaybackCandidates(playInfoPayload.data)
+      : [];
+  const { payload: playPayload } =
+    candidates.length === 0
+      ? await requestBilibiliParseJson<BilibiliLivePlayUrlData>(
+          fetchImpl,
+          createLivePlayUrl(roomId),
+          parseCredentials,
+        )
+      : { payload: null };
+  if (candidates.length === 0) {
+    if (!playPayload || playPayload.code !== 0 || !playPayload.data) {
+      throw new VideoProviderError(
+        "provider_parse_failed",
+        "Bilibili live playback metadata request failed.",
+        "live_playurl_failed",
+      );
+    }
+    candidates = readLivePlaybackCandidates(playPayload.data);
   }
-
-  const candidates = readLivePlaybackCandidates(playPayload.data);
   if (candidates.length === 0) {
     throw new VideoProviderError(
       "provider_parse_failed",

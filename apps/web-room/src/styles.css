@@ -43,6 +43,17 @@ html[data-web-room-theme="dark"] body {
   background: #111827;
 }
 
+#web-room-fullscreen-root {
+  min-height: 100vh;
+}
+
+#web-room-fullscreen-root:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #0f172a;
+}
+
 button,
 input {
   min-height: 34px;
@@ -706,7 +717,12 @@ input:focus {
   flex: 0 0 auto;
 }
 
-#app:fullscreen .web-room-workspace {
+#web-room-fullscreen-root:fullscreen #app {
+  width: 100vw;
+  height: 100vh;
+}
+
+#web-room-fullscreen-root:fullscreen .web-room-workspace {
   width: 100vw;
   height: 100vh;
   min-height: 100vh;
@@ -716,24 +732,24 @@ input:focus {
   overflow: hidden;
 }
 
-#app:fullscreen .announcement-strip,
-#app:fullscreen .chat-panel,
-#app:fullscreen .bottom-grid {
+#web-room-fullscreen-root:fullscreen .announcement-strip,
+#web-room-fullscreen-root:fullscreen .chat-panel,
+#web-room-fullscreen-root:fullscreen .bottom-grid {
   display: none;
 }
 
-#app:fullscreen .player-chat-grid {
+#web-room-fullscreen-root:fullscreen .player-chat-grid {
   grid-template-columns: minmax(0, 1fr);
   height: 100vh;
   max-height: 100vh;
 }
 
-#app:fullscreen .player-panel {
+#web-room-fullscreen-root:fullscreen .player-panel {
   border: 0;
   border-radius: 0;
 }
 
-#app:fullscreen .player-controls {
+#web-room-fullscreen-root:fullscreen .player-controls {
   right: 8px;
   bottom: 6px;
   left: 8px;

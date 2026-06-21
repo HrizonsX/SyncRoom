@@ -281,8 +281,8 @@ test("renders the player controls even before a video source is selected", () =>
 
   assert.match(html, /<video\b/);
   assert.match(html, /<media-controller\b/);
-  assert.match(html, /fullscreenelement="app"/);
-  assert.doesNotMatch(html, /fullscreenelement="#app"/);
+  assert.match(html, /fullscreenelement="web-room-fullscreen-root"/);
+  assert.doesNotMatch(html, /fullscreenelement="app"/);
   assert.match(html, /<media-control-bar\b/);
   assert.match(html, /data-playback-video="true"/);
   assert.match(html, /data-player-empty="true"/);
@@ -325,7 +325,7 @@ test("renders the player controls even before a video source is selected", () =>
   );
   assert.match(
     controlBarHtml,
-    /<media-fullscreen-button notooltip><\/media-fullscreen-button>/,
+    /<media-fullscreen-button fullscreenelement="web-room-fullscreen-root" notooltip><\/media-fullscreen-button>/,
   );
   assert.doesNotMatch(controlBarHtml, /<media-play-button[^>]*title=/);
   assert.doesNotMatch(controlBarHtml, /<media-playback-rate-button[^>]*title=/);
@@ -938,6 +938,7 @@ test("renders host picker controls for Bilibili parse results and playback polic
                 sourceType: "mpd",
                 url: "https://syncroom.example.test/proxy/manifest/1080.mpd",
                 qualityLabel: "1080P",
+                codecs: "avc1.640028",
                 default: true,
               },
               {
@@ -945,6 +946,7 @@ test("renders host picker controls for Bilibili parse results and playback polic
                 sourceType: "mpd",
                 url: "https://syncroom.example.test/proxy/manifest/720.mpd",
                 qualityLabel: "720P",
+                codecs: "avc1.64001f",
               },
             ],
             defaultCandidateId: "dash-avc-1080p",
@@ -989,14 +991,14 @@ test("renders host picker controls for Bilibili parse results and playback polic
     html.indexOf("</button>", selectedItemStart),
   );
   assert.match(selectedItemHtml, /Bilibili video/);
-  assert.match(selectedItemHtml, /part \/ 720P \/ mpd/);
+  assert.match(selectedItemHtml, /part \/ 720P \/ AVC \/ mpd/);
   assert.doesNotMatch(selectedItemHtml, /part \/ 1080P \/ mp4/);
   assert.doesNotMatch(selectedItemHtml, />Part 1</);
   assert.match(html, /data-action="select-provider-quality"/);
   assert.match(html, /data-candidate-id="dash-avc-720p"/);
   assert.match(html, /data-quality-selected="true"/);
   assert.match(html, /1080P/);
-  assert.match(html, /720P/);
+  assert.match(html, /720P \/ AVC \/ mpd/);
   assert.match(html, /data-action="share-provider-item"/);
   const providerUrlRowStart = html.indexOf('class="provider-url-row"');
   const providerUrlRowHtml = html.slice(

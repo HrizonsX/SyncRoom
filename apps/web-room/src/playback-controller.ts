@@ -67,6 +67,96 @@ function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}`;
 }
 
+type NativePlaybackVideoElement = PlaybackVideoElement & {
+  readonly readyState?: number;
+  readonly error?: { readonly code?: number; readonly message?: string } | null;
+  addEventListener?: (type: string, listener: () => void) => void;
+  removeEventListener?: (type: string, listener: () => void) => void;
+};
+
+const HAVE_METADATA_READY_STATE = 1;
+const NATIVE_METADATA_TIMEOUT_MS = 8_000;
+
+function hasNativeMetadata(video: NativePlaybackVideoElement): boolean {
+  return (
+    typeof video.readyState === "number" &&
+    video.readyState >= HAVE_METADATA_READY_STATE
+  );
+}
+
+function getNativeMediaErrorMessage(video: NativePlaybackVideoElement): string {
+  const mediaError = video.error;
+  const code =
+    typeof mediaError?.code === "number" ? ` (code ${mediaError.code})` : "";
+  const detail = mediaError?.message?.trim()
+    ? `: ${mediaError.message.trim()}`
+    : "";
+  return `Native media failed to load${code}${detail}.`;
+}
+
+function waitForNativeMetadata(video: PlaybackVideoElement): Promise<void> {
+  const nativeVideo = video as NativePlaybackVideoElement;
+  if (hasNativeMetadata(nativeVideo)) {
+    return Promise.resolve();
+  }
+  if (
+    typeof nativeVideo.addEventListener !== "function" ||
+    typeof nativeVideo.removeEventListener !== "function"
+  ) {
+    return Promise.resolve();
+  }
+  const addEventListener = nativeVideo.addEventListener.bind(nativeVideo);
+  const removeEventListener = nativeVideo.removeEventListener.bind(nativeVideo);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = (): void => {
+      removeEventListener("loadedmetadata", handleReady);
+      removeEventListener("loadeddata", handleReady);
+      removeEventListener("canplay", handleReady);
+      removeEventListener("error", handleError);
+      clearTimeout(timeoutId);
+    };
+    const finish = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error: Error): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    function handleReady(): void {
+      finish();
+    }
+    function handleError(): void {
+      fail(new Error(getNativeMediaErrorMessage(nativeVideo)));
+    }
+
+    const timeoutId = setTimeout(() => {
+      fail(new Error("Native media metadata load timed out."));
+    }, NATIVE_METADATA_TIMEOUT_MS);
+    addEventListener("loadedmetadata", handleReady);
+    addEventListener("loadeddata", handleReady);
+    addEventListener("canplay", handleReady);
+    addEventListener("error", handleError);
+
+    if (hasNativeMetadata(nativeVideo)) {
+      finish();
+    } else if (nativeVideo.error) {
+      handleError();
+    }
+  });
+}
+
 export function createPlaybackElementController(
   options: PlaybackElementControllerOptions = {},
 ) {
@@ -129,11 +219,27 @@ export function createPlaybackElementController(
 
       currentVideo = video;
       if (source.engine === "native") {
-        pendingLoad = undefined;
-        await destroyShakaPlayer();
-        video.src = source.url;
-        video.load();
-        currentSourceKey = nextSourceKey;
+        const nextPendingLoad = {
+          sourceKey: nextSourceKey,
+          video,
+          promise: Promise.resolve(),
+        };
+        pendingLoad = nextPendingLoad;
+        nextPendingLoad.promise = (async () => {
+          await destroyShakaPlayer();
+          currentSourceKey = undefined;
+          video.src = source.url;
+          video.load();
+          await waitForNativeMetadata(video);
+          if (pendingLoad === nextPendingLoad) {
+            currentSourceKey = nextSourceKey;
+          }
+        })().finally(() => {
+          if (pendingLoad === nextPendingLoad) {
+            pendingLoad = undefined;
+          }
+        });
+        await nextPendingLoad.promise;
         return true;
       }
 

@@ -4,6 +4,18 @@ import { isServerMessage, parseSharedVideoRef } from "../src/index.js";
 
 const VALID_TOKEN = "valid-member-token-123";
 
+function createGenericVideoUrlWithExactLength(targetLength: number): string {
+  const baseUrl = "https://example.com/watch?video=refresh-regression&pad=";
+  const paddingLength = targetLength - baseUrl.length;
+
+  assert.ok(
+    paddingLength >= 0,
+    `target length ${targetLength} must be at least ${baseUrl.length}`,
+  );
+
+  return `${baseUrl}${"a".repeat(paddingLength)}`;
+}
+
 test("accepts a valid room:created message", () => {
   assert.equal(
     isServerMessage({
@@ -41,6 +53,39 @@ test("accepts a valid room:state message", () => {
           serverTime: 1,
           actorId: "member-1",
           seq: 1,
+        },
+        members: [{ id: "member-1", name: "Alice" }],
+      },
+    }),
+    true,
+  );
+});
+
+test("accepts room:state with long refresh-restored playback urls", () => {
+  const url = createGenericVideoUrlWithExactLength(1024);
+  const ref = parseSharedVideoRef(url);
+  assert.ok(ref);
+
+  assert.equal(
+    isServerMessage({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-1",
+        sharedVideo: {
+          videoId: ref.videoId,
+          url: ref.normalizedUrl,
+          title: "Video",
+        },
+        playback: {
+          url: ref.normalizedUrl,
+          currentTime: 37,
+          playState: "playing",
+          playbackRate: 1,
+          updatedAt: 1,
+          serverTime: 1,
+          actorId: "member-1",
+          seq: 2,
         },
         members: [{ id: "member-1", name: "Alice" }],
       },

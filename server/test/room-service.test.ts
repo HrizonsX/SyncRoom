@@ -209,6 +209,28 @@ test("room service restores owner identity when the owner refreshes during empty
   const created = await service.createRoomForSession(owner, "Alice");
   const ownerMemberId = owner.memberId;
   const ownerMemberToken = created.memberToken;
+  const sharedVideo = {
+    videoId: "BV1xx411c7mD",
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: "Shared Video",
+  };
+  const sharedPlayback = {
+    url: sharedVideo.url,
+    currentTime: 42,
+    playState: "playing" as const,
+    playbackRate: 1,
+    updatedAt: currentTime,
+    serverTime: currentTime,
+    actorId: ownerMemberId!,
+    seq: 1,
+  };
+
+  await service.shareVideoForSession(
+    owner,
+    ownerMemberToken,
+    sharedVideo,
+    sharedPlayback,
+  );
 
   await service.leaveRoomForSession(owner);
 
@@ -230,6 +252,16 @@ test("room service restores owner identity when the owner refreshes during empty
   assert.equal(rejoined.memberToken, ownerMemberToken);
   assert.equal(refreshedOwner.memberId, ownerMemberId);
   assert.equal(state.hostMemberId, ownerMemberId);
+  assert.deepEqual(state.sharedVideo, {
+    ...sharedVideo,
+    sharedByMemberId: ownerMemberId,
+    sharedByDisplayName: "Alice",
+  });
+  assert.deepEqual(state.playback, {
+    ...sharedPlayback,
+    serverTime: 1_000,
+    syncIntent: undefined,
+  });
   assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
 });
 

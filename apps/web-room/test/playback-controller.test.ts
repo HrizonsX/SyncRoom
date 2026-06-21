@@ -28,6 +28,8 @@ class FakeEventedVideoElement extends FakeVideoElement {
   currentTime = 0;
   playbackRate = 1;
   paused = true;
+  readyState = 1;
+  error: { code?: number; message?: string } | null = null;
   private readonly listeners = new Map<string, Set<() => void>>();
 
   addEventListener(type: string, listener: () => void): void {
@@ -248,6 +250,97 @@ test("loads MP4 sources with the native video element", async () => {
 
   assert.equal(video.src, "https://syncroom.example.test/video.mp4");
   assert.equal(video.loadCount, 1);
+});
+
+test("waits for native MP4 metadata before applying refreshed playback", async () => {
+  const video = new FakeEventedVideoElement();
+  video.readyState = 0;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+  });
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const syncPromise = controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      currentTime: 18,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-guest",
+      seq: 2,
+    },
+  });
+
+  await waitForCondition(
+    () => video.loadCount === 1,
+    "native MP4 load did not start",
+  );
+  await Promise.resolve();
+  assert.equal(video.currentTime, 0);
+
+  video.readyState = 1;
+  video.emit("loadedmetadata");
+  await syncPromise;
+
+  assert.equal(video.currentTime, 18);
+});
+
+test("reports native MP4 load errors during refreshed playback hydration", async () => {
+  const video = new FakeEventedVideoElement();
+  video.readyState = 0;
+  video.error = { code: 4, message: "Unsupported source" };
+  const playbackErrors: unknown[] = [];
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    onPlaybackError: (error) => playbackErrors.push(error),
+  });
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const syncPromise = controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+    playback: {
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      currentTime: 18,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-guest",
+      seq: 2,
+    },
+  });
+
+  await waitForCondition(
+    () => video.loadCount === 1,
+    "native MP4 load did not start",
+  );
+  await Promise.resolve();
+  video.emit("error");
+  await syncPromise;
+
+  assert.equal(video.currentTime, 0);
+  assert.equal(playbackErrors.length, 1);
+  assert.match(
+    playbackErrors[0] instanceof Error
+      ? playbackErrors[0].message
+      : String(playbackErrors[0]),
+    /Native media failed to load.*Unsupported source/,
+  );
 });
 
 test("syncs web-room playback events with the original shared video URL", async () => {

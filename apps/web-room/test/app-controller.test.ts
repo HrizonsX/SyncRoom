@@ -2288,8 +2288,18 @@ test("applies room state and LiveKit voice messages after refresh rejoin", async
           videoId: "BV1xx411c7mD",
           url: "https://www.bilibili.com/video/BV1xx411c7mD",
           title: "Shared Video",
+          provider: providerPlaybackDescriptor,
         },
-        playback: null,
+        playback: {
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          currentTime: 57,
+          playState: "playing",
+          playbackRate: 1,
+          updatedAt: 5_000,
+          serverTime: 5_000,
+          actorId: "member-host",
+          seq: 3,
+        },
         members: [
           { id: "member-host", name: "Alice" },
           { id: "member-guest", name: "Bob" },
@@ -2342,7 +2352,22 @@ test("applies room state and LiveKit voice messages after refresh rejoin", async
     throw new Error("Expected joined state.");
   }
   assert.equal(state.hostMemberId, "member-host");
-  assert.equal(state.videoTitle, "Shared Video");
+  assert.equal(state.videoTitle, "Bilibili video");
+  assert.deepEqual(state.playbackSource, {
+    url: "https://syncroom.example.test/proxy/manifest/manifest-1.mpd",
+    sourceType: "mpd",
+    engine: "shaka",
+  });
+  assert.deepEqual(state.playback, {
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    currentTime: 57,
+    playState: "playing",
+    playbackRate: 1,
+    updatedAt: 5_000,
+    serverTime: 5_000,
+    actorId: "member-host",
+    seq: 3,
+  });
   assert.deepEqual(state.members, [
     { id: "member-host", name: "Alice" },
     { id: "member-guest", name: "Bob" },

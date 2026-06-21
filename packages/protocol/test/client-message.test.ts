@@ -5,7 +5,7 @@ import { isClientMessage, parseSharedVideoRef } from "../src/index.js";
 const VALID_TOKEN = "valid-member-token-123";
 const DISPLAY_NAME_MAX_LENGTH = 32;
 const TITLE_MAX_LENGTH = 128;
-const URL_MAX_LENGTH = 512;
+const URL_MAX_LENGTH = 2048;
 
 function createBilibiliUrlWithExactLength(targetLength: number): string {
   const baseUrl = "https://www.bilibili.com/video/BV1xx411c7mD?from=test&pad=";
@@ -251,7 +251,7 @@ test("accepts video:share when title is exactly 128 characters", () => {
   );
 });
 
-test("accepts video:share when url is exactly 512 characters", () => {
+test("accepts video:share when url is exactly 2048 characters", () => {
   const exactBoundaryUrl = createBilibiliUrlWithExactLength(URL_MAX_LENGTH);
 
   assert.equal(exactBoundaryUrl.length, URL_MAX_LENGTH);
@@ -464,7 +464,7 @@ test("rejects host member management messages with malformed permissions", () =>
   );
 });
 
-test("accepts playback:update when url is exactly 512 characters", () => {
+test("accepts playback:update when url is exactly 2048 characters", () => {
   const exactBoundaryUrl = createBilibiliUrlWithExactLength(URL_MAX_LENGTH);
 
   assert.equal(exactBoundaryUrl.length, URL_MAX_LENGTH);

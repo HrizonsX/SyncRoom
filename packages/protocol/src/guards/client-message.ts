@@ -46,7 +46,7 @@ import {
 
 const DISPLAY_NAME_MAX_LENGTH = 32;
 const TITLE_MAX_LENGTH = 128;
-const URL_MAX_LENGTH = 512;
+const URL_MAX_LENGTH = 2048;
 const DANMAKU_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 function isBoundedString(value: unknown, maxLength: number): value is string {

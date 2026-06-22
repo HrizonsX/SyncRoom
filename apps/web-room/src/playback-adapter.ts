@@ -77,8 +77,7 @@ export function choosePreferredPlaybackCandidate(
   }
 
   const explicitDefault = supportedCandidates.find(
-    (candidate) =>
-      candidate.default === true && !isLikelyUnsupportedCodec(candidate),
+    (candidate) => candidate.default === true,
   );
   if (explicitDefault) {
     return explicitDefault;

@@ -7,6 +7,7 @@ import {
   applyRemotePlaybackState,
   bindPlaybackSyncControls,
   type EventedMediaElementLike,
+  type LocalPlaybackEvent,
 } from "./playback-sync.js";
 import type { WebRoomState } from "./render.js";
 
@@ -39,6 +40,7 @@ export type ShakaPlayerModule = {
 
 export type PlaybackElementControllerOptions = {
   loadShakaPlayer?: () => Promise<unknown>;
+  now?: () => number;
 };
 
 export type WebRoomPlaybackControllerOptions =
@@ -53,7 +55,6 @@ export type WebRoomPlaybackControllerOptions =
     dispatchPlaybackUpdate?: (
       message: Extract<ClientMessage, { type: "playback:update" }>,
     ) => void;
-    now?: () => number;
   };
 
 function getShakaPlayerConstructor(
@@ -71,6 +72,16 @@ function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}:${source.candidateId ?? ""}`;
 }
 
+const LIVE_STREAMING_BUFFER_BEHIND_SECONDS = 10;
+const LIVE_STREAMING_BUFFERING_GOAL_SECONDS = 8;
+const LIVE_STREAMING_PRESENTATION_DELAY_SECONDS = 6;
+const LIVE_STREAMING_REBUFFERING_GOAL_SECONDS = 3;
+const LIVE_RESUME_RELOAD_AFTER_PAUSE_MS = 1_500;
+const LIVE_PLAYBACK_SYNC_EVENTS: readonly LocalPlaybackEvent[] = [
+  "play",
+  "pause",
+];
+
 function configureShakaPlayerForSource(
   player: ShakaPlayerInstance,
   source: PlaybackSource,
@@ -80,28 +91,41 @@ function configureShakaPlayerForSource(
     return;
   }
   const isLive = source.isLive === true;
+  const manifestConfig: Record<string, unknown> = {
+    continueLoadingWhenPaused: isLive
+      ? options.continueLiveLoadingWhenPaused === true
+      : true,
+  };
+  const streamingConfig: Record<string, unknown> = {
+    stopFetchingOnPause: isLive,
+  };
+  if (isLive) {
+    manifestConfig.defaultPresentationDelay =
+      LIVE_STREAMING_PRESENTATION_DELAY_SECONDS;
+    streamingConfig.bufferBehind = LIVE_STREAMING_BUFFER_BEHIND_SECONDS;
+    streamingConfig.bufferingGoal = LIVE_STREAMING_BUFFERING_GOAL_SECONDS;
+    streamingConfig.lowLatencyMode = false;
+    streamingConfig.rebufferingGoal = LIVE_STREAMING_REBUFFERING_GOAL_SECONDS;
+  }
 
   player.configure({
-    manifest: {
-      continueLoadingWhenPaused: isLive
-        ? options.continueLiveLoadingWhenPaused === true
-        : true,
-    },
-    streaming: {
-      stopFetchingOnPause: isLive,
-    },
+    manifest: manifestConfig,
+    streaming: streamingConfig,
   });
 }
 
 type LiveResumeVideoElement = PlaybackVideoElement & {
   addEventListener?: (type: "play" | "pause", listener: () => void) => void;
   removeEventListener?: (type: "play" | "pause", listener: () => void) => void;
+  readonly paused?: boolean;
+  play?: () => Promise<void> | void;
 };
 
 function bindLivePlaybackResume(args: {
   player: ShakaPlayerInstance;
   video: PlaybackVideoElement;
   source: PlaybackSource;
+  now: () => number;
 }): { dispose: () => void } | undefined {
   if (args.source.isLive !== true) {
     return undefined;
@@ -115,9 +139,11 @@ function bindLivePlaybackResume(args: {
   }
 
   let pausedSinceLastPlay = false;
+  let pausedAt: number | undefined;
   let resumeLoadInFlight: Promise<unknown> | undefined;
   const handlePause = (): void => {
     pausedSinceLastPlay = true;
+    pausedAt = args.now();
     configureShakaPlayerForSource(args.player, args.source, {
       continueLiveLoadingWhenPaused: false,
     });
@@ -129,10 +155,38 @@ function bindLivePlaybackResume(args: {
     if (!pausedSinceLastPlay || resumeLoadInFlight) {
       return;
     }
+    const shouldResumePlayback =
+      typeof video.paused !== "boolean" || video.paused === false;
+    const pauseDurationMs =
+      pausedAt === undefined
+        ? LIVE_RESUME_RELOAD_AFTER_PAUSE_MS
+        : args.now() - pausedAt;
     pausedSinceLastPlay = false;
-    resumeLoadInFlight = args.player.load(args.source.url).finally(() => {
-      resumeLoadInFlight = undefined;
-    });
+    pausedAt = undefined;
+    if (pauseDurationMs < LIVE_RESUME_RELOAD_AFTER_PAUSE_MS) {
+      if (
+        shouldResumePlayback &&
+        typeof video.play === "function" &&
+        video.paused !== false
+      ) {
+        void Promise.resolve(video.play()).catch(() => undefined);
+      }
+      return;
+    }
+    resumeLoadInFlight = args.player
+      .load(args.source.url)
+      .then(async () => {
+        if (
+          shouldResumePlayback &&
+          typeof video.play === "function" &&
+          video.paused !== false
+        ) {
+          await video.play();
+        }
+      })
+      .finally(() => {
+        resumeLoadInFlight = undefined;
+      });
     void resumeLoadInFlight.catch(() => undefined);
   };
 
@@ -235,6 +289,7 @@ export function createPlaybackElementController(
   options: PlaybackElementControllerOptions = {},
 ) {
   const loadShakaPlayer = options.loadShakaPlayer ?? defaultLoadShakaPlayer;
+  const getNow = (): number => options.now?.() ?? Date.now();
   let currentSourceKey: string | undefined;
   let currentVideo: PlaybackVideoElement | undefined;
   let shakaPlayer: ShakaPlayerInstance | undefined;
@@ -278,6 +333,31 @@ export function createPlaybackElementController(
     }
     shakaPlayer = player;
     return shakaPlayer;
+  }
+
+  async function recreateShakaPlayerIfSourceChanged(
+    video: PlaybackVideoElement,
+    nextSourceKey: string,
+  ): Promise<void> {
+    if (!shakaPlayer || currentVideo !== video) {
+      return;
+    }
+    const hasNoKnownSource = !currentSourceKey && !pendingLoad;
+    const hasDifferentLoadedSource =
+      currentSourceKey !== undefined && currentSourceKey !== nextSourceKey;
+    const hasDifferentPendingSource =
+      pendingLoad !== undefined &&
+      pendingLoad.video === video &&
+      pendingLoad.sourceKey !== nextSourceKey;
+    if (
+      !hasNoKnownSource &&
+      !hasDifferentLoadedSource &&
+      !hasDifferentPendingSource
+    ) {
+      return;
+    }
+    await destroyShakaPlayer();
+    currentSourceKey = undefined;
   }
 
   return {
@@ -325,6 +405,7 @@ export function createPlaybackElementController(
         return true;
       }
 
+      await recreateShakaPlayerIfSourceChanged(video, nextSourceKey);
       const player = await ensureShakaPlayer(video);
       configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
@@ -344,6 +425,7 @@ export function createPlaybackElementController(
               player,
               video,
               source,
+              now: getNow,
             });
           }
         })
@@ -377,6 +459,7 @@ export function createWebRoomPlaybackController(
   let playbackBinding: { dispose: () => void } | undefined;
   let boundMedia: EventedMediaElementLike | undefined;
   let boundSyncUrl: string | undefined;
+  let boundSyncEventsKey: string | undefined;
   let suppressLocalEventsUntil = 0;
   let syncGeneration = 0;
   let needsPlaybackHydration = true;
@@ -390,6 +473,7 @@ export function createWebRoomPlaybackController(
     playbackBinding = undefined;
     boundMedia = undefined;
     boundSyncUrl = undefined;
+    boundSyncEventsKey = undefined;
   }
 
   function isEventedMediaElement(
@@ -410,6 +494,7 @@ export function createWebRoomPlaybackController(
   function ensurePlaybackBinding(
     media: EventedMediaElementLike,
     syncUrl: string | undefined,
+    events?: readonly LocalPlaybackEvent[],
   ): void {
     if (
       !syncUrl ||
@@ -420,15 +505,23 @@ export function createWebRoomPlaybackController(
       disposePlaybackBinding();
       return;
     }
-    if (playbackBinding && boundMedia === media && boundSyncUrl === syncUrl) {
+    const eventsKey = events?.join(",") ?? "*";
+    if (
+      playbackBinding &&
+      boundMedia === media &&
+      boundSyncUrl === syncUrl &&
+      boundSyncEventsKey === eventsKey
+    ) {
       return;
     }
 
     disposePlaybackBinding();
     boundMedia = media;
     boundSyncUrl = syncUrl;
+    boundSyncEventsKey = eventsKey;
     playbackBinding = bindPlaybackSyncControls({
       media,
+      ...(events ? { events } : {}),
       getContext: () => {
         if (getNow() < suppressLocalEventsUntil) {
           return null;
@@ -487,11 +580,15 @@ export function createWebRoomPlaybackController(
       }
 
       const currentUrl = state.playbackUrl ?? state.playback?.url;
-      ensurePlaybackBinding(video, currentUrl);
+      const isLivePlayback = state.playbackSource.isLive === true;
+      ensurePlaybackBinding(
+        video,
+        currentUrl,
+        isLivePlayback ? LIVE_PLAYBACK_SYNC_EVENTS : undefined,
+      );
       if (!state.playback || !currentUrl) {
         return;
       }
-      const isLivePlayback = state.playbackSource.isLive === true;
       if (isLivePlayback && state.playback.userInitiated !== true) {
         needsPlaybackHydration = false;
         return;

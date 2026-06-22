@@ -4,6 +4,8 @@ import type { ProviderPlaybackDescriptor } from "@syncroom/protocol";
 import {
   createWebRoomAppController,
   DEFAULT_WEB_ROOM_SERVER_URL,
+  coerceWebRoomServerUrlForPage,
+  resolveDefaultWebRoomServerUrl,
   WEB_ROOM_IDENTITY_STORAGE_KEY,
   WEB_ROOM_THEME_STORAGE_KEY,
 } from "../src/app-controller.js";
@@ -183,6 +185,54 @@ test("starts on the entry screen with the default server URL", () => {
   assert.equal(state.connectionState, "disconnected");
   assert.equal(state.serverUrl, DEFAULT_WEB_ROOM_SERVER_URL);
   assert.match(state.displayName ?? "", /^网页用户[A-Z]{2}$/);
+});
+
+test("resolves the default server URL from an HTTPS page origin", () => {
+  assert.equal(
+    resolveDefaultWebRoomServerUrl({
+      protocol: "https:",
+      host: "8.163.88.33",
+      hostname: "8.163.88.33",
+    }),
+    "https://8.163.88.33",
+  );
+});
+
+test("migrates same-host insecure server URLs when the web room is loaded over HTTPS", () => {
+  assert.equal(
+    coerceWebRoomServerUrlForPage("ws://8.163.88.33:8787", {
+      protocol: "https:",
+      host: "8.163.88.33",
+      hostname: "8.163.88.33",
+    }),
+    "https://8.163.88.33",
+  );
+});
+
+test("initial state migrates a persisted same-host ws URL on HTTPS pages", () => {
+  const storage = new MemoryStorage();
+  storage.setItem(
+    "syncroom:web-room-session",
+    JSON.stringify({
+      roomCode: "ABC123",
+      joinToken: "valid-join-token-123",
+      memberToken: "valid-member-token-123",
+      displayName: "Alice",
+      serverUrl: "ws://8.163.88.33:8787",
+    }),
+  );
+
+  const controller = createWebRoomAppController({
+    storage,
+    socketFactory: createSocketRecorder().factory,
+    pageLocation: {
+      protocol: "https:",
+      host: "8.163.88.33",
+      hostname: "8.163.88.33",
+    },
+  });
+
+  assert.equal(controller.getState().serverUrl, "https://8.163.88.33");
 });
 
 test("uses a generated web nickname when the display name is blank", () => {
@@ -1602,6 +1652,76 @@ test("toggles the LiveKit microphone after voice is connected", async () => {
       },
     ],
   );
+});
+
+test("enables the microphone after the first voice button click connects", async () => {
+  const recorder = createSocketRecorder();
+  const runtime = new FakeVoiceRuntime();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    voiceRuntime: runtime,
+    now: () => 14_000,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  controller.toggleVoice();
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "wss://livekit.example.test",
+        token: "voice-token",
+        roomName: "syncroom-ABC123",
+        participantIdentity: "member-host",
+        expiresAt: 11_000,
+      },
+    }),
+  );
+  await flushAsyncTasks();
+
+  assert.deepEqual(runtime.connectCalls, [
+    {
+      livekitUrl: "wss://livekit.example.test",
+      token: "voice-token",
+      roomName: "syncroom-ABC123",
+      participantIdentity: "member-host",
+    },
+  ]);
+  assert.deepEqual(runtime.microphoneCalls, [true]);
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "voice:state",
+    payload: {
+      memberToken: "valid-member-token-123",
+      connected: true,
+      muted: false,
+      speaking: false,
+    },
+  });
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.voice.status, "connected");
+  assert.equal(state.voice.muted, false);
 });
 
 test("adds system chat messages from actual voice state websocket events", () => {

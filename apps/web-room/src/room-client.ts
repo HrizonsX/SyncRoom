@@ -13,6 +13,7 @@ import type {
 
 const WEB_ROOM_PROTOCOL_VERSION = 3;
 export const WEB_ROOM_SESSION_STORAGE_KEY = "syncroom:web-room-session";
+const SECURE_WEB_SOCKET_PATH = "/syncroom-ws";
 const TOKEN_MIN_LENGTH = 16;
 const TOKEN_MAX_LENGTH = 128;
 const DISPLAY_NAME_MAX_LENGTH = 32;
@@ -129,10 +130,15 @@ function isServerUrl(value: unknown): value is string {
 
 export function normalizeServerUrlToWebSocket(serverUrl: string): string {
   const parsedUrl = new URL(serverUrl);
+  const shouldUseSecureProxyPath =
+    parsedUrl.protocol === "https:" && parsedUrl.pathname === "/";
   if (parsedUrl.protocol === "https:") {
     parsedUrl.protocol = "wss:";
   } else if (parsedUrl.protocol === "http:") {
     parsedUrl.protocol = "ws:";
+  }
+  if (shouldUseSecureProxyPath) {
+    parsedUrl.pathname = SECURE_WEB_SOCKET_PATH;
   }
 
   const serialized = parsedUrl.toString();

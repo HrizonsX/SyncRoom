@@ -288,6 +288,14 @@ test("styles web room icons and member avatars", () => {
   );
   assert.match(
     styles,
+    /\.panel-title-icon,\s*\.summary-icon,\s*\.settings-heading-icon,\s*\.voice-summary-icon\s*{[^}]*display:\s*block;[^}]*flex-shrink:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.panel-title-icon,\s*\.summary-icon,\s*\.settings-heading-icon,\s*\.voice-summary-icon\s*{[^}]*align-self:\s*center;[^}]*line-height:\s*0;[^}]*transform:\s*translateZ\(0\);[^}]*backface-visibility:\s*hidden;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.voice-members\s*{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*}/s,
   );
   assert.match(
@@ -393,6 +401,17 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
   assert.match(
     styles,
     /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*\.player-danmaku-inline\s*{[^}]*display:\s*none;[^}]*}[\s\S]*\.player-danmaku-toggle\s*{[^}]*display:\s*inline-flex;[^}]*}/s,
+  );
+});
+
+test("styles player loading indicator in the center chrome layer", () => {
+  assert.match(
+    styles,
+    /\.player-loading-indicator\s*{[^}]*width:\s*54px;[^}]*height:\s*54px;[^}]*opacity:\s*0;[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;[^}]*--media-loading-indicator-icon-width:\s*32px;[^}]*--media-loading-indicator-icon-height:\s*32px;[^}]*--media-loading-indicator-transition-delay:\s*200ms;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.player-loading-indicator\[medialoading\]:not\(\[mediapaused\]\)\s*{[^}]*opacity:\s*1;[^}]*visibility:\s*visible;[^}]*}/s,
   );
 });
 

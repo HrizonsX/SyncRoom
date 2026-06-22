@@ -32,7 +32,7 @@ function createSentMessageRecorder() {
   const client = createWebRoomSocketClient({
     serverUrl: "https://syncroom.example.test",
     socketFactory(url) {
-      assert.equal(url, "wss://syncroom.example.test");
+      assert.equal(url, "wss://syncroom.example.test/syncroom-ws");
       return {
         send(data) {
           sent.push(JSON.parse(data));

@@ -59,7 +59,7 @@ test("keeps explicit default candidate when it is browser compatible", () => {
   assert.equal(selected?.id, "mp4-default");
 });
 
-test("does not honor HEVC defaults that use plain codec names", () => {
+test("honors explicit HEVC defaults selected by the host", () => {
   const selected = choosePreferredPlaybackCandidate([
     {
       id: "hevc-default",
@@ -76,10 +76,10 @@ test("does not honor HEVC defaults that use plain codec names", () => {
     },
   ]);
 
-  assert.equal(selected?.id, "avc");
+  assert.equal(selected?.id, "hevc-default");
 });
 
-test("does not honor AV1 defaults when AVC is available", () => {
+test("honors explicit AV1 defaults selected by the host", () => {
   const selected = choosePreferredPlaybackCandidate([
     {
       id: "av1-default",
@@ -96,7 +96,7 @@ test("does not honor AV1 defaults when AVC is available", () => {
     },
   ]);
 
-  assert.equal(selected?.id, "avc");
+  assert.equal(selected?.id, "av1-default");
 });
 
 test("creates coarse playback startup errors for reporting", () => {

@@ -616,6 +616,16 @@ function renderPlayerVideoTitle(title: string | undefined): string {
   `;
 }
 
+function renderPlayerLoadingIndicator(): string {
+  return `
+              <media-loading-indicator
+                slot="centered-chrome"
+                class="player-loading-indicator"
+                loadingdelay="200"
+              ></media-loading-indicator>
+  `;
+}
+
 function renderPlayerDanmakuPopover(canSendDanmaku: boolean): string {
   const disabled = canSendDanmaku ? "" : " disabled";
   return `
@@ -700,6 +710,7 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
               ${renderPlaybackVideo(state.playbackSource)}
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}
+              ${hasPlaybackSource ? renderPlayerLoadingIndicator() : ""}
               ${renderPlayerDanmakuPopover(canSendDanmaku)}
               <media-control-bar class="player-controls">
                 <media-play-button notooltip${playerDisabled}></media-play-button>

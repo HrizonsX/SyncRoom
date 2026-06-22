@@ -13,6 +13,7 @@ import {
   findPlaybackVideoElement,
   preservePlaybackVideoElement,
 } from "./playback-video-preservation.js";
+import { handlePlayerKeyboardShortcut } from "./player-keyboard-shortcuts.js";
 import {
   captureDanmakuLayerAnimationSnapshots,
   findDanmakuLayerElement,
@@ -452,6 +453,10 @@ if (app) {
   });
 
   appRoot.addEventListener("keydown", (event) => {
+    if (handlePlayerKeyboardShortcut({ event, root: appRoot })) {
+      return;
+    }
+
     const input = event.target;
     if (!(input instanceof HTMLInputElement)) {
       return;

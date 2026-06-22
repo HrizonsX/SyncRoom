@@ -296,6 +296,7 @@ test("renders the player controls even before a video source is selected", () =>
     /class="player-time-pair"[\s\S]*<media-time-display notoggle><\/media-time-display>[\s\S]*<media-duration-display><\/media-duration-display>/,
   );
   assert.match(html, /data-player-danmaku-controls="inline"/);
+  assert.doesNotMatch(html, /<media-loading-indicator\b/);
   assert.match(html, /name="playerDanmaku"/);
   assert.match(html, /data-action="send-player-danmaku"/);
   assert.match(html, /aria-label="发送弹幕"/);
@@ -366,6 +367,10 @@ test("renders a real video host for Shaka playback sources", () => {
   assert.match(html, /data-source-type="mpd"/);
   assert.match(html, /data-playback-engine="shaka"/);
   assert.match(html, /data-source-candidate-id="dash-avc-720p"/);
+  assert.match(html, /<media-loading-indicator\b/);
+  assert.match(html, /slot="centered-chrome"/);
+  assert.match(html, /class="player-loading-indicator"/);
+  assert.match(html, /loadingdelay="200"/);
   assert.match(html, /<media-play-button notooltip><\/media-play-button>/);
   assert.match(
     html,

@@ -51,6 +51,11 @@ export const DEFAULT_WEB_ROOM_SERVER_URL = "ws://localhost:8787";
 export const WEB_ROOM_IDENTITY_STORAGE_KEY = "syncroom:web-room-identity";
 export const WEB_ROOM_THEME_STORAGE_KEY = "syncroom:web-room-theme";
 
+export type WebRoomPageLocation = Pick<
+  Location,
+  "protocol" | "host" | "hostname"
+>;
+
 const DEFAULT_DISPLAY_NAME = "网页用户";
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
 const CLOCK_SYNC_INTERVAL_MS = 60_000;
@@ -104,6 +109,7 @@ export type WebRoomAppControllerOptions = {
   storage?: StorageLike;
   socketFactory?: WebRoomSocketClientOptions["socketFactory"];
   defaultServerUrl?: string;
+  pageLocation?: WebRoomPageLocation;
   autoReconnect?: boolean;
   onStateChange?: (state: WebRoomState) => void;
   now?: () => number;
@@ -350,6 +356,66 @@ function getServerUrl(value: string | undefined, fallback: string): string {
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
+function readCurrentPageLocation(): WebRoomPageLocation | undefined {
+  return typeof globalThis.location === "object" && globalThis.location !== null
+    ? globalThis.location
+    : undefined;
+}
+
+function isLocalWebRoomHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]"
+  );
+}
+
+export function resolveDefaultWebRoomServerUrl(
+  pageLocation: WebRoomPageLocation | undefined = readCurrentPageLocation(),
+): string {
+  if (!pageLocation?.protocol || !pageLocation.host) {
+    return DEFAULT_WEB_ROOM_SERVER_URL;
+  }
+
+  if (pageLocation.protocol === "https:") {
+    return `https://${pageLocation.host}`;
+  }
+
+  if (
+    pageLocation.protocol === "http:" &&
+    pageLocation.hostname &&
+    !isLocalWebRoomHost(pageLocation.hostname)
+  ) {
+    return `http://${pageLocation.hostname}:8787`;
+  }
+
+  return DEFAULT_WEB_ROOM_SERVER_URL;
+}
+
+export function coerceWebRoomServerUrlForPage(
+  serverUrl: string,
+  pageLocation: WebRoomPageLocation | undefined = readCurrentPageLocation(),
+): string {
+  if (pageLocation?.protocol !== "https:") {
+    return serverUrl;
+  }
+
+  try {
+    const parsedUrl = new URL(serverUrl);
+    if (
+      (parsedUrl.protocol === "ws:" || parsedUrl.protocol === "http:") &&
+      parsedUrl.hostname === pageLocation.hostname
+    ) {
+      return `https://${pageLocation.host}`;
+    }
+  } catch {
+    return serverUrl;
+  }
+
+  return serverUrl;
+}
+
 function getRoomCode(value: string | undefined): string {
   return value?.trim().toUpperCase() ?? "";
 }
@@ -418,15 +484,19 @@ function localizeEntryServerError(
 export function createWebRoomAppController(
   options: WebRoomAppControllerOptions = {},
 ): WebRoomAppController {
+  const pageLocation = options.pageLocation ?? readCurrentPageLocation();
   const defaultServerUrl =
-    options.defaultServerUrl ?? DEFAULT_WEB_ROOM_SERVER_URL;
+    options.defaultServerUrl ?? resolveDefaultWebRoomServerUrl(pageLocation);
   const storage = options.storage;
   const persistedSession = storage ? loadWebRoomSession(storage) : null;
+  const persistedServerUrl = persistedSession?.serverUrl
+    ? coerceWebRoomServerUrlForPage(persistedSession.serverUrl, pageLocation)
+    : undefined;
   const random = options.random ?? Math.random;
   const browserDisplayName = getBrowserDisplayName(storage, random);
   const browserThemeMode = loadWebRoomThemeMode(storage);
   let state: WebRoomState = createEntryState(
-    persistedSession?.serverUrl ?? defaultServerUrl,
+    persistedServerUrl ?? defaultServerUrl,
     persistedSession ?? { displayName: browserDisplayName },
     browserThemeMode,
   );
@@ -1421,7 +1491,10 @@ export function createWebRoomAppController(
   }
 
   function createRoom(input: CreateRoomInput = {}): void {
-    const serverUrl = getServerUrl(input.serverUrl, defaultServerUrl);
+    const serverUrl = coerceWebRoomServerUrlForPage(
+      getServerUrl(input.serverUrl, defaultServerUrl),
+      pageLocation,
+    );
     const displayName = resolveBrowserDisplayName(
       input.displayName,
       storage,
@@ -1435,7 +1508,10 @@ export function createWebRoomAppController(
   }
 
   function joinRoom(input: JoinRoomInput): void {
-    const serverUrl = getServerUrl(input.serverUrl, defaultServerUrl);
+    const serverUrl = coerceWebRoomServerUrlForPage(
+      getServerUrl(input.serverUrl, defaultServerUrl),
+      pageLocation,
+    );
     const roomCode = getRoomCode(input.roomCode);
     const joinToken = input.joinToken?.trim() ?? "";
     const displayName = resolveBrowserDisplayName(
@@ -1589,7 +1665,10 @@ export function createWebRoomAppController(
       void voiceController.toggleMicrophone();
       return;
     }
-    voiceController.requestAccess({ forceRefresh: true });
+    voiceController.requestAccess({
+      forceRefresh: true,
+      enableMicrophoneAfterConnect: true,
+    });
   }
 
   function toggleVoiceMicrophone(): Promise<void> {

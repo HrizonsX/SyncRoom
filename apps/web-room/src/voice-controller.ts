@@ -13,8 +13,13 @@ type VoiceSessionContext = {
   connected: boolean;
 };
 
+type VoiceAccessRequestOptions = {
+  forceRefresh?: boolean;
+  enableMicrophoneAfterConnect?: boolean;
+};
+
 export type WebRoomVoiceController = {
-  requestAccess: (options?: { forceRefresh?: boolean }) => void;
+  requestAccess: (options?: VoiceAccessRequestOptions) => void;
   toggleMicrophone: () => Promise<void>;
   handleServerMessage: (message: ServerMessage) => Promise<boolean>;
   handleRuntimeEvent: (event: WebRoomVoiceRuntimeEvent) => void;
@@ -49,7 +54,9 @@ export function createWebRoomVoiceController(args: {
     args.setVoiceState(updater(voice));
   }
 
-  function requestAccess(options: { forceRefresh?: boolean } = {}): void {
+  let enableMicrophoneAfterConnect = false;
+
+  function requestAccess(options: VoiceAccessRequestOptions = {}): void {
     const session = args.getSession();
     if (!session) {
       return;
@@ -60,6 +67,8 @@ export function createWebRoomVoiceController(args: {
       return;
     }
 
+    const shouldEnableMicrophone =
+      options.enableMicrophoneAfterConnect === true;
     const requestKey = `${session.roomCode}:${session.memberToken}`;
     if (
       !options.forceRefresh &&
@@ -67,9 +76,12 @@ export function createWebRoomVoiceController(args: {
       voice.status !== "failed" &&
       voice.status !== "unavailable"
     ) {
+      enableMicrophoneAfterConnect =
+        enableMicrophoneAfterConnect || shouldEnableMicrophone;
       return;
     }
 
+    enableMicrophoneAfterConnect = shouldEnableMicrophone;
     args.setVoiceState({
       ...ensureSelfParticipant(voice, session.memberId),
       status: "requesting",
@@ -146,6 +158,8 @@ export function createWebRoomVoiceController(args: {
       { type: "voice:access-granted" }
     >["payload"],
   ): Promise<void> {
+    const shouldEnableMicrophone = enableMicrophoneAfterConnect;
+    enableMicrophoneAfterConnect = false;
     updateVoiceState((voice) => ({
       ...voice,
       status: "connecting",
@@ -177,6 +191,9 @@ export function createWebRoomVoiceController(args: {
       }));
       sendCurrentVoiceState({ connected: true, muted: true });
       args.log("voice:access-granted received");
+      if (shouldEnableMicrophone) {
+        await setLocalMicrophoneEnabled(true);
+      }
     } catch (error) {
       updateVoiceState((voice) => ({
         ...voice,
@@ -195,11 +212,23 @@ export function createWebRoomVoiceController(args: {
     }
 
     if (voice.status !== "connected") {
-      requestAccess({ forceRefresh: true });
+      requestAccess({
+        forceRefresh: true,
+        enableMicrophoneAfterConnect: true,
+      });
       return;
     }
 
     const enabled = voice.muted;
+    await setLocalMicrophoneEnabled(enabled);
+  }
+
+  async function setLocalMicrophoneEnabled(enabled: boolean): Promise<void> {
+    const voice = args.getVoiceState();
+    if (!voice) {
+      return;
+    }
+
     try {
       await args.runtime.setMicrophoneEnabled(enabled);
       const memberId =
@@ -236,6 +265,7 @@ export function createWebRoomVoiceController(args: {
   }
 
   async function disconnect(reason: string): Promise<void> {
+    enableMicrophoneAfterConnect = false;
     const voice = args.getVoiceState();
     const wasConnected =
       voice?.status === "connected" ||
@@ -271,6 +301,7 @@ export function createWebRoomVoiceController(args: {
     code: Extract<ServerMessage, { type: "error" }>["payload"]["code"],
     message: string,
   ): Promise<void> {
+    enableMicrophoneAfterConnect = false;
     await args.runtime.disconnect();
     updateVoiceState((voice) => ({
       ...voice,

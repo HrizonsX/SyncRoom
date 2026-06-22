@@ -645,6 +645,33 @@ input:focus {
   --media-secondary-color: rgba(248, 250, 252, 0.76);
 }
 
+.player-loading-indicator {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border: 1px solid rgba(248, 250, 252, 0.16);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.58);
+  color: #f8fafc;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  transition:
+    opacity 0.16s ease,
+    visibility 0.16s ease;
+  --media-loading-indicator-icon-width: 32px;
+  --media-loading-indicator-icon-height: 32px;
+  --media-loading-indicator-transition-delay: 200ms;
+}
+
+.player-loading-indicator[medialoading]:not([mediapaused]) {
+  opacity: 1;
+  visibility: visible;
+}
+
 .player-controls {
   display: flex;
   align-items: center;
@@ -1116,6 +1143,18 @@ input:focus {
   width: 13px;
   height: 13px;
   flex: 0 0 13px;
+}
+
+.panel-title-icon,
+.summary-icon,
+.settings-heading-icon,
+.voice-summary-icon {
+  display: block;
+  flex-shrink: 0;
+  align-self: center;
+  line-height: 0;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .panel-title-icon {

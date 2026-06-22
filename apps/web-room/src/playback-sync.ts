@@ -93,6 +93,7 @@ export function createPlaybackUpdateMessage(args: {
 
 export function bindPlaybackSyncControls(args: {
   media: EventedMediaElementLike;
+  events?: readonly LocalPlaybackEvent[];
   getContext: () => {
     memberToken: string;
     actorId: string;
@@ -106,7 +107,7 @@ export function bindPlaybackSyncControls(args: {
 }): { dispose: () => void } {
   const listeners = new Map<LocalPlaybackEvent, () => void>();
 
-  for (const event of PLAYBACK_EVENT_TYPES) {
+  for (const event of args.events ?? PLAYBACK_EVENT_TYPES) {
     const listener = () => {
       const context = args.getContext();
       if (!context) {

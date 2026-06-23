@@ -247,6 +247,8 @@ function deserializeSession(fields: Record<string, string>): Session | null {
       videoShare: { windowStart: 0, count: 0 },
       playbackUpdate: { tokens: 0, lastRefillAt: 0 },
       syncRequest: { windowStart: 0, count: 0 },
+      chatMessage: { windowStart: 0, count: 0 },
+      danmakuMessage: { windowStart: 0, count: 0 },
       syncPing: { tokens: 0, lastRefillAt: 0 },
     },
   };
@@ -784,7 +786,6 @@ export async function createRedisRuntimeStore(
             await redis
               .multi()
               .hdel(roomMembersKey(keyPrefix, code), memberId)
-              .hdel(roomMemberTokensKey(keyPrefix, code), memberId)
               .exec();
           }
         })(),

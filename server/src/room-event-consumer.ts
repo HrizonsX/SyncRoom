@@ -159,6 +159,65 @@ export async function createRoomEventConsumer(options: {
         return;
       }
 
+      if (message.type === "room_chat_message") {
+        for (const session of localSessions) {
+          if (!isRoomEventRecipient(session, message.roomCode)) {
+            continue;
+          }
+          options.send(session.socket, {
+            type: "chat:message",
+            payload: {
+              roomCode: message.roomCode,
+              memberId: message.memberId,
+              displayName: message.displayName,
+              content: message.content,
+              timestamp: message.timestamp,
+            },
+          });
+        }
+
+        options.logEvent?.("room_event_consumed", {
+          roomCode: message.roomCode,
+          eventType: message.type,
+          sourceInstanceId: message.sourceInstanceId,
+          instanceId: options.instanceId ?? null,
+          localSessionCount: localSessions.length,
+          result: "ok",
+        });
+        return;
+      }
+
+      if (message.type === "room_danmaku_message") {
+        for (const session of localSessions) {
+          if (!isRoomEventRecipient(session, message.roomCode)) {
+            continue;
+          }
+          options.send(session.socket, {
+            type: "danmaku:message",
+            payload: {
+              roomCode: message.roomCode,
+              memberId: message.memberId,
+              displayName: message.displayName,
+              content: message.content,
+              videoTime: message.videoTime,
+              mode: message.mode,
+              color: message.color,
+              timestamp: message.timestamp,
+            },
+          });
+        }
+
+        options.logEvent?.("room_event_consumed", {
+          roomCode: message.roomCode,
+          eventType: message.type,
+          sourceInstanceId: message.sourceInstanceId,
+          instanceId: options.instanceId ?? null,
+          localSessionCount: localSessions.length,
+          result: "ok",
+        });
+        return;
+      }
+
       const state =
         message.type === "room_deleted"
           ? {

@@ -13,11 +13,53 @@ const CORE_EVENT_NAMES = [
   "rate_limited",
 ] as const;
 
+const PLAYBACK_STARTUP_FAILURE_STAGES = [
+  "manifest",
+  "segment",
+  "decode",
+  "network",
+  "unknown",
+] as const;
+
+const DIRECT_LINK_PLAYBACK_OUTCOMES = [
+  "success",
+  "failure",
+  "proxy_fallback",
+] as const;
+
+const MEMBER_PLAYER_BROWSER_LABELS = [
+  "chrome",
+  "edge",
+  "firefox",
+  "safari",
+  "other",
+  "unknown",
+] as const;
+
+const MEMBER_PLAYER_SYSTEM_LABELS = [
+  "windows",
+  "macos",
+  "linux",
+  "android",
+  "ios",
+  "other",
+  "unknown",
+] as const;
+
 export type MonitoredMessageType =
   | "video:share"
   | "playback:update"
   | "room:join"
   | "room:leave";
+
+export type PlaybackStartupFailureStage =
+  (typeof PLAYBACK_STARTUP_FAILURE_STAGES)[number];
+export type DirectLinkPlaybackOutcome =
+  (typeof DIRECT_LINK_PLAYBACK_OUTCOMES)[number];
+export type MemberPlayerBrowserLabel =
+  (typeof MEMBER_PLAYER_BROWSER_LABELS)[number];
+export type MemberPlayerSystemLabel =
+  (typeof MEMBER_PLAYER_SYSTEM_LABELS)[number];
 
 type LabelValues = Record<string, string>;
 
@@ -47,6 +89,28 @@ type CounterMetric = {
 export type MetricsCollector = {
   bindRuntimeStore: (runtimeStore: RuntimeStore) => void;
   recordEvent: (event: string) => void;
+  recordPlaybackStartupFailure: (input: {
+    roomCode?: string;
+    providerId?: string;
+    stage: PlaybackStartupFailureStage;
+  }) => void;
+  recordDirectLinkPlaybackOutcome: (input: {
+    roomCode: string;
+    providerId?: string;
+    outcome: DirectLinkPlaybackOutcome;
+  }) => void;
+  recordMemberPlayerError: (input: {
+    roomCode?: string;
+    providerId?: string;
+    stage: PlaybackStartupFailureStage;
+    browser?: MemberPlayerBrowserLabel;
+    system?: MemberPlayerSystemLabel;
+  }) => void;
+  recordProxyTraffic: (input: {
+    roomCode: string;
+    providerId?: string;
+    bytes: number;
+  }) => void;
   observeMessageHandlerDuration: (
     messageType: MonitoredMessageType,
     durationMs: number,
@@ -94,6 +158,33 @@ function formatMetricLine(
   labels: LabelValues = {},
 ): string {
   return `${name}${formatLabels(labels)} ${value}`;
+}
+
+function normalizeEnumLabel<T extends readonly string[]>(
+  value: string | undefined,
+  allowed: T,
+): T[number] | "unknown" {
+  return allowed.includes(value ?? "") ? (value as T[number]) : "unknown";
+}
+
+function normalizeProviderLabel(providerId: string | undefined): string {
+  if (!providerId) {
+    return "unknown";
+  }
+  const normalized = providerId.trim().toLowerCase();
+  return /^[a-z0-9_-]{1,32}$/.test(normalized) ? normalized : "unknown";
+}
+
+function normalizeRoomCodeLabel(roomCode: string | undefined): string {
+  if (!roomCode) {
+    return "unknown";
+  }
+  const normalized = roomCode.trim().toUpperCase();
+  return /^[A-Z0-9]{6}$/.test(normalized) ? normalized : "unknown";
+}
+
+function normalizeByteCount(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
 function ensureCounterSample(
@@ -149,6 +240,26 @@ export function createMetricsCollector(options: {
   };
   const roomEventPublishDroppedCounter: CounterMetric = {
     help: "Total room event publishes dropped after backpressure timeout, grouped by event type",
+    samples: new Map(),
+  };
+  const playbackStartupFailureCounter: CounterMetric = {
+    help: "Total web playback startup failures grouped by coarse stage and provider",
+    samples: new Map(),
+  };
+  const directLinkPlaybackCounter: CounterMetric = {
+    help: "Total direct-link playback outcomes for proxy=false shared=true selections",
+    samples: new Map(),
+  };
+  const memberPlayerErrorCounter: CounterMetric = {
+    help: "Total member player errors grouped by coarse browser, system, provider, and stage labels",
+    samples: new Map(),
+  };
+  const proxyTrafficBytesCounter: CounterMetric = {
+    help: "Total playback proxy response bytes aggregated by room and provider",
+    samples: new Map(),
+  };
+  const proxyRequestCounter: CounterMetric = {
+    help: "Total playback proxy segment requests aggregated by room and provider",
     samples: new Map(),
   };
   const messageDurationHistogram: HistogramMetric = {
@@ -223,6 +334,31 @@ export function createMetricsCollector(options: {
       roomEventPublishDroppedCounter.samples.values(),
     ).sort((a, b) =>
       (a.labels.event_type ?? "").localeCompare(b.labels.event_type ?? ""),
+    );
+    const playbackStartupFailureSamples = Array.from(
+      playbackStartupFailureCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const directLinkPlaybackSamples = Array.from(
+      directLinkPlaybackCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const memberPlayerErrorSamples = Array.from(
+      memberPlayerErrorCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const proxyTrafficBytesSamples = Array.from(
+      proxyTrafficBytesCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const proxyRequestSamples = Array.from(
+      proxyRequestCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
     );
     const histogramMetrics = [
       {
@@ -304,6 +440,51 @@ export function createMetricsCollector(options: {
           sample.labels,
         ),
       ),
+      "# HELP syncroom_playback_startup_failures_total Total web playback startup failures grouped by coarse stage and provider",
+      "# TYPE syncroom_playback_startup_failures_total counter",
+      ...playbackStartupFailureSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_playback_startup_failures_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_direct_link_playback_total Total direct-link playback outcomes for proxy=false shared=true selections",
+      "# TYPE syncroom_direct_link_playback_total counter",
+      ...directLinkPlaybackSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_direct_link_playback_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_member_player_errors_total Total member player errors grouped by coarse browser, system, provider, and stage labels",
+      "# TYPE syncroom_member_player_errors_total counter",
+      ...memberPlayerErrorSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_member_player_errors_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_proxy_traffic_bytes_total Total playback proxy response bytes aggregated by room and provider",
+      "# TYPE syncroom_proxy_traffic_bytes_total counter",
+      ...proxyTrafficBytesSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_proxy_traffic_bytes_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_proxy_requests_total Total playback proxy segment requests aggregated by room and provider",
+      "# TYPE syncroom_proxy_requests_total counter",
+      ...proxyRequestSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_proxy_requests_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
     ];
 
     for (const { name, metric } of histogramMetrics) {
@@ -347,6 +528,45 @@ export function createMetricsCollector(options: {
     },
     recordEvent(event) {
       incrementCounter(eventCounter, { event });
+    },
+    recordPlaybackStartupFailure(input) {
+      incrementCounter(playbackStartupFailureCounter, {
+        provider: normalizeProviderLabel(input.providerId),
+        stage: normalizeEnumLabel(input.stage, PLAYBACK_STARTUP_FAILURE_STAGES),
+      });
+    },
+    recordDirectLinkPlaybackOutcome(input) {
+      incrementCounter(directLinkPlaybackCounter, {
+        outcome: normalizeEnumLabel(
+          input.outcome,
+          DIRECT_LINK_PLAYBACK_OUTCOMES,
+        ),
+        provider: normalizeProviderLabel(input.providerId),
+        room_code: normalizeRoomCodeLabel(input.roomCode),
+      });
+    },
+    recordMemberPlayerError(input) {
+      incrementCounter(memberPlayerErrorCounter, {
+        browser: normalizeEnumLabel(
+          input.browser,
+          MEMBER_PLAYER_BROWSER_LABELS,
+        ),
+        provider: normalizeProviderLabel(input.providerId),
+        stage: normalizeEnumLabel(input.stage, PLAYBACK_STARTUP_FAILURE_STAGES),
+        system: normalizeEnumLabel(input.system, MEMBER_PLAYER_SYSTEM_LABELS),
+      });
+    },
+    recordProxyTraffic(input) {
+      const labels = {
+        provider: normalizeProviderLabel(input.providerId),
+        room_code: normalizeRoomCodeLabel(input.roomCode),
+      };
+      incrementCounter(
+        proxyTrafficBytesCounter,
+        labels,
+        normalizeByteCount(input.bytes),
+      );
+      incrementCounter(proxyRequestCounter, labels);
     },
     observeMessageHandlerDuration(messageType, durationMs) {
       observeHistogram(

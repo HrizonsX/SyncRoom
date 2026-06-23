@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { tryHandleAdminPanel } from "../admin-panel.js";
 import type { createSecurityPolicy } from "../security.js";
 import type { AdminUiConfig } from "../types.js";
+import type { PlaybackProxyRouter } from "../playback-proxy/router.js";
+import type { VideoProviderRouter } from "../providers/video-provider-router.js";
 
 export function createHttpRequestHandler(args: {
   adminRouter: {
@@ -11,9 +13,64 @@ export function createHttpRequestHandler(args: {
     ) => Promise<boolean>;
   };
   securityPolicy: ReturnType<typeof createSecurityPolicy>;
+  playbackProxyRouter?: PlaybackProxyRouter;
+  videoProviderRouter?: VideoProviderRouter;
   adminUiConfig?: AdminUiConfig;
   metricsEnabled?: boolean;
 }) {
+  function createCorsHeaders(origin: string | null): Record<string, string> {
+    const originCheck = args.securityPolicy.isOriginAllowed(origin);
+    if (!origin || !originCheck.ok) {
+      return {};
+    }
+    return {
+      "access-control-allow-origin": origin,
+      "access-control-allow-methods": "POST, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      vary: "origin",
+    };
+  }
+
+  function withResponseHeaders(
+    response: ServerResponse,
+    extraHeaders: Record<string, string>,
+  ): ServerResponse {
+    if (Object.keys(extraHeaders).length === 0) {
+      return response;
+    }
+    const originalWriteHead = response.writeHead.bind(
+      response,
+    ) as ServerResponse["writeHead"];
+    response.writeHead = ((
+      statusCode: number,
+      statusMessageOrHeaders?: unknown,
+      headers?: unknown,
+    ) => {
+      if (
+        typeof statusMessageOrHeaders === "object" &&
+        statusMessageOrHeaders !== null &&
+        !Array.isArray(statusMessageOrHeaders)
+      ) {
+        return originalWriteHead(statusCode, {
+          ...extraHeaders,
+          ...(statusMessageOrHeaders as Record<string, string>),
+        });
+      }
+      if (
+        typeof headers === "object" &&
+        headers !== null &&
+        !Array.isArray(headers)
+      ) {
+        return originalWriteHead(statusCode, statusMessageOrHeaders as string, {
+          ...extraHeaders,
+          ...(headers as Record<string, string>),
+        });
+      }
+      return originalWriteHead(statusCode, extraHeaders);
+    }) as ServerResponse["writeHead"];
+    return response;
+  }
+
   return async (
     request: IncomingMessage,
     response: ServerResponse,
@@ -79,6 +136,61 @@ export function createHttpRequestHandler(args: {
     }
 
     try {
+      if (args.playbackProxyRouter) {
+        const handled = await args.playbackProxyRouter.handle(
+          request,
+          response,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
+      if (args.videoProviderRouter) {
+        const isProviderApiRequest = pathname.startsWith("/api/providers/");
+        if (isProviderApiRequest) {
+          const originHeader = request.headers.origin;
+          const origin = typeof originHeader === "string" ? originHeader : null;
+          const originCheck = args.securityPolicy.isOriginAllowed(origin);
+          const corsHeaders = createCorsHeaders(origin);
+          if (request.method === "OPTIONS") {
+            response.writeHead(originCheck.ok ? 204 : 403, corsHeaders);
+            response.end();
+            return;
+          }
+          if (origin && !originCheck.ok) {
+            response.writeHead(403, {
+              "content-type": "application/json; charset=utf-8",
+              "cache-control": "no-store",
+            });
+            response.end(
+              JSON.stringify({
+                ok: false,
+                error: {
+                  code: "origin_not_allowed",
+                  message: "Origin is not allowed.",
+                },
+              }),
+            );
+            return;
+          }
+          const handled = await args.videoProviderRouter.handle(
+            request,
+            withResponseHeaders(response, corsHeaders),
+          );
+          if (handled) {
+            return;
+          }
+        }
+        const handled = await args.videoProviderRouter.handle(
+          request,
+          response,
+        );
+        if (handled) {
+          return;
+        }
+      }
+
       const handled =
         adminUiEnabled ||
         pathname === "/api/announcements" ||

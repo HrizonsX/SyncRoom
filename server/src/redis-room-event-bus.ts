@@ -5,7 +5,13 @@ import type { RoomEventBus, RoomEventBusMessage } from "./room-event-bus.js";
 
 const DEFAULT_ROOM_EVENT_CHANNEL = "bsp:room-events";
 
-function parseMessage(payload: string): RoomEventBusMessage | null {
+function isDanmakuMode(value: unknown): value is "scroll" | "top" | "bottom" {
+  return value === "scroll" || value === "top" || value === "bottom";
+}
+
+export function parseRedisRoomEventBusMessage(
+  payload: string,
+): RoomEventBusMessage | null {
   try {
     const parsed = JSON.parse(payload) as Partial<RoomEventBusMessage>;
     if (
@@ -25,7 +31,9 @@ function parseMessage(payload: string): RoomEventBusMessage | null {
       parsed.type !== "room_member_joined" &&
       parsed.type !== "room_member_left" &&
       parsed.type !== "room_deleted" &&
-      parsed.type !== "voice_state_updated"
+      parsed.type !== "voice_state_updated" &&
+      parsed.type !== "room_chat_message" &&
+      parsed.type !== "room_danmaku_message"
     ) {
       return null;
     }
@@ -68,6 +76,54 @@ function parseMessage(payload: string): RoomEventBusMessage | null {
         connected: parsed.connected,
         muted: parsed.muted,
         ...(parsed.speaking === undefined ? {} : { speaking: parsed.speaking }),
+      };
+    }
+
+    if (parsed.type === "room_chat_message") {
+      if (
+        typeof parsed.memberId !== "string" ||
+        typeof parsed.displayName !== "string" ||
+        typeof parsed.content !== "string" ||
+        typeof parsed.timestamp !== "number"
+      ) {
+        return null;
+      }
+      return {
+        type: parsed.type,
+        roomCode: parsed.roomCode,
+        sourceInstanceId: parsed.sourceInstanceId,
+        emittedAt: parsed.emittedAt,
+        memberId: parsed.memberId,
+        displayName: parsed.displayName,
+        content: parsed.content,
+        timestamp: parsed.timestamp,
+      };
+    }
+
+    if (parsed.type === "room_danmaku_message") {
+      if (
+        typeof parsed.memberId !== "string" ||
+        typeof parsed.displayName !== "string" ||
+        typeof parsed.content !== "string" ||
+        typeof parsed.videoTime !== "number" ||
+        !isDanmakuMode(parsed.mode) ||
+        typeof parsed.color !== "string" ||
+        typeof parsed.timestamp !== "number"
+      ) {
+        return null;
+      }
+      return {
+        type: parsed.type,
+        roomCode: parsed.roomCode,
+        sourceInstanceId: parsed.sourceInstanceId,
+        emittedAt: parsed.emittedAt,
+        memberId: parsed.memberId,
+        displayName: parsed.displayName,
+        content: parsed.content,
+        videoTime: parsed.videoTime,
+        mode: parsed.mode,
+        color: parsed.color,
+        timestamp: parsed.timestamp,
       };
     }
 
@@ -168,7 +224,7 @@ export async function createRedisRoomEventBus(
           return;
         }
 
-        const message = parseMessage(payload);
+        const message = parseRedisRoomEventBusMessage(payload);
         if (!message) {
           options.onInvalidMessage?.(payload);
           return;

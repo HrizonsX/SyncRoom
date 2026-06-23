@@ -10,11 +10,14 @@ import type {
   SyncPongMessage,
   VoiceAccessGrantedMessage,
   ServerVoiceStateMessage,
+  ServerChatMessage,
+  ServerDanmakuMessage,
 } from "../types/server-message.js";
 import type {
   AnnouncementItem,
   AnnouncementState,
   PlaybackState,
+  RoomChatMessage,
   RoomMember,
   RoomState,
   SharedVideo,
@@ -22,9 +25,18 @@ import type {
 import {
   ANNOUNCEMENT_ID_MAX_LENGTH,
   ANNOUNCEMENT_TEXT_MAX_LENGTH,
+  CHAT_MESSAGE_MAX_LENGTH,
+  DANMAKU_MESSAGE_MAX_LENGTH,
+  DANMAKU_MODES,
   MAX_ANNOUNCEMENT_ITEMS,
+  ROOM_CHAT_HISTORY_LIMIT,
+  ROOM_CHAT_MESSAGE_KINDS,
+  ROOM_MEMBER_PERMISSION_NAMES,
+  ROOM_SYSTEM_CHAT_EVENT_TYPES,
   isPlaybackSyncIntent,
 } from "../types/domain.js";
+import { isErrorCode } from "../types/common.js";
+import { isProviderPlaybackDescriptor } from "./domain.js";
 import {
   isActorId,
   isFiniteNumber,
@@ -40,7 +52,7 @@ import {
 
 const DISPLAY_NAME_MAX_LENGTH = 32;
 const TITLE_MAX_LENGTH = 128;
-const URL_MAX_LENGTH = 512;
+const URL_MAX_LENGTH = 2048;
 const LIVEKIT_TOKEN_MIN_LENGTH = 16;
 const LIVEKIT_TOKEN_MAX_LENGTH = 4096;
 const LIVEKIT_ROOM_NAME_MAX_LENGTH = 128;
@@ -55,7 +67,13 @@ const CLIENT_MESSAGE_TYPES = new Set([
   "sync:ping",
   "voice:access",
   "voice:state",
+  "chat:message",
+  "danmaku:message",
+  "room:member-permission:set",
+  "room:member:kick",
+  "room:host:transfer",
 ]);
+const DANMAKU_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 function isBoundedString(value: unknown, maxLength: number): value is string {
   return isString(value) && value.length <= maxLength;
@@ -66,6 +84,21 @@ function isNonEmptyBoundedString(
   maxLength: number,
 ): value is string {
   return isBoundedString(value, maxLength) && value.trim().length > 0;
+}
+
+function isOneOf<T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+): value is T[number] {
+  return typeof value === "string" && allowed.includes(value);
+}
+
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isDanmakuColor(value: unknown): value is string {
+  return typeof value === "string" && DANMAKU_COLOR_PATTERN.test(value);
 }
 
 function isLiveKitUrl(value: unknown): value is string {
@@ -99,7 +132,9 @@ function isSharedVideo(value: unknown): value is SharedVideo {
     (value.sharedByMemberId === undefined ||
       isActorId(value.sharedByMemberId)) &&
     (value.sharedByDisplayName === undefined ||
-      isBoundedString(value.sharedByDisplayName, DISPLAY_NAME_MAX_LENGTH))
+      isBoundedString(value.sharedByDisplayName, DISPLAY_NAME_MAX_LENGTH)) &&
+    (value.provider === undefined ||
+      isProviderPlaybackDescriptor(value.provider))
   );
 }
 
@@ -122,10 +157,42 @@ function isPlaybackState(value: unknown): value is PlaybackState {
 }
 
 export function isRoomMember(value: unknown): value is RoomMember {
+  const permissions = isRecord(value) ? value.permissions : undefined;
   return (
     isRecord(value) &&
     isActorId(value.id) &&
-    isBoundedString(value.name, DISPLAY_NAME_MAX_LENGTH)
+    isBoundedString(value.name, DISPLAY_NAME_MAX_LENGTH) &&
+    (permissions === undefined ||
+      (isRecord(permissions) &&
+        ROOM_MEMBER_PERMISSION_NAMES.every(
+          (permission) => typeof permissions[permission] === "boolean",
+        )))
+  );
+}
+
+function isRoomChatMessage(value: unknown): value is RoomChatMessage {
+  return (
+    isRecord(value) &&
+    (value.kind === undefined ||
+      isOneOf(value.kind, ROOM_CHAT_MESSAGE_KINDS)) &&
+    (value.systemEventType === undefined ||
+      isOneOf(value.systemEventType, ROOM_SYSTEM_CHAT_EVENT_TYPES)) &&
+    (value.kind !== "system" || value.systemEventType !== undefined) &&
+    isActorId(value.memberId) &&
+    isBoundedString(value.displayName, DISPLAY_NAME_MAX_LENGTH) &&
+    isNonEmptyBoundedString(value.content, CHAT_MESSAGE_MAX_LENGTH) &&
+    isFiniteNumber(value.timestamp)
+  );
+}
+
+function isOptionalRoomChatHistory(
+  value: unknown,
+): value is RoomChatMessage[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= ROOM_CHAT_HISTORY_LIMIT &&
+      value.every((message) => isRoomChatMessage(message)))
   );
 }
 
@@ -133,10 +200,12 @@ export function isRoomState(value: unknown): value is RoomState {
   return (
     isRecord(value) &&
     isRoomCode(value.roomCode) &&
+    (value.hostMemberId === undefined || isActorId(value.hostMemberId)) &&
     (value.sharedVideo === null || isSharedVideo(value.sharedVideo)) &&
     (value.playback === null || isPlaybackState(value.playback)) &&
     Array.isArray(value.members) &&
-    value.members.every((member) => isRoomMember(member))
+    value.members.every((member) => isRoomMember(member)) &&
+    isOptionalRoomChatHistory(value.chatMessages)
   );
 }
 
@@ -200,7 +269,7 @@ export function isErrorMessage(value: unknown): value is ErrorMessage {
     isRecord(value) &&
     value.type === "error" &&
     isRecord(value.payload) &&
-    isBoundedString(value.payload.code, 32) &&
+    isErrorCode(value.payload.code) &&
     isBoundedString(value.payload.message, TITLE_MAX_LENGTH) &&
     (value.payload.messageType === undefined ||
       (isString(value.payload.messageType) &&
@@ -280,6 +349,39 @@ function isAnnouncementUpdateMessage(
   );
 }
 
+function isServerChatMessage(value: unknown): value is ServerChatMessage {
+  return (
+    isRecord(value) &&
+    value.type === "chat:message" &&
+    isRecord(value.payload) &&
+    isRoomCode(value.payload.roomCode) &&
+    isActorId(value.payload.memberId) &&
+    isBoundedString(value.payload.displayName, DISPLAY_NAME_MAX_LENGTH) &&
+    isBoundedString(value.payload.content, CHAT_MESSAGE_MAX_LENGTH) &&
+    value.payload.content.trim().length > 0 &&
+    isFiniteNumber(value.payload.timestamp)
+  );
+}
+
+function isServerDanmakuMessage(value: unknown): value is ServerDanmakuMessage {
+  return (
+    isRecord(value) &&
+    value.type === "danmaku:message" &&
+    isRecord(value.payload) &&
+    isRoomCode(value.payload.roomCode) &&
+    isActorId(value.payload.memberId) &&
+    isBoundedString(value.payload.displayName, DISPLAY_NAME_MAX_LENGTH) &&
+    isNonEmptyBoundedString(
+      value.payload.content,
+      DANMAKU_MESSAGE_MAX_LENGTH,
+    ) &&
+    isNonNegativeFiniteNumber(value.payload.videoTime) &&
+    isOneOf(value.payload.mode, DANMAKU_MODES) &&
+    isDanmakuColor(value.payload.color) &&
+    isFiniteNumber(value.payload.timestamp)
+  );
+}
+
 export function isServerMessage(value: unknown): value is ServerMessage {
   if (!isRecord(value) || !isString(value.type)) {
     return false;
@@ -306,6 +408,10 @@ export function isServerMessage(value: unknown): value is ServerMessage {
       return isVoiceStateMessage(value);
     case "announcement:update":
       return isAnnouncementUpdateMessage(value);
+    case "chat:message":
+      return isServerChatMessage(value);
+    case "danmaku:message":
+      return isServerDanmakuMessage(value);
     default:
       return false;
   }

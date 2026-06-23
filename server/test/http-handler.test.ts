@@ -149,6 +149,134 @@ test("http handler reports websocketAllowed without leaking reason or CORS to di
   assert.equal(adminCalls.length, 0);
 });
 
+test("http handler routes provider APIs before admin and generic fallback", async () => {
+  const adminCalls: Array<{ url?: string; method?: string }> = [];
+  const providerCalls: Array<{ url?: string; method?: string }> = [];
+  const handler = createHttpRequestHandler({
+    adminRouter: {
+      handle: async (request) => {
+        adminCalls.push({
+          url: request.url,
+          method: request.method,
+        });
+        return false;
+      },
+    },
+    securityPolicy: createSecurityPolicy({
+      allowedOrigins: ["https://room.example.test"],
+      allowMissingOriginInDev: false,
+      connectionAttemptsPerMinute: 10,
+      maxConnectionsPerIp: 5,
+      maxMembersPerRoom: 8,
+      trustedProxyAddresses: [],
+      rateLimits: {
+        roomCreatePerMinute: 5,
+        roomJoinPerMinute: 10,
+        videoSharePerMinute: 20,
+        playbackUpdatePerSecond: 30,
+        profileUpdatePerMinute: 20,
+        syncPingPerMinute: 30,
+        syncPingBurst: 5,
+      },
+    }),
+    videoProviderRouter: {
+      handle: async (request, response) => {
+        providerCalls.push({
+          url: request.url,
+          method: request.method,
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true, provider: true }));
+        return true;
+      },
+    },
+  });
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      url: "/api/providers/bilibili/auth/status",
+      method: "POST",
+      origin: "https://room.example.test",
+    }),
+    response,
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(
+    response.headers["access-control-allow-origin"],
+    "https://room.example.test",
+  );
+  assert.equal(response.headers["vary"], "origin");
+  assert.deepEqual(JSON.parse(response.body), { ok: true, provider: true });
+  assert.deepEqual(providerCalls, [
+    { url: "/api/providers/bilibili/auth/status", method: "POST" },
+  ]);
+  assert.equal(adminCalls.length, 0);
+});
+
+test("http handler answers provider API CORS preflight from allowed origins", async () => {
+  const providerCalls: Array<{ url?: string; method?: string }> = [];
+  const handler = createHttpRequestHandler({
+    adminRouter: {
+      handle: async () => false,
+    },
+    securityPolicy: createSecurityPolicy({
+      allowedOrigins: ["https://room.example.test"],
+      allowMissingOriginInDev: false,
+      connectionAttemptsPerMinute: 10,
+      maxConnectionsPerIp: 5,
+      maxMembersPerRoom: 8,
+      trustedProxyAddresses: [],
+      rateLimits: {
+        roomCreatePerMinute: 5,
+        roomJoinPerMinute: 10,
+        videoSharePerMinute: 20,
+        playbackUpdatePerSecond: 30,
+        profileUpdatePerMinute: 20,
+        syncPingPerMinute: 30,
+        syncPingBurst: 5,
+      },
+    }),
+    videoProviderRouter: {
+      handle: async (request) => {
+        providerCalls.push({
+          url: request.url,
+          method: request.method,
+        });
+        return true;
+      },
+    },
+  });
+
+  const response = createResponse();
+  await handler(
+    createRequest({
+      url: "/api/providers/bilibili/auth/start",
+      method: "OPTIONS",
+      origin: "https://room.example.test",
+    }),
+    response,
+  );
+
+  assert.equal(response.statusCode, 204);
+  assert.equal(
+    response.headers["access-control-allow-origin"],
+    "https://room.example.test",
+  );
+  assert.equal(
+    response.headers["access-control-allow-methods"],
+    "POST, OPTIONS",
+  );
+  assert.equal(
+    response.headers["access-control-allow-headers"],
+    "content-type",
+  );
+  assert.equal(response.headers["vary"], "origin");
+  assert.equal(response.body, "");
+  assert.equal(providerCalls.length, 0);
+});
+
 test("http handler omits CORS headers when origin is missing", () => {
   const { handler } = createHandler();
 

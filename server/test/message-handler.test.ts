@@ -14,6 +14,8 @@ const CONFIG = {
     playbackUpdatePerSecond: 8,
     playbackUpdateBurst: 12,
     syncRequestPer10Seconds: 6,
+    chatMessagePer5Seconds: 1,
+    danmakuMessagePer5Seconds: 8,
     syncPingPerSecond: 1,
     syncPingBurst: 2,
   },
@@ -96,6 +98,141 @@ test("message handler rejects detached sessions before processing", async () => 
     ),
     /Detached session cannot process client message/,
   );
+});
+
+test("message handler records low-cardinality playback reports without broadcasting", async () => {
+  const session = createSession("web-member", {
+    roomCode: "ROOM01",
+    memberId: "member-1",
+    memberToken: "valid-member-token-123",
+  });
+  const startupFailures: unknown[] = [];
+  const directLinkOutcomes: unknown[] = [];
+  const playerErrors: unknown[] = [];
+  let publishedCount = 0;
+  const errors: unknown[] = [];
+
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        return { room: null };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession(receivedSession, memberToken, messageType) {
+        assert.equal(receivedSession.id, session.id);
+        assert.equal(memberToken, "valid-member-token-123");
+        assert.equal(messageType, "playback:report");
+        return {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "Alice" }],
+        };
+      },
+    },
+    logEvent() {},
+    send() {},
+    sendError(_socket, code, message) {
+      errors.push({ code, message });
+    },
+    async publishRoomEvent() {
+      publishedCount += 1;
+    },
+    instanceId: "node-a",
+    metricsCollector: {
+      observeMessageHandlerDuration() {},
+      recordRoomEventPublishDropped() {},
+      recordPlaybackStartupFailure(input: unknown) {
+        startupFailures.push(input);
+      },
+      recordDirectLinkPlaybackOutcome(input: unknown) {
+        directLinkOutcomes.push(input);
+      },
+      recordMemberPlayerError(input: unknown) {
+        playerErrors.push(input);
+      },
+    },
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "startup_failure",
+      providerId: "bilibili",
+      stage: "manifest",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "direct_link_success",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "direct_link_failure",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "proxy_fallback",
+      providerId: "bilibili",
+    },
+  });
+  await handler.handleClientMessage(session, {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "player_error",
+      providerId: "bilibili",
+      stage: "decode",
+      browser: "chrome",
+      system: "windows",
+    },
+  });
+
+  assert.deepEqual(startupFailures, [
+    { roomCode: "ROOM01", providerId: "bilibili", stage: "manifest" },
+  ]);
+  assert.deepEqual(directLinkOutcomes, [
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "success" },
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "failure" },
+    { roomCode: "ROOM01", providerId: "bilibili", outcome: "proxy_fallback" },
+  ]);
+  assert.deepEqual(playerErrors, [
+    {
+      roomCode: "ROOM01",
+      providerId: "bilibili",
+      stage: "decode",
+      browser: "chrome",
+      system: "windows",
+    },
+  ]);
+  assert.equal(publishedCount, 0);
+  assert.deepEqual(errors, []);
 });
 
 test("message handler includes retry hints when sync request is rate limited", async () => {
@@ -671,6 +808,179 @@ test("message handler skips member-left publish when leave did not remove the me
   });
 
   assert.deepEqual(published, []);
+});
+
+test("message handler publishes room state when explicit owner leave transfers host", async () => {
+  const published: string[] = [];
+  const session = createSession("owner-session", {
+    roomCode: "ROOM01",
+    memberId: "owner",
+    memberToken: "member-token-1",
+    displayName: "Alice",
+  });
+
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession(currentSession) {
+        currentSession.roomCode = null;
+        currentSession.memberId = null;
+        currentSession.memberToken = null;
+        return {
+          room: { code: "ROOM01" },
+          memberRemoved: true,
+          hostTransferred: true,
+        };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession() {
+        throw new Error("unreachable");
+      },
+    },
+    logEvent() {},
+    send() {},
+    sendError() {
+      throw new Error("sendError should not be called");
+    },
+    async publishRoomEvent(message) {
+      published.push(message.type);
+    },
+    instanceId: "node-a",
+  });
+
+  await handler.handleClientMessage(session, {
+    type: "room:leave",
+    payload: { memberToken: "member-token-1" },
+  });
+
+  assert.deepEqual(published, ["room_member_left", "room_state_updated"]);
+});
+
+test("message handler routes host member management messages", async () => {
+  const published: string[] = [];
+  const calls: string[] = [];
+  const errors: string[] = [];
+  const host = createSession("host-session", {
+    roomCode: "ROOM01",
+    memberId: "host",
+    memberToken: "host-token-1",
+    displayName: "Alice",
+  });
+  const target = createSession("target-session", {
+    roomCode: "ROOM01",
+    memberId: "target",
+    memberToken: "target-token-1",
+    displayName: "Bob",
+  });
+
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async setRoomMemberPermissionForSession(
+        _session,
+        _memberToken,
+        targetMemberId,
+        permission,
+        allowed,
+      ) {
+        calls.push(`permission:${targetMemberId}:${permission}:${allowed}`);
+        return { room: { code: "ROOM01" } };
+      },
+      async kickRoomMemberForSession(_session, _memberToken, targetMemberId) {
+        calls.push(`kick:${targetMemberId}`);
+        return {
+          room: { code: "ROOM01" },
+          targetSession: target,
+          targetMemberId,
+          targetMemberToken: "target-token-1",
+        };
+      },
+      async transferRoomHostForSession(_session, _memberToken, targetMemberId) {
+        calls.push(`transfer:${targetMemberId}`);
+        return { room: { code: "ROOM01" } };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession() {
+        throw new Error("unreachable");
+      },
+    },
+    logEvent() {},
+    send() {},
+    sendError(_socket, code) {
+      errors.push(code);
+    },
+    async publishRoomEvent(message) {
+      published.push(message.type);
+    },
+    instanceId: "node-a",
+  });
+
+  await handler.handleClientMessage(host, {
+    type: "room:member-permission:set",
+    payload: {
+      memberToken: "host-token-1",
+      targetMemberId: "target",
+      permission: "chat",
+      allowed: false,
+    },
+  });
+  await handler.handleClientMessage(host, {
+    type: "room:member:kick",
+    payload: {
+      memberToken: "host-token-1",
+      targetMemberId: "target",
+    },
+  });
+  await handler.handleClientMessage(host, {
+    type: "room:host:transfer",
+    payload: {
+      memberToken: "host-token-1",
+      targetMemberId: "target",
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "permission:target:chat:false",
+    "kick:target",
+    "transfer:target",
+  ]);
+  assert.deepEqual(errors, ["member_kicked"]);
+  assert.deepEqual(published, [
+    "room_state_updated",
+    "room_member_left",
+    "room_state_updated",
+  ]);
 });
 
 test("message handler records monitored duration metrics for critical room paths", async () => {

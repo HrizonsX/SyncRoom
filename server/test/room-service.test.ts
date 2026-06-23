@@ -60,6 +60,53 @@ function createGenericSharedVideo(url = "https://example.com/watch?v=abc") {
   } satisfies SharedVideo;
 }
 
+function createProviderSharedVideo(
+  overrides: {
+    itemId?: string;
+    itemTitle?: string;
+    sourceId?: string;
+    candidateId?: string;
+    policy?: { proxy: boolean; shared: boolean };
+  } = {},
+): SharedVideo {
+  const itemId = overrides.itemId ?? "BV1xx411c7mD:cid-1";
+  const itemTitle = overrides.itemTitle ?? "Part 1";
+  const sourceId = overrides.sourceId ?? "BV1xx411c7mD";
+  const candidateId = overrides.candidateId ?? "dash-avc-1080p";
+  return {
+    videoId: "BV1xx411c7mD",
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: itemTitle,
+    provider: {
+      providerId: "bilibili",
+      sourceId,
+      sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+      title: itemTitle,
+      item: {
+        itemId,
+        title: itemTitle,
+        kind: "part",
+        bvid: "BV1xx411c7mD",
+        cid: itemId.split(":").at(-1),
+      },
+      policy: overrides.policy ?? {
+        proxy: false,
+        shared: true,
+      },
+      candidates: [
+        {
+          id: candidateId,
+          sourceType: "mpd",
+          url: "https://cdn.example.test/video.m4s?SESSDATA=secret",
+          qualityLabel: "1080P",
+          default: true,
+        },
+      ],
+      defaultCandidateId: candidateId,
+    },
+  };
+}
+
 function createPlayback(
   actorId: string,
   overrides: Partial<PlaybackState> = {},
@@ -136,6 +183,330 @@ test("room service keeps empty rooms for TTL and allows rejoin before expiry", a
   );
   assert.equal(joined.room.expiresAt, null);
   assert.ok(joiner.memberToken);
+});
+
+test("room service restores owner identity when the owner refreshes during empty-room TTL", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: {
+      ...getDefaultPersistenceConfig(),
+      emptyRoomTtlMs: 5_000,
+    },
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "OWNER1",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const ownerMemberId = owner.memberId;
+  const ownerMemberToken = created.memberToken;
+  const sharedVideo = {
+    videoId: "BV1xx411c7mD",
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: "Shared Video",
+  };
+  const sharedPlayback = {
+    url: sharedVideo.url,
+    currentTime: 42,
+    playState: "playing" as const,
+    playbackRate: 1,
+    updatedAt: currentTime,
+    serverTime: currentTime,
+    actorId: ownerMemberId!,
+    seq: 1,
+  };
+
+  await service.shareVideoForSession(
+    owner,
+    ownerMemberToken,
+    sharedVideo,
+    sharedPlayback,
+  );
+
+  await service.leaveRoomForSession(owner);
+
+  currentTime = 3_000;
+  const refreshedOwner = createSession("owner-refresh");
+  const rejoined = await service.joinRoomForSession(
+    refreshedOwner,
+    created.room.code,
+    created.room.joinToken,
+    "Alice",
+    ownerMemberToken,
+  );
+  const state = await service.getRoomStateForSession(
+    refreshedOwner,
+    rejoined.memberToken,
+    "sync:request",
+  );
+
+  assert.equal(rejoined.memberToken, ownerMemberToken);
+  assert.equal(refreshedOwner.memberId, ownerMemberId);
+  assert.equal(state.hostMemberId, ownerMemberId);
+  assert.deepEqual(state.sharedVideo, {
+    ...sharedVideo,
+    sharedByMemberId: ownerMemberId,
+    sharedByDisplayName: "Alice",
+  });
+  assert.deepEqual(state.playback, {
+    ...sharedPlayback,
+    serverTime: 1_000,
+    syncIntent: undefined,
+  });
+  assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
+});
+
+test("room service keeps chat history in room state for refreshed and new members", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "CHAT01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  currentTime = 1_200;
+
+  await service.appendChatMessageForSession(owner, created.memberToken, {
+    memberId: owner.memberId ?? owner.id,
+    displayName: "Alice",
+    content: "hello",
+    timestamp: currentTime,
+  });
+  currentTime = 1_400;
+  await service.appendSystemChatMessageForRoom(created.room.code, {
+    kind: "system",
+    systemEventType: "member_joined",
+    memberId: owner.memberId ?? owner.id,
+    displayName: "Alice",
+    content: "Alice joined room",
+    timestamp: currentTime,
+  });
+
+  const joiner = createSession("joiner");
+  const joined = await service.joinRoomForSession(
+    joiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const state = await service.getRoomStateForSession(
+    joiner,
+    joined.memberToken,
+    "sync:request",
+  );
+
+  assert.deepEqual(state.chatMessages, [
+    {
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "hello",
+      timestamp: 1_200,
+    },
+    {
+      kind: "system",
+      systemEventType: "member_joined",
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "Alice joined room",
+      timestamp: 1_400,
+    },
+  ]);
+});
+
+test("room service transfers host to next joined member on explicit owner leave", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "HOST01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const firstJoiner = createSession("first-joiner");
+  const firstJoined = await service.joinRoomForSession(
+    firstJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const secondJoiner = createSession("second-joiner");
+  await service.joinRoomForSession(
+    secondJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Carol",
+  );
+
+  currentTime = 2_000;
+  const result = await service.leaveRoomForSession(owner, {
+    reason: "explicit",
+  });
+  const state = await service.getRoomStateForSession(
+    firstJoiner,
+    firstJoined.memberToken,
+    "sync:request",
+  );
+  const persisted = await roomStore.getRoom(created.room.code);
+
+  assert.equal(result.hostTransferred, true);
+  assert.equal(state.hostMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerDisplayName, "Bob");
+  assert.deepEqual(
+    state.members.map((member) => member.id),
+    [firstJoiner.memberId, secondJoiner.memberId],
+  );
+});
+
+test("room service enforces host-managed member permissions", async () => {
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore(),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => "PERM01",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  await service.setRoomMemberPermissionForSession(
+    owner,
+    created.memberToken,
+    guest.memberId!,
+    "chat",
+    false,
+  );
+  const state = await service.getRoomStateForSession(
+    owner,
+    created.memberToken,
+    "sync:request",
+  );
+  const guestState = state.members.find(
+    (member) => member.id === guest.memberId,
+  );
+
+  assert.deepEqual(guestState?.permissions, {
+    voice: true,
+    playbackControl: true,
+    chat: false,
+    danmaku: true,
+  });
+  await assert.rejects(
+    () =>
+      service.getRoomStateForSession(guest, joined.memberToken, "chat:message"),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied" &&
+      error.reason === "member_permission_denied",
+  );
+  await service.getRoomStateForSession(
+    guest,
+    joined.memberToken,
+    "danmaku:message",
+  );
+});
+
+test("room service limits member management to the current host", async () => {
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore(),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    createRoomCode: () => "HOST02",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  await assert.rejects(
+    () =>
+      service.setRoomMemberPermissionForSession(
+        guest,
+        joined.memberToken,
+        owner.memberId!,
+        "chat",
+        false,
+      ),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied",
+  );
+
+  const transferred = await service.transferRoomHostForSession(
+    owner,
+    created.memberToken,
+    guest.memberId!,
+  );
+
+  assert.equal(transferred.room.ownerMemberId, guest.memberId);
+  await assert.rejects(
+    () =>
+      service.setRoomMemberPermissionForSession(
+        owner,
+        created.memberToken,
+        guest.memberId!,
+        "chat",
+        false,
+      ),
+    (error: unknown) =>
+      error instanceof RoomServiceError &&
+      error.code === "member_permission_denied",
+  );
 });
 
 test("room service validates voice access with existing room member tokens", async () => {
@@ -739,10 +1110,10 @@ test("room service skips leave recovery when socket is already closed", async ()
   assert.equal(owner.roomCode, null);
   assert.equal(owner.memberId, null);
   assert.equal(owner.memberToken, null);
-  // With the last member removed, the in-memory room entry should stay
-  // deleted — restoreLeaveState must not resurrect it and leave a zombie
-  // member that `unregisterSession` cannot clean up.
-  assert.equal(activeRooms.getRoom(created.room.code), null);
+  // With the last member removed, restoreLeaveState must not resurrect a
+  // zombie online member that `unregisterSession` cannot clean up. The token
+  // binding may stay through the empty-room TTL for refresh rejoin.
+  assert.equal(activeRooms.getRoom(created.room.code)?.members.size ?? 0, 0);
   assert.ok(!events.some((entry) => entry.event === "room_leave_recovered"));
   assert.ok(
     events.some(
@@ -3242,6 +3613,110 @@ test("shareVideoForSession rejects client-supplied sharedByDisplayName", async (
     "Alice",
     "server must overwrite client-supplied sharedByDisplayName with session.displayName",
   );
+});
+
+test("shareVideoForSession emits safe host provider audit events", async () => {
+  const currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const events: { event: string; data: Record<string, unknown> }[] = [];
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(() => currentTime),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent(event, data) {
+      events.push({ event, data });
+    },
+    now: () => currentTime,
+    createRoomCode: () => "ROOM22",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo(),
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo({
+      policy: { proxy: true, shared: true },
+    }),
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createProviderSharedVideo({
+      itemId: "BV1xx411c7mD:cid-2",
+      itemTitle: "Part 2",
+      candidateId: "dash-avc-720p",
+      policy: { proxy: true, shared: true },
+    }),
+  );
+
+  const hostAuditEvents = events.filter((item) =>
+    item.event.startsWith("host_"),
+  );
+  assert.deepEqual(
+    hostAuditEvents.map((item) => item.event),
+    [
+      "host_video_selected",
+      "host_video_selected",
+      "host_playback_policy_changed",
+      "host_video_selected",
+      "host_playback_source_changed",
+    ],
+  );
+  assert.deepEqual(hostAuditEvents[0]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    sourceId: "BV1xx411c7mD",
+    itemId: "BV1xx411c7mD:cid-1",
+    itemKind: "part",
+    itemTitle: "Part 1",
+    defaultCandidateId: "dash-avc-1080p",
+    sourceType: "mpd",
+    policy: { proxy: false, shared: true },
+    result: "ok",
+  });
+  assert.deepEqual(hostAuditEvents[2]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    previousPolicy: { proxy: false, shared: true },
+    nextPolicy: { proxy: true, shared: true },
+    result: "ok",
+  });
+  assert.deepEqual(hostAuditEvents[4]?.data, {
+    roomCode: "ROOM22",
+    actorId: owner.memberId,
+    actorDisplayName: "Alice",
+    providerId: "bilibili",
+    previousSource: {
+      sourceId: "BV1xx411c7mD",
+      itemId: "BV1xx411c7mD:cid-1",
+      defaultCandidateId: "dash-avc-1080p",
+      sourceType: "mpd",
+    },
+    nextSource: {
+      sourceId: "BV1xx411c7mD",
+      itemId: "BV1xx411c7mD:cid-2",
+      defaultCandidateId: "dash-avc-720p",
+      sourceType: "mpd",
+    },
+    result: "ok",
+  });
+  const serializedAudit = JSON.stringify(hostAuditEvents);
+  assert.doesNotMatch(serializedAudit, /SESSDATA|Cookie|https:\/\/cdn/i);
 });
 
 test("playback_update_applied skips steady timeupdate ticks but logs user actions", async () => {

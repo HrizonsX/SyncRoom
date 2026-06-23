@@ -160,6 +160,7 @@ test("runtime config maps JSON file values through existing loaders", async () =
           trustedProxyAddresses: ["127.0.0.1", "198.51.100.7"],
           rateLimits: {
             syncPingBurst: 5,
+            danmakuMessagePer5Seconds: 12,
           },
         },
         persistence: {
@@ -202,6 +203,10 @@ test("runtime config maps JSON file values through existing loaders", async () =
       "198.51.100.7",
     ]);
     assert.equal(config.securityConfig.rateLimits.syncPingBurst, 5);
+    assert.equal(
+      config.securityConfig.rateLimits.danmakuMessagePer5Seconds,
+      12,
+    );
     assert.equal(config.persistenceConfig.provider, "redis");
     assert.equal(config.persistenceConfig.runtimeStoreProvider, "redis");
     assert.equal(config.persistenceConfig.roomEventBusProvider, "redis");

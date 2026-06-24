@@ -89,6 +89,7 @@ type StoredProxyResource =
       roomCode: string;
       providerId: string;
       expiresAt: number;
+      ttlMs: number;
       refreshM3u8Url?: string;
       refreshPublicBaseUrl?: string;
       refreshUpstreamHeaders?: Record<string, string>;
@@ -102,6 +103,7 @@ type StoredProxyResource =
       upstreamUrls: string[];
       upstreamHeaders?: Record<string, string>;
       expiresAt: number;
+      ttlMs: number;
     };
 
 const DEFAULT_PROXY_RESOURCE_TTL_MS = 10 * 60_000;
@@ -137,6 +139,13 @@ export class PlaybackProxyError extends Error {
 
 function resourceKey(kind: PlaybackProxyResourceKind, resourceId: string) {
   return `${kind}:${resourceId}`;
+}
+
+function refreshResourceExpiry(
+  resource: StoredProxyResource,
+  currentTime: number,
+): void {
+  resource.expiresAt = currentTime + resource.ttlMs;
 }
 
 function normalizePublicBaseUrl(publicBaseUrl: string | undefined): string {
@@ -317,6 +326,7 @@ export function createPlaybackProxyService(
     providerId: string,
     upstreamUrls: string[],
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     stableMappings?: Map<string, string>,
   ): string {
@@ -326,11 +336,15 @@ export function createPlaybackProxyService(
     const existingSegmentId = stableMappingKey
       ? stableMappings?.get(stableMappingKey)
       : undefined;
-    if (
-      existingSegmentId &&
-      resources.has(resourceKey("segment", existingSegmentId))
-    ) {
-      return existingSegmentId;
+    if (existingSegmentId) {
+      const existing = resources.get(resourceKey("segment", existingSegmentId));
+      if (existing?.kind === "segment") {
+        existing.expiresAt = expiresAt;
+        existing.ttlMs = ttlMs;
+        existing.upstreamUrls = upstreamUrls;
+        existing.upstreamHeaders = upstreamHeaders;
+        return existingSegmentId;
+      }
     }
 
     const segmentId = createResourceId();
@@ -341,6 +355,7 @@ export function createPlaybackProxyService(
       upstreamUrls,
       upstreamHeaders,
       expiresAt,
+      ttlMs,
     });
     if (stableMappings && stableMappingKey) {
       stableMappings.set(stableMappingKey, segmentId);
@@ -368,6 +383,7 @@ export function createPlaybackProxyService(
     providerId: string,
     upstreamUrl: string,
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     stableSegmentMappings?: Map<string, string>,
     stablePlaylistMappings?: Map<string, string>,
@@ -380,11 +396,24 @@ export function createPlaybackProxyService(
     const existingManifestId = stableMappingKey
       ? stablePlaylistMappings?.get(stableMappingKey)
       : undefined;
-    if (
-      existingManifestId &&
-      resources.has(resourceKey("manifest", existingManifestId))
-    ) {
-      return existingManifestId;
+    if (existingManifestId) {
+      const existing = resources.get(
+        resourceKey("manifest", existingManifestId),
+      );
+      if (existing?.kind === "manifest") {
+        existing.expiresAt = expiresAt;
+        existing.ttlMs = ttlMs;
+        existing.refreshM3u8Url = manifestUrl;
+        existing.refreshPublicBaseUrl = resourcePublicBaseUrl;
+        existing.m3u8SegmentMappings = stableSegmentMappings;
+        existing.m3u8PlaylistMappings = stablePlaylistMappings;
+        if (upstreamHeaders) {
+          existing.refreshUpstreamHeaders = upstreamHeaders;
+        } else {
+          delete existing.refreshUpstreamHeaders;
+        }
+        return existingManifestId;
+      }
     }
 
     const manifestId = createResourceId();
@@ -393,6 +422,7 @@ export function createPlaybackProxyService(
       roomCode,
       providerId,
       expiresAt,
+      ttlMs,
       contentType: "application/vnd.apple.mpegurl",
       body: "",
       refreshM3u8Url: manifestUrl,
@@ -414,6 +444,7 @@ export function createPlaybackProxyService(
     manifest: string,
     manifestUrl: string | undefined,
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     upstreamUrlAlternates: Record<string, string[]> | undefined,
   ): string {
@@ -429,6 +460,7 @@ export function createPlaybackProxyService(
           providerId,
           createUpstreamUrls(upstreamUrl, upstreamUrlAlternates?.[upstreamUrl]),
           expiresAt,
+          ttlMs,
           upstreamHeaders,
         );
         return `${open}${createProxyBaseUrl(resourcePublicBaseUrl, segmentId)}${close}`;
@@ -443,6 +475,7 @@ export function createPlaybackProxyService(
     manifest: string,
     manifestUrl: string | undefined,
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     upstreamUrlAlternates: Record<string, string[]> | undefined,
   ): string {
@@ -461,6 +494,7 @@ export function createPlaybackProxyService(
           providerId,
           createUpstreamUrls(upstreamUrl, upstreamUrlAlternates?.[upstreamUrl]),
           expiresAt,
+          ttlMs,
           upstreamHeaders,
         );
         return `${attr}="${createProxyUrl(resourcePublicBaseUrl, "segment", segmentId)}"`;
@@ -475,6 +509,7 @@ export function createPlaybackProxyService(
     line: string,
     manifestUrl: string | undefined,
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     stableSegmentMappings?: Map<string, string>,
     stablePlaylistMappings?: Map<string, string>,
@@ -491,6 +526,7 @@ export function createPlaybackProxyService(
           providerId,
           upstreamUrl,
           expiresAt,
+          ttlMs,
           upstreamHeaders,
           stableSegmentMappings,
           stablePlaylistMappings,
@@ -502,6 +538,7 @@ export function createPlaybackProxyService(
         providerId,
         createUpstreamUrls(upstreamUrl, undefined),
         expiresAt,
+        ttlMs,
         upstreamHeaders,
         stableSegmentMappings,
       );
@@ -516,6 +553,7 @@ export function createPlaybackProxyService(
     manifest: string,
     manifestUrl: string | undefined,
     expiresAt: number,
+    ttlMs: number,
     upstreamHeaders: Record<string, string> | undefined,
     stableSegmentMappings?: Map<string, string>,
     stablePlaylistMappings?: Map<string, string>,
@@ -531,6 +569,7 @@ export function createPlaybackProxyService(
         line,
         manifestUrl,
         expiresAt,
+        ttlMs,
         upstreamHeaders,
         stableSegmentMappings,
         stablePlaylistMappings,
@@ -563,6 +602,7 @@ export function createPlaybackProxyService(
           providerId,
           upstreamUrl,
           expiresAt,
+          ttlMs,
           upstreamHeaders,
           stableSegmentMappings,
           stablePlaylistMappings,
@@ -579,6 +619,7 @@ export function createPlaybackProxyService(
         providerId,
         createUpstreamUrls(upstreamUrl, undefined),
         expiresAt,
+        ttlMs,
         upstreamHeaders,
         stableSegmentMappings,
       );
@@ -735,6 +776,7 @@ export function createPlaybackProxyService(
       body,
       resource.refreshM3u8Url,
       resource.expiresAt,
+      resource.ttlMs,
       resource.refreshUpstreamHeaders,
       resource.m3u8SegmentMappings,
       resource.m3u8PlaylistMappings,
@@ -765,9 +807,11 @@ export function createPlaybackProxyService(
       const resource = resources.get(
         resourceKey(request.kind, request.resourceId),
       );
-      if (!resource || resource.expiresAt <= now()) {
+      const currentTime = now();
+      if (!resource || resource.expiresAt <= currentTime) {
         return null;
       }
+      refreshResourceExpiry(resource, currentTime);
       if (
         resource.kind === "manifest" &&
         resource.refreshM3u8Url &&
@@ -841,7 +885,8 @@ export function createPlaybackProxyService(
     },
 
     registerMpdManifest(input) {
-      const expiresAt = now() + (input.ttlMs ?? defaultTtlMs);
+      const ttlMs = input.ttlMs ?? defaultTtlMs;
+      const expiresAt = now() + ttlMs;
       const manifestId = createResourceId();
       const resourcePublicBaseUrl = getEffectivePublicBaseUrl(
         input.publicBaseUrl,
@@ -857,11 +902,13 @@ export function createPlaybackProxyService(
           input.manifest,
           input.manifestUrl,
           expiresAt,
+          ttlMs,
           input.upstreamHeaders,
           input.upstreamUrlAlternates,
         ),
         input.manifestUrl,
         expiresAt,
+        ttlMs,
         input.upstreamHeaders,
         input.upstreamUrlAlternates,
       );
@@ -870,6 +917,7 @@ export function createPlaybackProxyService(
         roomCode: input.roomCode,
         providerId: input.providerId,
         expiresAt,
+        ttlMs,
         contentType: "application/dash+xml",
         body: rewrittenManifest,
       });
@@ -885,7 +933,8 @@ export function createPlaybackProxyService(
     },
 
     registerM3u8Manifest(input) {
-      const expiresAt = now() + (input.ttlMs ?? defaultTtlMs);
+      const ttlMs = input.ttlMs ?? defaultTtlMs;
+      const expiresAt = now() + ttlMs;
       const manifestId = createResourceId();
       const resourcePublicBaseUrl = getEffectivePublicBaseUrl(
         input.publicBaseUrl,
@@ -905,6 +954,7 @@ export function createPlaybackProxyService(
         roomCode: input.roomCode,
         providerId: input.providerId,
         expiresAt,
+        ttlMs,
         contentType: "application/vnd.apple.mpegurl",
         body: rewriteM3u8Manifest(
           resourcePublicBaseUrl,
@@ -913,6 +963,7 @@ export function createPlaybackProxyService(
           input.manifest,
           input.manifestUrl,
           expiresAt,
+          ttlMs,
           input.upstreamHeaders,
           stableSegmentMappings,
           stablePlaylistMappings,
@@ -941,12 +992,14 @@ export function createPlaybackProxyService(
     },
 
     registerSegment(input) {
-      const expiresAt = now() + (input.ttlMs ?? defaultTtlMs);
+      const ttlMs = input.ttlMs ?? defaultTtlMs;
+      const expiresAt = now() + ttlMs;
       const segmentId = setSegmentMapping(
         input.roomCode,
         input.providerId,
         createUpstreamUrls(input.upstreamUrl, input.fallbackUpstreamUrls),
         expiresAt,
+        ttlMs,
         input.upstreamHeaders,
       );
       return {

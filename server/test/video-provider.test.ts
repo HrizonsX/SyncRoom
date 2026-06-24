@@ -8,11 +8,25 @@ import {
   type ProviderParseResult,
 } from "../src/providers/video-provider.js";
 import { createBilibiliProvider } from "../src/providers/bilibili-provider.js";
+import { createGenericProvider } from "../src/providers/generic-provider.js";
+import { createIqiyiProvider } from "../src/providers/iqiyi-provider.js";
 
 test("video provider registry matches urls through registered adapters", () => {
-  const registry = createVideoProviderRegistry([createBilibiliProvider()]);
+  const registry = createVideoProviderRegistry([
+    createBilibiliProvider(),
+    createIqiyiProvider(),
+    createGenericProvider({
+      extractorClient: {
+        async extract() {
+          throw new Error("generic provider should not parse during matching");
+        },
+      },
+    }),
+  ]);
 
   assert.equal(registry.get("bilibili")?.id, "bilibili");
+  assert.equal(registry.get("generic")?.id, "generic");
+  assert.equal(registry.get("iqiyi")?.id, "iqiyi");
   assert.deepEqual(
     registry.matchUrl("https://www.bilibili.com/video/BV1xx411c7mD"),
     {
@@ -24,7 +38,21 @@ test("video provider registry matches urls through registered adapters", () => {
       requiresResolution: false,
     },
   );
-  assert.equal(registry.matchUrl("https://example.com/watch?v=1"), null);
+  assert.deepEqual(registry.matchUrl("https://example.com/watch?v=1"), {
+    providerId: "generic",
+    kind: "ugc",
+    rawId: "generic:20c653445e9a2384",
+    page: null,
+    normalizedUrl: "https://example.com/watch?v=1",
+    requiresResolution: false,
+  });
+  const iqiyiMatch = registry.matchUrl("https://www.iqiyi.com/v_abc123.html");
+  assert.equal(iqiyiMatch?.providerId, "iqiyi");
+  assert.equal(
+    iqiyiMatch?.normalizedUrl,
+    "https://www.iqiyi.com/v_abc123.html",
+  );
+  assert.equal(iqiyiMatch?.rawId.startsWith("iqiyi:"), true);
   assert.throws(
     () =>
       createVideoProviderRegistry([
@@ -33,6 +61,70 @@ test("video provider registry matches urls through registered adapters", () => {
       ]),
     /Duplicate video provider adapter/,
   );
+});
+
+test("generic provider maps extractor candidates to provider parse results", async () => {
+  const provider = createGenericProvider({
+    extractorClient: {
+      async extract(input) {
+        assert.deepEqual(input, {
+          url: "https://example.com/watch/123",
+          platform: "generic",
+        });
+        return {
+          title: "Generic Video",
+          sourceUrl: "https://example.com/watch/123",
+          isLive: false,
+          candidates: [
+            {
+              id: "hls",
+              sourceType: "m3u8",
+              url: "https://cdn.example.com/index.m3u8",
+              qualityLabel: "720P",
+              upstreamHeaders: {
+                Referer: "https://example.com/",
+              },
+            },
+          ],
+        };
+      },
+    },
+  });
+
+  const matchedUrl = provider.matchUrl("https://example.com/watch/123");
+  assert.ok(matchedUrl);
+  const result = await provider.parse({
+    matchedUrl,
+    policy: { proxy: true, shared: false },
+  });
+
+  assert.deepEqual(result, {
+    providerId: "generic",
+    sourceId: "generic:7cb52d65f977f6b8",
+    sourceUrl: "https://example.com/watch/123",
+    title: "Generic Video",
+    items: [
+      {
+        item: {
+          itemId: "default",
+          title: "Generic Video",
+          kind: "part",
+        },
+        candidates: [
+          {
+            id: "hls",
+            sourceType: "m3u8",
+            url: "https://cdn.example.com/index.m3u8",
+            qualityLabel: "720P",
+            upstreamHeaders: {
+              Referer: "https://example.com/",
+            },
+          },
+        ],
+        defaultCandidateId: "hls",
+      },
+    ],
+  });
 });
 
 test("Bilibili provider exposes auth parse and playback candidate boundaries", async () => {

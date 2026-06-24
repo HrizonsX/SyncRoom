@@ -26,6 +26,8 @@ export type StorageLike = {
 };
 
 export type WebSocketLike = {
+  OPEN?: number;
+  readyState?: number;
   send: (data: string) => void;
   close?: () => void;
   addEventListener?: (
@@ -33,6 +35,8 @@ export type WebSocketLike = {
     listener: (event: { data?: unknown }) => void,
   ) => void;
 };
+
+const DEFAULT_OPEN_READY_STATE = 1;
 
 export type WebRoomSocketClientOptions = {
   serverUrl: string;
@@ -152,7 +156,19 @@ export function normalizeServerUrlToWebSocket(serverUrl: string): string {
   return serialized;
 }
 
+function isSocketOpen(socket: WebSocketLike): boolean {
+  if (typeof socket.readyState !== "number") {
+    return true;
+  }
+  const openReadyState =
+    typeof socket.OPEN === "number" ? socket.OPEN : DEFAULT_OPEN_READY_STATE;
+  return socket.readyState === openReadyState;
+}
+
 function sendJson(socket: WebSocketLike, message: unknown): void {
+  if (!isSocketOpen(socket)) {
+    return;
+  }
   socket.send(JSON.stringify(message));
 }
 

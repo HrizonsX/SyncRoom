@@ -1,6 +1,7 @@
 import type {
   PlaybackProxyPolicy,
   ProviderPlaybackDescriptor,
+  VideoProviderId,
 } from "@syncroom/protocol";
 import type { WebRoomAuthMethod, WebRoomProviderPickerItem } from "./render.js";
 
@@ -18,8 +19,8 @@ export class ProviderApiError extends Error {
   }
 }
 
-export type BilibiliAuthFlowResult = {
-  providerId: "bilibili";
+export type ProviderAuthFlowResult = {
+  providerId: VideoProviderId;
   method: WebRoomAuthMethod;
   flowId: string;
   status: "pending" | "expired" | "failed";
@@ -27,6 +28,7 @@ export type BilibiliAuthFlowResult = {
   qrCodeUrl?: string;
   message?: string;
 };
+export type BilibiliAuthFlowResult = ProviderAuthFlowResult;
 
 export type BilibiliAuthPollResult =
   | {
@@ -55,8 +57,8 @@ export type BilibiliAuthStatusResult = {
   expiresAt?: number;
 };
 
-export type BilibiliParseResult = {
-  providerId: "bilibili";
+export type ProviderParseResult = {
+  providerId: VideoProviderId;
   sourceId: string;
   sourceUrl: string;
   title: string;
@@ -65,29 +67,34 @@ export type BilibiliParseResult = {
 
 export type ProviderApiClient = {
   startAuth: (input: {
+    providerId?: VideoProviderId;
     roomCode: string;
     memberToken: string;
     method: WebRoomAuthMethod;
-  }) => Promise<BilibiliAuthFlowResult>;
+  }) => Promise<ProviderAuthFlowResult>;
   pollAuth: (input: {
+    providerId?: VideoProviderId;
     roomCode: string;
     memberToken: string;
     flowId: string;
   }) => Promise<BilibiliAuthPollResult>;
   getAuthStatus: (input: {
+    providerId?: VideoProviderId;
     roomCode: string;
     memberToken: string;
   }) => Promise<BilibiliAuthStatusResult>;
   logoutAuth: (input: {
+    providerId?: VideoProviderId;
     roomCode: string;
     memberToken: string;
   }) => Promise<{ loggedOut: true }>;
   parse: (input: {
+    providerId: VideoProviderId;
     roomCode: string;
     memberToken: string;
     url: string;
     policy: PlaybackProxyPolicy;
-  }) => Promise<BilibiliParseResult>;
+  }) => Promise<ProviderParseResult>;
 };
 
 function isRecord(value: unknown): value is JsonObject {
@@ -151,48 +158,54 @@ export function createProviderApiClient(
   fetchImpl: typeof fetch = fetch,
 ): ProviderApiClient {
   const baseUrl = normalizeServerUrlToHttp(serverUrl);
+  const getProviderAuthPath = (
+    providerId: VideoProviderId | undefined,
+    action: string,
+  ) => `/api/providers/${providerId ?? "bilibili"}/auth/${action}`;
   return {
     startAuth(input) {
+      const { providerId, ...body } = input;
       return postJson(
         fetchImpl,
         baseUrl,
-        "/api/providers/bilibili/auth/start",
-        {
-          roomCode: input.roomCode,
-          memberToken: input.memberToken,
-          method: input.method,
-        },
+        getProviderAuthPath(providerId, "start"),
+        body,
       );
     },
     pollAuth(input) {
-      return postJson(fetchImpl, baseUrl, "/api/providers/bilibili/auth/poll", {
-        roomCode: input.roomCode,
-        memberToken: input.memberToken,
-        flowId: input.flowId,
-      });
-    },
-    getAuthStatus(input) {
+      const { providerId, ...body } = input;
       return postJson(
         fetchImpl,
         baseUrl,
-        "/api/providers/bilibili/auth/status",
-        input,
+        getProviderAuthPath(providerId, "poll"),
+        body,
+      );
+    },
+    getAuthStatus(input) {
+      const { providerId, ...body } = input;
+      return postJson(
+        fetchImpl,
+        baseUrl,
+        getProviderAuthPath(providerId, "status"),
+        body,
       );
     },
     logoutAuth(input) {
+      const { providerId, ...body } = input;
       return postJson(
         fetchImpl,
         baseUrl,
-        "/api/providers/bilibili/auth/logout",
-        input,
+        getProviderAuthPath(providerId, "logout"),
+        body,
       );
     },
     async parse(input) {
-      const result = await postJson<BilibiliParseResult>(
+      const { providerId, ...body } = input;
+      const result = await postJson<ProviderParseResult>(
         fetchImpl,
         baseUrl,
-        "/api/providers/bilibili/parse",
-        input,
+        `/api/providers/${providerId}/parse`,
+        body,
       );
       return {
         ...result,

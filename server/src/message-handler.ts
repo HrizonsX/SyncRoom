@@ -15,7 +15,6 @@ import {
   WINDOW_10_SECONDS_MS,
   WINDOW_5_SECONDS_MS,
   WINDOW_MINUTE_MS,
-  WINDOW_SECOND_MS,
 } from "./rate-limit.js";
 import {
   CHAT_RATE_LIMITED_MESSAGE,
@@ -871,12 +870,11 @@ export function createMessageHandler(options: {
             message.payload.targetMemberId,
           );
           if (hasAttachedSocket(result.targetSession)) {
-            sendError(
-              result.targetSession.socket,
-              "member_kicked",
-              MEMBER_KICKED_MESSAGE,
-              { messageType: message.type },
-            );
+            const targetSocket = result.targetSession.socket;
+            sendError(targetSocket, "member_kicked", MEMBER_KICKED_MESSAGE, {
+              messageType: message.type,
+            });
+            targetSocket.close(1000, MEMBER_KICKED_MESSAGE);
           }
           await firePublishRoomEvent(
             {
@@ -1112,14 +1110,14 @@ export function createMessageHandler(options: {
           if (
             !consumeFixedWindow(
               session.rateLimitState.danmakuMessage,
-              1,
-              WINDOW_SECOND_MS,
+              config.rateLimits.danmakuMessagePer5Seconds,
+              WINDOW_5_SECONDS_MS,
               currentTime,
             )
           ) {
             const retryAfterMs = getFixedWindowRetryAfterMs({
               windowStart: session.rateLimitState.danmakuMessage.windowStart,
-              windowMs: WINDOW_SECOND_MS,
+              windowMs: WINDOW_5_SECONDS_MS,
               currentTime,
             });
             handleRateLimitedMessage(session, message.type);

@@ -1,11 +1,13 @@
 import {
   parseSharedVideoRef,
   type ClientMessage,
+  type PlaybackProxyPolicy,
   type PlaybackState,
   type ProviderPlaybackDescriptor,
   type RoomMemberPermissionName,
   type ServerMessage,
   type SharedVideo,
+  type VideoProviderId,
   type WebPlaybackReportEvent,
 } from "@syncroom/protocol";
 import type {
@@ -78,6 +80,38 @@ const SERVER_MESSAGE_TYPES = new Set([
   "chat:message",
   "danmaku:message",
 ]);
+const BILIBILI_PROVIDER_HOSTS = new Set([
+  "bilibili.com",
+  "www.bilibili.com",
+  "m.bilibili.com",
+  "live.bilibili.com",
+  "bangumi.bilibili.com",
+  "b23.tv",
+  "www.b23.tv",
+]);
+const IQIYI_PROVIDER_HOSTS = new Set([
+  "iqiyi.com",
+  "www.iqiyi.com",
+  "m.iqiyi.com",
+  "iq.com",
+  "www.iq.com",
+]);
+
+function getProviderIdForParseUrl(url: string): VideoProviderId {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return BILIBILI_PROVIDER_HOSTS.has(hostname) ||
+      hostname.endsWith(".bilibili.com")
+      ? "bilibili"
+      : IQIYI_PROVIDER_HOSTS.has(hostname) ||
+          hostname.endsWith(".iqiyi.com") ||
+          hostname.endsWith(".iq.com")
+        ? "iqiyi"
+        : "generic";
+  } catch {
+    return "generic";
+  }
+}
 
 export type CreateRoomInput = {
   serverUrl?: string;
@@ -150,6 +184,10 @@ export type WebRoomAppController = {
   leaveRoom: () => void;
   openAuthorizationPanel: () => void;
   setBilibiliAuthMethod: (method: WebRoomAuthMethod) => void;
+  startProviderAuth: (input: {
+    providerId: VideoProviderId;
+    method: WebRoomAuthMethod;
+  }) => Promise<void>;
   startBilibiliAuth: (input: { method: WebRoomAuthMethod }) => Promise<void>;
   logoutBilibiliAuth: () => Promise<void>;
   closeAuthorizationPanel: () => void;
@@ -176,7 +214,8 @@ export type WebRoomAppController = {
     stage: WebRoomPlaybackErrorStage;
     message: string;
   }) => void;
-  retryProviderProxyFallback: () => void;
+  retryProviderProxyFallback: () => Promise<void>;
+  reportPlaybackLoaded: () => void;
   getPlaybackSyncContext: () => {
     memberToken: string;
     actorId: string;
@@ -961,6 +1000,20 @@ export function createWebRoomAppController(
     );
   }
 
+  function getProviderResultPolicy(
+    items: WebRoomProviderPickerItem[],
+    fallback: PlaybackProxyPolicy,
+  ): PlaybackProxyPolicy {
+    const policy = items.find((item) => item.providerDescriptor?.policy)
+      ?.providerDescriptor?.policy;
+    return policy
+      ? {
+          proxy: policy.proxy,
+          shared: policy.shared,
+        }
+      : fallback;
+  }
+
   function getSelectedProviderPickerItem(
     picker: WebRoomProviderPickerState,
   ): WebRoomProviderPickerItem | undefined {
@@ -1004,6 +1057,9 @@ export function createWebRoomAppController(
       authStatus: "checking",
       authPanel: {
         open: true,
+        ...(result.providerId !== "bilibili"
+          ? { providerId: result.providerId }
+          : {}),
         method,
         phase: result.status,
         flowId: result.flowId,
@@ -1016,6 +1072,7 @@ export function createWebRoomAppController(
 
   function applyBilibiliAuthPollResult(
     method: WebRoomAuthMethod,
+    providerId: VideoProviderId,
     result: BilibiliAuthPollResult,
   ): void {
     if (state.view !== "joined") {
@@ -1028,6 +1085,7 @@ export function createWebRoomAppController(
         authStatus: "authorized",
         authPanel: {
           open: true,
+          ...(providerId !== "bilibili" ? { providerId } : {}),
           method,
           phase: "authorized",
           ...(result.profile?.displayName
@@ -1049,6 +1107,7 @@ export function createWebRoomAppController(
           : "checking",
       authPanel: {
         open: true,
+        ...(providerId !== "bilibili" ? { providerId } : {}),
         method,
         phase: result.status,
         ...(previousPanel?.flowId ? { flowId: previousPanel.flowId } : {}),
@@ -1065,6 +1124,7 @@ export function createWebRoomAppController(
 
   function applyBilibiliAuthStatusResult(
     method: WebRoomAuthMethod,
+    providerId: VideoProviderId,
     result: BilibiliAuthStatusResult,
   ): void {
     if (state.view !== "joined") {
@@ -1077,9 +1137,13 @@ export function createWebRoomAppController(
         authStatus: "unauthorized",
         authPanel: {
           open: authPanelOpen,
+          ...(providerId !== "bilibili" ? { providerId } : {}),
           method,
           phase: "failed",
-          message: "Bilibili authorization could not be verified.",
+          message:
+            providerId === "iqiyi"
+              ? "iQIYI authorization could not be verified."
+              : "Bilibili authorization could not be verified.",
         },
       });
       return;
@@ -1089,6 +1153,7 @@ export function createWebRoomAppController(
       authStatus: "authorized",
       authPanel: {
         open: authPanelOpen,
+        ...(providerId !== "bilibili" ? { providerId } : {}),
         method,
         phase: "authorized",
         ...(result.profile?.displayName
@@ -1103,6 +1168,7 @@ export function createWebRoomAppController(
   }
 
   function scheduleBilibiliAuthPoll(input: {
+    providerId?: VideoProviderId;
     method: WebRoomAuthMethod;
     flowId: string;
     generation: number;
@@ -1118,6 +1184,7 @@ export function createWebRoomAppController(
   }
 
   async function pollBilibiliAuth(input: {
+    providerId?: VideoProviderId;
     method: WebRoomAuthMethod;
     flowId: string;
     generation: number;
@@ -1129,8 +1196,11 @@ export function createWebRoomAppController(
     if (!context?.apiClient) {
       return;
     }
+    const providerId = input.providerId ?? "bilibili";
+    const apiProviderId = providerId === "bilibili" ? undefined : providerId;
     try {
       const result = await context.apiClient.pollAuth({
+        ...(apiProviderId ? { providerId: apiProviderId } : {}),
         roomCode: context.roomCode,
         memberToken: context.memberToken,
         flowId: input.flowId,
@@ -1140,17 +1210,18 @@ export function createWebRoomAppController(
       }
       if (result.status === "authorized") {
         const status = await context.apiClient.getAuthStatus({
+          ...(apiProviderId ? { providerId: apiProviderId } : {}),
           roomCode: context.roomCode,
           memberToken: context.memberToken,
         });
         if (input.generation !== authPollGeneration) {
           return;
         }
-        applyBilibiliAuthStatusResult(input.method, status);
+        applyBilibiliAuthStatusResult(input.method, providerId, status);
         resetBilibiliAuthPolling();
         return;
       }
-      applyBilibiliAuthPollResult(input.method, result);
+      applyBilibiliAuthPollResult(input.method, providerId, result);
       if (result.status === "pending") {
         scheduleBilibiliAuthPoll(input);
         return;
@@ -1178,6 +1249,7 @@ export function createWebRoomAppController(
     message: string;
     diagnostic?: string;
     method?: WebRoomAuthMethod;
+    providerId?: VideoProviderId;
     open?: boolean;
   }): void {
     if (state.view !== "joined") {
@@ -1193,6 +1265,9 @@ export function createWebRoomAppController(
         authStatus: "unauthorized",
         authPanel: {
           open: input.open ?? true,
+          ...(input.providerId && input.providerId !== "bilibili"
+            ? { providerId: input.providerId }
+            : {}),
           method: input.method ?? state.authPanel?.method ?? "qr",
           phase: "failed",
           errorMessage: input.message,
@@ -1227,6 +1302,9 @@ export function createWebRoomAppController(
     if (providerError.code === "provider_auth_forbidden") {
       return "只有房主可以管理 Bilibili 授权和点播解析。";
     }
+    if (providerError.code === "provider_auth_unavailable") {
+      return fallbackMessage;
+    }
     if (providerError.code === "unsupported_source") {
       return "暂不支持这个 Bilibili 链接。";
     }
@@ -1244,6 +1322,12 @@ export function createWebRoomAppController(
       providerError.reason === "live_playurl_failed"
     ) {
       return "直播解析失败，请稍后重试。";
+    }
+    if (providerError.reason === "extractor_unsupported_url") {
+      return "暂不支持这个链接。";
+    }
+    if (providerError.reason === "extractor_auth_required") {
+      return "当前平台需要登录态或 Cookie，通用解析暂不支持；可以使用公开可访问的 mp4/m3u8 链接，或后续接入该平台专属 provider。";
     }
     if (
       providerError.code === "provider_parse_failed" ||
@@ -1786,7 +1870,7 @@ export function createWebRoomAppController(
         roomCode: context.roomCode,
         memberToken: context.memberToken,
       });
-      applyBilibiliAuthStatusResult(method, status);
+      applyBilibiliAuthStatusResult(method, "bilibili", status);
     } catch (error) {
       applyProviderApiFailure({
         panel: "auth",
@@ -1814,6 +1898,85 @@ export function createWebRoomAppController(
         phase: "idle",
       },
     });
+  }
+
+  async function startProviderAuth(input: {
+    providerId: VideoProviderId;
+    method: WebRoomAuthMethod;
+  }): Promise<void> {
+    if (input.providerId === "bilibili") {
+      await startBilibiliAuth({ method: input.method });
+      return;
+    }
+    if (state.view !== "joined" || !requireHostAuthorizationState()) {
+      return;
+    }
+    resetBilibiliAuthPolling();
+    const authGeneration = authPollGeneration;
+    const context = getProviderRequestContext();
+    const pendingMessage =
+      input.providerId === "iqiyi"
+        ? "iQIYI authorization request is pending."
+        : "Provider authorization request is pending.";
+    const fallbackMessage =
+      input.providerId === "iqiyi"
+        ? "iQIYI authorization is not connected yet."
+        : "Provider authorization failed.";
+    emit({
+      ...state,
+      authStatus: "checking",
+      authPanel: {
+        open: true,
+        providerId: input.providerId,
+        method: input.method,
+        phase: "loading",
+        message: pendingMessage,
+      },
+    });
+    if (!context?.apiClient) {
+      return;
+    }
+    try {
+      const result = await context.apiClient.startAuth({
+        providerId: input.providerId,
+        roomCode: context.roomCode,
+        memberToken: context.memberToken,
+        method: input.method,
+      });
+      if (state.view !== "joined") {
+        return;
+      }
+      emit({
+        ...state,
+        authStatus: "checking",
+        authPanel: {
+          open: true,
+          providerId: input.providerId,
+          method: input.method,
+          phase: result.status,
+          flowId: result.flowId,
+          expiresAt: result.expiresAt,
+          ...(result.qrCodeUrl ? { qrCodeUrl: result.qrCodeUrl } : {}),
+          ...(result.message ? { message: result.message } : {}),
+        },
+      });
+      if (result.status === "pending") {
+        scheduleBilibiliAuthPoll({
+          providerId: input.providerId,
+          method: input.method,
+          flowId: result.flowId,
+          generation: authGeneration,
+        });
+      }
+    } catch (error) {
+      applyProviderApiFailure({
+        panel: "auth",
+        providerId: input.providerId,
+        method: input.method,
+        diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
+        message: getProviderApiFailureMessage(error, fallbackMessage),
+      });
+    }
   }
 
   async function startBilibiliAuth(input: {
@@ -1849,6 +2012,7 @@ export function createWebRoomAppController(
       applyBilibiliAuthFlowResult(input.method, result);
       if (result.status === "pending") {
         scheduleBilibiliAuthPoll({
+          providerId: "bilibili",
           method: input.method,
           flowId: result.flowId,
           generation: authGeneration,
@@ -1943,16 +2107,25 @@ export function createWebRoomAppController(
       return;
     }
     const context = getProviderRequestContext();
+    const url = input.url.trim();
+    const providerId = getProviderIdForParseUrl(url);
+    const policy = {
+      proxy: input.proxy,
+      shared: providerId === "bilibili" ? input.shared : false,
+    };
     emit({
       ...state,
       providerPicker: {
         open: true,
         status: "loading",
-        url: input.url.trim(),
-        proxy: input.proxy,
-        shared: input.shared,
+        url,
+        proxy: policy.proxy,
+        shared: policy.shared,
         items: [],
-        message: "Bilibili URL parse request is pending.",
+        message:
+          providerId === "bilibili"
+            ? "Bilibili URL parse request is pending."
+            : "Provider URL parse request is pending.",
       },
     });
     if (!context?.apiClient) {
@@ -1960,25 +2133,24 @@ export function createWebRoomAppController(
     }
     try {
       const result = await context.apiClient.parse({
+        providerId,
         roomCode: context.roomCode,
         memberToken: context.memberToken,
-        url: input.url.trim(),
-        policy: {
-          proxy: input.proxy,
-          shared: input.shared,
-        },
+        url,
+        policy,
       });
       if (state.view !== "joined") {
         return;
       }
+      const resultPolicy = getProviderResultPolicy(result.items, policy);
       emit({
         ...state,
         providerPicker: {
           open: true,
           status: "ready",
-          url: input.url.trim(),
-          proxy: input.proxy,
-          shared: input.shared,
+          url,
+          proxy: resultPolicy.proxy,
+          shared: resultPolicy.shared,
           items: result.items,
           selectedItemId: result.items[0]?.itemId,
           selectedQualityCandidateId: getDefaultProviderCandidateId(
@@ -1993,7 +2165,9 @@ export function createWebRoomAppController(
         diagnostic: getProviderApiFailureDiagnostic(error, "picker"),
         message: getProviderApiFailureMessage(
           error,
-          "Bilibili URL parse failed.",
+          providerId === "bilibili"
+            ? "Bilibili URL parse failed."
+            : "Provider URL parse failed.",
         ),
       });
     }
@@ -2099,6 +2273,10 @@ export function createWebRoomAppController(
       appendDiagnostic("provider share denied: room session unavailable");
       return;
     }
+    if (state.connectionState !== "connected") {
+      appendDiagnostic("provider share denied: room disconnected");
+      return;
+    }
 
     const picker = state.providerPicker;
     const selectedItem = picker
@@ -2129,6 +2307,7 @@ export function createWebRoomAppController(
       selectedProviderDescriptor.title.trim() ||
       selectedItem.title.trim() ||
       selectedProviderDescriptor.item.title;
+    const selectedPolicy = selectedProviderDescriptor.policy;
     const video: SharedVideo = {
       videoId: sharedRef.videoId,
       url: sharedRef.normalizedUrl,
@@ -2141,8 +2320,8 @@ export function createWebRoomAppController(
           title,
         },
         policy: {
-          proxy: picker.proxy,
-          shared: picker.shared,
+          proxy: selectedPolicy.proxy || picker.proxy,
+          shared: selectedPolicy.shared && picker.shared,
         },
       },
     };
@@ -2183,7 +2362,7 @@ export function createWebRoomAppController(
     return pickerPolicyAllowsFallback || playbackPolicyAllowsFallback;
   }
 
-  function getCurrentProviderId(): "bilibili" | undefined {
+  function getCurrentProviderId(): VideoProviderId | undefined {
     if (state.view !== "joined") {
       return undefined;
     }
@@ -2194,7 +2373,11 @@ export function createWebRoomAppController(
     const providerId =
       selectedItem?.providerDescriptor?.providerId ??
       state.providerPlaybackStatus?.providerId;
-    return providerId === "bilibili" ? providerId : undefined;
+    return providerId === "bilibili" ||
+      providerId === "generic" ||
+      providerId === "iqiyi"
+      ? providerId
+      : undefined;
   }
 
   function reportPlayback(
@@ -2240,7 +2423,7 @@ export function createWebRoomAppController(
     });
   }
 
-  function retryProviderProxyFallback(): void {
+  async function retryProviderProxyFallback(): Promise<void> {
     if (state.view !== "joined") {
       return;
     }
@@ -2249,17 +2432,35 @@ export function createWebRoomAppController(
       appendDiagnostic("proxy fallback denied: no provider selection");
       return;
     }
+    const url = picker.url?.trim();
+    if (!url) {
+      appendDiagnostic("proxy fallback denied: missing provider URL");
+      return;
+    }
     reportPlayback("proxy_fallback");
     emit({
       ...state,
       playbackError: undefined,
-      providerPicker: {
-        ...picker,
-        proxy: true,
-        shared: true,
-      },
     });
+    await parseBilibiliUrl({
+      url,
+      proxy: true,
+      shared: true,
+    });
+    if (state.view !== "joined" || state.providerPicker?.status !== "ready") {
+      return;
+    }
     shareSelectedProviderItem();
+  }
+
+  function reportPlaybackLoaded(): void {
+    if (state.view !== "joined") {
+      return;
+    }
+    const status = state.providerPlaybackStatus;
+    if (status?.proxy === false && status.shared === true) {
+      reportPlayback("direct_link_success");
+    }
   }
 
   if (persistedSession && options.autoReconnect !== false) {
@@ -2282,6 +2483,7 @@ export function createWebRoomAppController(
     leaveRoom,
     openAuthorizationPanel,
     setBilibiliAuthMethod,
+    startProviderAuth,
     startBilibiliAuth,
     logoutBilibiliAuth,
     closeAuthorizationPanel,
@@ -2295,6 +2497,7 @@ export function createWebRoomAppController(
     shareSelectedProviderItem,
     showDirectPlaybackFailure,
     retryProviderProxyFallback,
+    reportPlaybackLoaded,
     getPlaybackSyncContext,
     sendPlaybackUpdate,
   };

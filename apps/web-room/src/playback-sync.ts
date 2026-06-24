@@ -27,7 +27,6 @@ const PLAYBACK_EVENT_TYPES: readonly LocalPlaybackEvent[] = [
   "pause",
   "seeked",
   "ratechange",
-  "waiting",
 ];
 
 export type ApplyRemotePlaybackResult =

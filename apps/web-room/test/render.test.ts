@@ -741,7 +741,7 @@ test("renders voice member state in the chat room", () => {
   assert.match(html, /data-voice-member-status="muted"/);
 });
 
-test("renders authorization management as a platform list with Bilibili QR only", () => {
+test("renders authorization management as a platform list with platform auth entries", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,
     authStatus: "checking",
@@ -778,16 +778,25 @@ test("renders authorization management as a platform list with Bilibili QR only"
   assert.match(html, /data-panel="provider-auth"/);
   assert.match(html, /data-platform-auth-list="true"/);
   assert.match(html, /data-platform-id="bilibili"/);
+  assert.match(html, /data-platform-id="iqiyi"/);
   assert.match(html, /data-auth-host="true"/);
   assert.match(html, /data-auth-method="qr"/);
   assert.match(html, /data-auth-phase="loading"/);
   assert.match(html, /class="platform-logo platform-logo-bilibili"/);
+  assert.match(html, /class="platform-logo platform-logo-iqiyi"/);
+  assert.match(html, /aria-label="iQIYI Logo"/);
   assert.match(html, /class="platform-logo-svg"/);
   assert.match(html, /aria-label="Bilibili 官方 Logo"/);
   assert.match(html, /正在准备二维码登录。/);
   assert.match(html, /data-action="collapse-bilibili-auth"/);
+  assert.match(html, /data-action="iqiyi-login-qr"/);
+  assert.match(html, /data-action="bilibili-login-qr"/);
+  assert.match(html, /data-ui-icon="refresh"/);
   assert.match(html, />收起二维码<\/span>/);
-  assert.doesNotMatch(html, /data-action="bilibili-login-qr"/);
+  assert.doesNotMatch(
+    html,
+    /class="secondary-button platform-auth-action" data-action="bilibili-login-qr"/,
+  );
   assert.doesNotMatch(html, /data-action="bilibili-logout"/);
   assert.doesNotMatch(html, /退出授权/);
   assert.doesNotMatch(html, /data-action="bilibili-login-sms"/);
@@ -854,8 +863,61 @@ test("localizes pending QR authorization and offers a collapse action", () => {
   assert.match(html, /等待扫码/);
   assert.doesNotMatch(html, /Waiting for scan/);
   assert.match(html, /data-action="collapse-bilibili-auth"/);
+  assert.match(html, /data-action="bilibili-login-qr"/);
+  assert.match(html, /data-ui-icon="refresh"/);
   assert.match(html, />收起二维码<\/span>/);
+  assert.match(html, />刷新<\/span>/);
   assert.match(html, /class="auth-method auth-method-qr"/);
+});
+
+test("localizes iQIYI authorization status inside the platform list", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "checking",
+    authPanel: {
+      open: true,
+      providerId: "iqiyi",
+      method: "qr",
+      phase: "pending",
+      qrCodeUrl: "data:image/png;base64,iqiyi-qr",
+      message: "Scan the iQIYI QR code to authorize playback.",
+    },
+  });
+
+  assert.match(html, /data-platform-id="iqiyi"/);
+  assert.match(html, /请使用爱奇艺 App 扫描二维码。/);
+  assert.doesNotMatch(html, /Scan the iQIYI QR code/);
+  assert.match(html, /class="auth-method auth-method-qr"/);
+  assert.match(html, /alt="iQIYI QR"/);
+  assert.match(html, /data-action="collapse-bilibili-auth"/);
+  assert.match(html, /data-action="iqiyi-login-qr"/);
+  assert.match(html, /data-ui-icon="refresh"/);
+  assert.match(html, />刷新<\/span>/);
+});
+
+test("keeps authorized iQIYI profile out of the Bilibili authorization row", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "authorized",
+    authPanel: {
+      open: true,
+      providerId: "iqiyi",
+      method: "qr",
+      phase: "authorized",
+      profileName: "爱奇艺用户",
+    },
+  });
+
+  const bilibiliStart = html.indexOf('data-platform-id="bilibili"');
+  const iqiyiStart = html.indexOf('data-platform-id="iqiyi"');
+  assert.ok(bilibiliStart >= 0);
+  assert.ok(iqiyiStart > bilibiliStart);
+  const bilibiliRow = html.slice(bilibiliStart, iqiyiStart);
+  const iqiyiRow = html.slice(iqiyiStart);
+
+  assert.doesNotMatch(bilibiliRow, /爱奇艺用户/);
+  assert.match(bilibiliRow, /B 站账号授权/);
+  assert.match(iqiyiRow, /爱奇艺用户/);
 });
 
 test("omits text-chat danmaku controls from the chat input", () => {

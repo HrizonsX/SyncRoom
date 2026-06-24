@@ -221,6 +221,11 @@ export const SERVER_CONFIG_FIELDS = [
     "positiveInteger",
   ),
   createField(["voice", "maxMembers"], "VOICE_MAX_MEMBERS", "positiveInteger"),
+  createField(
+    ["mediaExtractor", "baseUrl"],
+    "MEDIA_EXTRACTOR_BASE_URL",
+    "string",
+  ),
 ] as const satisfies readonly ConfigField[];
 
 export const SECURITY_CONFIG_FIELDS = SERVER_CONFIG_FIELDS.filter(
@@ -234,6 +239,9 @@ export const ADMIN_UI_CONFIG_FIELDS = SERVER_CONFIG_FIELDS.filter(
 );
 export const VOICE_CONFIG_FIELDS = SERVER_CONFIG_FIELDS.filter(
   (field) => field.path[0] === "voice",
+);
+export const MEDIA_EXTRACTOR_CONFIG_FIELDS = SERVER_CONFIG_FIELDS.filter(
+  (field) => field.path[0] === "mediaExtractor",
 );
 
 export const PERSISTENCE_PROVIDER_FIELD = PERSISTENCE_CONFIG_FIELDS.find(
@@ -429,7 +437,12 @@ export function loadSectionConfigFromEnv<T extends ConfigObject>(
 }
 
 export function getSectionFields(
-  sectionName: "security" | "persistence" | "adminUi" | "voice",
+  sectionName:
+    | "security"
+    | "persistence"
+    | "adminUi"
+    | "voice"
+    | "mediaExtractor",
 ): readonly ConfigField[] {
   switch (sectionName) {
     case "security":
@@ -440,6 +453,8 @@ export function getSectionFields(
       return ADMIN_UI_CONFIG_FIELDS;
     case "voice":
       return VOICE_CONFIG_FIELDS;
+    case "mediaExtractor":
+      return MEDIA_EXTRACTOR_CONFIG_FIELDS;
   }
 }
 
@@ -458,6 +473,9 @@ export function getDefaultConfigSampleValue(field: ConfigField): unknown {
       if (field.envName === "LIVEKIT_URL") {
         return "wss://voice.example.com";
       }
+      if (field.envName === "MEDIA_EXTRACTOR_BASE_URL") {
+        return "http://extractor.example.com";
+      }
       return `${field.envName.toLowerCase()}-sample`;
     case "stringArray":
       return [
@@ -473,3 +491,6 @@ export type SecurityConfigShape = SecurityConfig;
 export type PersistenceConfigShape = PersistenceConfig;
 export type AdminUiConfigShape = AdminUiConfig;
 export type VoiceConfigShape = VoiceConfig;
+export type MediaExtractorConfigShape = {
+  baseUrl: string;
+};

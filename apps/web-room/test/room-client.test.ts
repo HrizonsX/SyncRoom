@@ -9,6 +9,7 @@ import {
   loadWebRoomSession,
   persistWebRoomSession,
   type StorageLike,
+  type WebSocketLike,
 } from "../src/room-client.js";
 
 class MemoryStorage implements StorageLike {
@@ -268,6 +269,34 @@ test("sends provider video share messages with explicit proxy and shared policy"
     },
   });
   assert.doesNotMatch(JSON.stringify(sent[0]), /SESSDATA|Cookie/i);
+});
+
+test("does not send provider share messages over a closed websocket", () => {
+  const closedSocket: WebSocketLike & { OPEN: number; readyState: number } = {
+    OPEN: 1,
+    readyState: 3,
+    send() {
+      throw new Error("WebSocket is already in CLOSING or CLOSED state.");
+    },
+  };
+  const client = createWebRoomSocketClient({
+    serverUrl: "ws://syncroom.example.test",
+    socketFactory() {
+      return closedSocket;
+    },
+  });
+
+  assert.doesNotThrow(() => {
+    client.shareVideo({
+      memberToken: "valid-member-token-123",
+      video: {
+        videoId: "BV1xx411c7mD",
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        title: "Part 1",
+        provider: providerPlaybackDescriptor,
+      },
+    });
+  });
 });
 
 test("sends low-cardinality playback report messages", () => {

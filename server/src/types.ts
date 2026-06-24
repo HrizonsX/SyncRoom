@@ -160,6 +160,10 @@ export type VoiceConfig = {
   maxMembers: number;
 };
 
+export type MediaExtractorConfig = {
+  baseUrl: string;
+};
+
 export type SecurityConfig = {
   allowedOrigins: string[];
   allowMissingOriginInDev: boolean;

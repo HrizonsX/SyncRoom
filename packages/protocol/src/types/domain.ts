@@ -6,7 +6,7 @@ export const PLAYBACK_SYNC_INTENTS = [
 ] as const;
 
 export type PlaybackSyncIntent = (typeof PLAYBACK_SYNC_INTENTS)[number];
-export const VIDEO_PROVIDER_IDS = ["bilibili"] as const;
+export const VIDEO_PROVIDER_IDS = ["bilibili", "generic", "iqiyi"] as const;
 export type VideoProviderId = (typeof VIDEO_PROVIDER_IDS)[number];
 export const PLAYBACK_SOURCE_TYPES = ["mpd", "m3u8", "mp4"] as const;
 export type PlaybackSourceType = (typeof PLAYBACK_SOURCE_TYPES)[number];

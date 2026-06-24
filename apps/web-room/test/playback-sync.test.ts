@@ -96,7 +96,7 @@ test("binds player events to playback update dispatch", () => {
     },
   });
 
-  listeners.get("waiting")?.forEach((listener) => listener());
+  listeners.get("play")?.forEach((listener) => listener());
   binding.dispose();
   listeners.get("pause")?.forEach((listener) => listener());
 
@@ -108,8 +108,8 @@ test("binds player events to playback update dispatch", () => {
       playback: {
         url: "https://syncroom.example.test/video.mpd",
         currentTime: 12,
-        playState: "buffering",
-        userInitiated: false,
+        playState: "playing",
+        userInitiated: true,
         playbackRate: 1,
         updatedAt: 2_000,
         serverTime: 2_000,
@@ -118,6 +118,39 @@ test("binds player events to playback update dispatch", () => {
       },
     },
   });
+});
+
+test("does not broadcast transient waiting events by default", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  const binding = bindPlaybackSyncControls({
+    media,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => 1,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  listeners.get("waiting")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.deepEqual(dispatched, []);
 });
 
 test("applies remote playback by seeking, rate changing, and playing", async () => {

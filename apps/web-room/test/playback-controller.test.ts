@@ -511,6 +511,33 @@ test("loads MP4 sources with the native video element", async () => {
   assert.equal(video.loadCount, 1);
 });
 
+test("notifies when a new playback source finishes loading", async () => {
+  const video = new FakeEventedVideoElement();
+  const loadedSources: unknown[] = [];
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    onPlaybackLoaded: (source) => loadedSources.push(source),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+
+  assert.deepEqual(loadedSources, [playbackSource]);
+});
+
 test("waits for native MP4 metadata before applying refreshed playback", async () => {
   const video = new FakeEventedVideoElement();
   video.readyState = 0;

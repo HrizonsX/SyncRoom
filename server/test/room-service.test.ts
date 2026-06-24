@@ -265,7 +265,7 @@ test("room service restores owner identity when the owner refreshes during empty
   assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
 });
 
-test("room service keeps chat history in room state for refreshed and new members", async () => {
+test("room service keeps chat messages out of persisted room state", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -314,23 +314,10 @@ test("room service keeps chat history in room state for refreshed and new member
     joined.memberToken,
     "sync:request",
   );
+  const storedRoom = await roomStore.getRoom(created.room.code);
 
-  assert.deepEqual(state.chatMessages, [
-    {
-      memberId: owner.memberId ?? owner.id,
-      displayName: "Alice",
-      content: "hello",
-      timestamp: 1_200,
-    },
-    {
-      kind: "system",
-      systemEventType: "member_joined",
-      memberId: owner.memberId ?? owner.id,
-      displayName: "Alice",
-      content: "Alice joined room",
-      timestamp: 1_400,
-    },
-  ]);
+  assert.deepEqual(state.chatMessages, []);
+  assert.deepEqual(storedRoom?.chatMessages, []);
 });
 
 test("room service transfers host to next joined member on explicit owner leave", async () => {
@@ -2693,6 +2680,57 @@ test("concurrent joins at capacity allow exactly one new member", async () => {
     2,
     "runtime member count must not exceed maxMembersPerRoom",
   );
+});
+
+test("previous member tokens do not bypass capacity after the member left", async () => {
+  const roomStore = createInMemoryRoomStore({ now: () => 1_000 });
+  const activeRooms = createActiveRoomRegistry();
+  const service = createRoomService({
+    config: { ...getDefaultSecurityConfig(), maxMembersPerRoom: 2 },
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms,
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => 1_000,
+    createRoomCode: () => "ROOM19",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const bob = createSession("bob");
+  const bobJoin = await service.joinRoomForSession(
+    bob,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  await service.leaveRoomForSession(bob, { reason: "explicit" });
+
+  const carol = createSession("carol");
+  await service.joinRoomForSession(
+    carol,
+    created.room.code,
+    created.room.joinToken,
+    "Carol",
+  );
+
+  const bobReloaded = createSession("bob-reloaded");
+  await assert.rejects(
+    () =>
+      service.joinRoomForSession(
+        bobReloaded,
+        created.room.code,
+        created.room.joinToken,
+        "Bob",
+        bobJoin.memberToken,
+      ),
+    /Room is full/,
+  );
+  assert.equal(activeRooms.getRoom(created.room.code)?.members.size, 2);
 });
 
 test("concurrent joins respect capacity even when shared runtime store flushes asynchronously", async () => {

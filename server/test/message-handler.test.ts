@@ -886,6 +886,16 @@ test("message handler routes host member management messages", async () => {
     memberToken: "target-token-1",
     displayName: "Bob",
   });
+  let targetClosed = false;
+  target.socket = {
+    readyState: 1,
+    OPEN: 1,
+    send() {},
+    close() {
+      targetClosed = true;
+    },
+    terminate() {},
+  } as Session["socket"];
 
   const handler = createMessageHandler({
     config: CONFIG,
@@ -976,10 +986,86 @@ test("message handler routes host member management messages", async () => {
     "transfer:target",
   ]);
   assert.deepEqual(errors, ["member_kicked"]);
+  assert.equal(targetClosed, true);
   assert.deepEqual(published, [
     "room_state_updated",
     "room_member_left",
     "room_state_updated",
+  ]);
+});
+
+test("message handler uses configured danmaku five second rate limit", async () => {
+  const errors: Array<{ code: string; retryAfterMs?: number }> = [];
+  const published: string[] = [];
+  const config = {
+    ...CONFIG,
+    rateLimits: {
+      ...CONFIG.rateLimits,
+      danmakuMessagePer5Seconds: 2,
+    },
+  };
+  const session = createSession("member-1", {
+    roomCode: "ROOM01",
+    memberId: "member-1",
+    memberToken: "member-token-1",
+    rateLimitState: createSessionRateLimitState(config, 0),
+  });
+  const handler = createMessageHandler({
+    config,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        return { room: null };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession() {
+        return { room: { code: "ROOM01" } };
+      },
+    },
+    logEvent() {},
+    send() {},
+    sendError(_socket, code, _message, payload) {
+      errors.push({
+        code,
+        retryAfterMs:
+          typeof payload?.retryAfterMs === "number"
+            ? payload.retryAfterMs
+            : undefined,
+      });
+    },
+    async publishRoomEvent(message) {
+      published.push(message.type);
+    },
+    instanceId: "node-a",
+    now: () => 1_000,
+  });
+
+  for (const content of ["a", "b", "c"]) {
+    await handler.handleClientMessage(session, {
+      type: "danmaku:message",
+      payload: {
+        memberToken: "member-token-1",
+        content,
+      },
+    });
+  }
+
+  assert.deepEqual(published, ["room_danmaku_message", "room_danmaku_message"]);
+  assert.deepEqual(errors, [
+    { code: "chat_rate_limited", retryAfterMs: 4_000 },
   ]);
 });
 

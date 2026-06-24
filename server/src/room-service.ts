@@ -46,7 +46,6 @@ import type {
 
 const PLAYBACK_AUTHORITY_WINDOW_MS = 1200;
 const MAX_VERSION_RETRIES = 3;
-const ROOM_CHAT_HISTORY_LIMIT = 200;
 const ROOM_LAST_ACTIVE_WRITE_INTERVAL_MS = 30_000;
 const JOIN_ADMISSION_LOCK_KEY = "join-admission";
 const JOIN_ADMISSION_LOCK_TTL_MS = 30_000;
@@ -1237,9 +1236,14 @@ export function createRoomService(options: {
     previousMemberToken?: string,
   ): Promise<JoinTargetState> {
     const activeRoom = await resolveActiveRoom(roomCode);
-    const reconnectMemberId =
+    const tokenMemberId =
       previousMemberToken && activeRoom
         ? await resolveMemberIdByToken(roomCode, previousMemberToken)
+        : null;
+    const reconnectMemberId =
+      tokenMemberId &&
+      (activeRoom?.members.has(tokenMemberId) || activeRoom?.members.size === 0)
+        ? tokenMemberId
         : null;
 
     return {
@@ -1639,25 +1643,6 @@ export function createRoomService(options: {
         { roomCode, reason },
       );
     }
-  }
-
-  async function appendChatMessageToRoom(
-    roomCode: string,
-    message: RoomChatMessage,
-  ): Promise<PersistedRoom | null> {
-    return withVersionRetry(roomCode, async (room) => {
-      const nextChatMessages = [...(room.chatMessages ?? []), message].slice(
-        -ROOM_CHAT_HISTORY_LIMIT,
-      );
-      const result = await roomStore.updateRoom(roomCode, room.version, {
-        chatMessages: nextChatMessages,
-        lastActiveAt: now(),
-      });
-      if (!result.ok) {
-        return null;
-      }
-      return result.room;
-    });
   }
 
   return {
@@ -2317,30 +2302,14 @@ export function createRoomService(options: {
         memberToken,
         "chat:message",
       );
-      const roomCode = access.persistedRoom.code;
-      const updatedRoom = await appendChatMessageToRoom(roomCode, message);
-
-      if (!updatedRoom) {
-        logEvent("room_persist_failed", {
-          roomCode,
-          sessionId: session.id,
-          provider: persistence.provider,
-          result: "error",
-          reason: "chat_history_update_conflict",
-        });
-        throw new RoomServiceError(
-          "internal_error",
-          INTERNAL_SERVER_ERROR_MESSAGE,
-          "internal_error",
-        );
-      }
-
-      return { room: updatedRoom };
+      void message;
+      return { room: access.persistedRoom };
     },
 
     async appendSystemChatMessageForRoom(roomCode, message) {
-      const updatedRoom = await appendChatMessageToRoom(roomCode, message);
-      return updatedRoom ? { room: updatedRoom } : null;
+      void message;
+      const room = await resolveRoom(roomCode);
+      return room ? { room } : null;
     },
 
     async getRoomStateForSession(session, memberToken, messageType) {

@@ -172,6 +172,7 @@ if (app) {
       return playbackSeq;
     },
     dispatchPlaybackUpdate: (message) => controller.sendPlaybackUpdate(message),
+    onPlaybackLoaded: () => controller.reportPlaybackLoaded(),
     onPlaybackError: ((error, source) => {
       const message = error instanceof Error ? error.message : String(error);
       const errorKey = `${source.url}:${message}`;
@@ -391,6 +392,11 @@ if (app) {
       return;
     }
 
+    if (action === "iqiyi-login-qr") {
+      controller.startProviderAuth({ providerId: "iqiyi", method: "qr" });
+      return;
+    }
+
     if (action === "collapse-bilibili-auth") {
       controller.collapseBilibiliAuth();
       return;
@@ -443,7 +449,7 @@ if (app) {
     }
 
     if (action === "retry-provider-proxy") {
-      controller.retryProviderProxyFallback();
+      void controller.retryProviderProxyFallback();
       return;
     }
 

@@ -64,6 +64,64 @@ segment.ts
   assert.equal(fetchCount, 1);
 });
 
+test("playback proxy extends resource TTL on active access", async () => {
+  let now = 1_000;
+  const ids = ["live.m3u8", "segment-1"];
+  const service = createPlaybackProxyService({
+    createResourceId: () => ids.shift() ?? "extra-id",
+    now: () => now,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () => new Response("segment"),
+  });
+  service.registerM3u8Manifest({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    ttlMs: 100,
+    manifestUrl: "https://cdn.example.test/live.m3u8",
+    manifest: `#EXTM3U
+#EXTINF:4.000,
+segment.ts
+#EXT-X-ENDLIST
+`,
+  });
+
+  now = 1_050;
+  assert.ok(
+    await service.resolveResource({
+      kind: "manifest",
+      resourceId: "live.m3u8",
+      headers: {},
+    }),
+  );
+  assert.ok(
+    await service.resolveResource({
+      kind: "segment",
+      resourceId: "segment-1",
+      headers: {},
+    }),
+  );
+
+  now = 1_120;
+  assert.equal(service.cleanupExpired(), 0);
+  assert.ok(
+    await service.resolveResource({
+      kind: "manifest",
+      resourceId: "live.m3u8",
+      headers: {},
+    }),
+  );
+  assert.ok(
+    await service.resolveResource({
+      kind: "segment",
+      resourceId: "segment-1",
+      headers: {},
+    }),
+  );
+
+  now = 1_221;
+  assert.equal(service.cleanupExpired(), 2);
+});
+
 test("playback proxy clears resources by room and provider auth lifecycle", async () => {
   const ids = [
     "room-a.m3u8",

@@ -46,6 +46,7 @@ export type PlaybackElementControllerOptions = {
 export type WebRoomPlaybackControllerOptions =
   PlaybackElementControllerOptions & {
     onPlaybackError?: (error: unknown, source: PlaybackSource) => void;
+    onPlaybackLoaded?: (source: PlaybackSource) => void;
     getSyncContext?: () => {
       memberToken: string;
       actorId: string;
@@ -572,6 +573,7 @@ export function createWebRoomPlaybackController(
       }
       if (loadedSource) {
         needsPlaybackHydration = true;
+        options.onPlaybackLoaded?.(state.playbackSource);
       }
 
       if (!isEventedMediaElement(video)) {

@@ -6,6 +6,7 @@ import { createPlaybackProxyController } from "../src/playback-proxy/controller.
 import { createPlaybackProxyRouter } from "../src/playback-proxy/router.js";
 import { createPlaybackProxyService } from "../src/playback-proxy/service.js";
 import {
+  createUnavailableProviderAuth,
   createVideoProviderRegistry,
   type ProviderParseInput,
   VideoProviderError,
@@ -307,6 +308,123 @@ function createDashProviderFixture() {
   };
 }
 
+function createGenericProviderFixture(input: {
+  candidate: Record<string, unknown>;
+}) {
+  const parseInputs: ProviderParseInput[] = [];
+  const authService = createVideoAuthSessionService({
+    store: createInMemoryVideoAuthSessionStore(),
+    defaultTtlMs: 600_000,
+    now: () => 1_000,
+  });
+  const provider: VideoProviderAdapter = {
+    id: "generic",
+    auth: createUnavailableProviderAuth("generic"),
+    matchUrl(value) {
+      return {
+        providerId: "generic",
+        kind: "ugc",
+        rawId: "generic:source",
+        page: null,
+        normalizedUrl: value,
+        requiresResolution: false,
+      };
+    },
+    async parse(parseInput) {
+      parseInputs.push(parseInput);
+      return {
+        providerId: "generic",
+        sourceId: "generic:source",
+        sourceUrl: parseInput.matchedUrl.normalizedUrl,
+        title: "Generic Test",
+        items: [
+          {
+            item: {
+              itemId: "default",
+              title: "Generic Test",
+              kind: "part",
+            },
+            candidates: [
+              {
+                id: "hls-720",
+                sourceType: "m3u8",
+                url: "https://cdn.example.test/index.m3u8",
+                qualityLabel: "720P",
+                ...input.candidate,
+              },
+            ],
+            defaultCandidateId: "hls-720",
+          },
+        ],
+      };
+    },
+  };
+  return {
+    authService,
+    parseInputs,
+    registry: createVideoProviderRegistry([provider]),
+  };
+}
+
+function createIqiyiProviderFixture() {
+  const parseInputs: ProviderParseInput[] = [];
+  const authService = createVideoAuthSessionService({
+    store: createInMemoryVideoAuthSessionStore(),
+    defaultTtlMs: 600_000,
+    now: () => 1_000,
+  });
+  const provider: VideoProviderAdapter = {
+    id: "iqiyi",
+    auth: createUnavailableProviderAuth("iqiyi"),
+    matchUrl(value) {
+      return {
+        providerId: "iqiyi",
+        kind: "ugc",
+        rawId: "iqiyi:source",
+        page: null,
+        normalizedUrl: value,
+        requiresResolution: false,
+      };
+    },
+    async parse(parseInput) {
+      parseInputs.push(parseInput);
+      return {
+        providerId: "iqiyi",
+        sourceId: "iqiyi:source",
+        sourceUrl: parseInput.matchedUrl.normalizedUrl,
+        title: "爱奇艺测试",
+        items: [
+          {
+            item: {
+              itemId: "default",
+              title: "爱奇艺测试",
+              kind: "part",
+            },
+            candidates: [
+              {
+                id: "iqiyi-720p",
+                sourceType: "mp4",
+                url: "https://cache.video.iqiyi.com/video.mp4",
+                qualityLabel: "720P",
+                upstreamHeaders: {
+                  Cookie: "P00001=secret-cookie",
+                  Referer: "https://www.iqiyi.com/",
+                },
+              },
+            ],
+            defaultCandidateId: "iqiyi-720p",
+          },
+        ],
+      };
+    },
+  };
+  return {
+    authService,
+    parseInputs,
+    registry: createVideoProviderRegistry([provider]),
+  };
+}
+
 async function postJson(baseUrl: string, path: string, body: unknown) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
@@ -425,6 +543,64 @@ test("video provider router returns proxied descriptors without leaking credenti
         `${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/proxy/segment/proxied-mp4`,
       ),
     );
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router passes iQIYI credentials server-side without leaking them", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createIqiyiProviderFixture();
+  await authService.authorize({
+    roomCode: "ABC123",
+    providerId: "iqiyi",
+    ownerMemberId: "owner-1",
+    profile: { id: "10086", displayName: "爱奇艺用户" },
+    credentials: {
+      cookies: "P00001=secret-cookie; P00003=10086",
+    },
+  });
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "iqiyi-proxied-mp4",
+    now: () => 1_000,
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/iqiyi/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.iqiyi.com/v_abc123.html",
+      policy: { proxy: false, shared: true },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.deepEqual(parseInputs[0]?.policy, {
+      proxy: false,
+      shared: false,
+    });
+    assert.equal(
+      parseInputs[0]?.credentials?.cookies,
+      "P00001=secret-cookie; P00003=10086",
+    );
+    const serialized = JSON.stringify(result.body);
+    assert.doesNotMatch(serialized, /P00001|secret-cookie|cache\.video/i);
+    assert.match(serialized, /\/proxy\/segment\/iqiyi-proxied-mp4/);
   } finally {
     await close(server);
   }
@@ -549,6 +725,161 @@ test("video provider router proxies inline DASH manifests without leaking upstre
         },
       },
     ]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router auto-proxies generic candidates that require upstream headers", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createGenericProviderFixture({
+    candidate: {
+      url: "https://cdn.example.test/protected/index.m3u8",
+      upstreamHeaders: {
+        Referer: "https://www.example.test/watch/1",
+        "User-Agent": "SyncRoomTest/1.0",
+      },
+    },
+  });
+  const upstreamRequests: Array<{
+    url: string;
+    headers: Record<string, string>;
+  }> = [];
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "generic-manifest",
+    now: () => 1_000,
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+    fetch: async (url, init) => {
+      upstreamRequests.push({
+        url: String(url),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      });
+      return new Response("#EXTM3U\n#EXTINF:6,\nsegment-1.ts\n", {
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    },
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/generic/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.example.test/watch/1",
+      policy: { proxy: false, shared: true },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.deepEqual(parseInputs[0]?.policy, {
+      proxy: false,
+      shared: false,
+    });
+    assert.deepEqual(upstreamRequests, [
+      {
+        url: "https://cdn.example.test/protected/index.m3u8",
+        headers: {
+          referer: "https://www.example.test/watch/1",
+          "user-agent": "SyncRoomTest/1.0",
+        },
+      },
+    ]);
+    const data = result.body.data as {
+      items?: Array<{ providerDescriptor?: Record<string, unknown> }>;
+    };
+    const descriptor = data.items?.[0]?.providerDescriptor as
+      | {
+          policy?: PlaybackProxyPolicy;
+          candidates?: Array<{ url?: string; upstreamHeaders?: unknown }>;
+        }
+      | undefined;
+    assert.deepEqual(descriptor?.policy, { proxy: true, shared: false });
+    assert.equal(
+      descriptor?.candidates?.[0]?.url,
+      `${baseUrl}/proxy/manifest/generic-manifest`,
+    );
+    assert.equal(descriptor?.candidates?.[0]?.upstreamHeaders, undefined);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router auto-proxies generic HTTP media on HTTPS pages", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, registry } = createGenericProviderFixture({
+    candidate: {
+      sourceType: "mp4",
+      url: "http://cdn.example.test/video.mp4",
+    },
+  });
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "generic-mp4",
+    now: () => 1_000,
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await fetch(`${baseUrl}/api/providers/generic/parse`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-proto": "https",
+        "x-forwarded-host": "room.example.test",
+      },
+      body: JSON.stringify({
+        roomCode: "ABC123",
+        memberToken: "owner-token",
+        url: "https://www.example.test/watch/1",
+        policy: { proxy: false, shared: false },
+      }),
+    });
+    const body = (await result.json()) as {
+      ok?: boolean;
+      data?: {
+        items?: Array<{ providerDescriptor?: Record<string, unknown> }>;
+      };
+    };
+
+    assert.equal(result.status, 200);
+    assert.equal(body.ok, true);
+    const descriptor = body.data?.items?.[0]?.providerDescriptor as
+      | {
+          policy?: PlaybackProxyPolicy;
+          candidates?: Array<{ url?: string }>;
+        }
+      | undefined;
+    assert.deepEqual(descriptor?.policy, { proxy: true, shared: false });
+    assert.equal(
+      descriptor?.candidates?.[0]?.url,
+      "https://room.example.test/proxy/segment/generic-mp4",
+    );
   } finally {
     await close(server);
   }

@@ -50,6 +50,51 @@ test("accepts a valid provider playback descriptor", () => {
   );
 });
 
+test("accepts a generic provider playback descriptor", () => {
+  assert.equal(
+    isProviderPlaybackDescriptor({
+      ...validProviderPlaybackDescriptor,
+      providerId: "generic",
+      sourceId: "https://example.com/watch/123",
+      sourceUrl: "https://example.com/watch/123",
+      title: "Generic video",
+      item: {
+        itemId: "default",
+        title: "Generic video",
+        kind: "part",
+      },
+      policy: {
+        proxy: true,
+        shared: false,
+      },
+      candidates: [
+        {
+          id: "hls",
+          sourceType: "m3u8",
+          url: "https://cdn.example.com/video/index.m3u8",
+          qualityLabel: "HLS",
+          default: true,
+        },
+      ],
+      defaultCandidateId: "hls",
+    }),
+    true,
+  );
+});
+
+test("accepts an iQIYI provider playback descriptor", () => {
+  assert.equal(
+    isProviderPlaybackDescriptor({
+      ...validProviderPlaybackDescriptor,
+      providerId: "iqiyi",
+      sourceId: "iqiyi:123",
+      sourceUrl: "https://www.iqiyi.com/v_123.html",
+      title: "iQIYI video",
+    }),
+    true,
+  );
+});
+
 test("rejects provider playback descriptors with unsupported provider or source type", () => {
   assert.equal(
     isProviderPlaybackDescriptor({
@@ -265,7 +310,7 @@ test("accepts low-cardinality playback report client messages", () => {
       payload: {
         memberToken: VALID_TOKEN,
         event: "proxy_fallback",
-        providerId: "bilibili",
+        providerId: "generic",
       },
     }),
     true,

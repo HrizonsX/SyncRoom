@@ -205,7 +205,7 @@ test("chat messages are rate limited per websocket session", async () => {
   ]);
 });
 
-test("danmaku messages are limited to one per second", async () => {
+test("danmaku messages use the configured five second window", async () => {
   const errors: unknown[][] = [];
   const published: RoomEventBusMessage[] = [];
   let now = 0;
@@ -274,7 +274,7 @@ test("danmaku messages are limited to one per second", async () => {
       "Danmaku messages are limited to one message every second.",
       {
         messageType: "danmaku:message",
-        retryAfterMs: 500,
+        retryAfterMs: 4_000,
       },
     ],
   ]);
@@ -480,9 +480,19 @@ test("danmaku messages use a separate rate limit from text chat", async () => {
   assert.equal(
     published.filter((message) => message.type === "room_danmaku_message")
       .length,
-    3,
+    2,
   );
-  assert.deepEqual(errors, []);
+  assert.deepEqual(errors, [
+    [
+      session.socket,
+      "chat_rate_limited",
+      "Danmaku messages are limited to one message every second.",
+      {
+        messageType: "danmaku:message",
+        retryAfterMs: 2_000,
+      },
+    ],
+  ]);
 });
 
 test("room event consumer broadcasts danmaku without loading durable room state", async () => {

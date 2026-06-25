@@ -480,10 +480,6 @@ export async function createRedisRuntimeStore(
               roomMembersKey(keyPrefix, session.roomCode),
               session.memberId,
             );
-            transaction.hdel(
-              roomMemberTokensKey(keyPrefix, session.roomCode),
-              session.memberId,
-            );
           }
         }
 

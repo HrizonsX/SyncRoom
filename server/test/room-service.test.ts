@@ -1363,6 +1363,7 @@ test("room service reuses member identity when reconnecting with the same member
     joined.memberToken,
     "sync:request",
   );
+  assert.equal(state.hostMemberId, originalMemberId);
   assert.deepEqual(state.members, [{ id: originalMemberId, name: "Alice" }]);
 });
 

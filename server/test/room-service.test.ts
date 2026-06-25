@@ -1367,6 +1367,61 @@ test("room service reuses member identity when reconnecting with the same member
   assert.deepEqual(state.members, [{ id: originalMemberId, name: "Alice" }]);
 });
 
+test("room service restores owner identity when refreshing while other members remain", async () => {
+  const roomStore = createInMemoryRoomStore({ now: () => 1_000 });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => 1_000,
+    createRoomCode: () => "ROOMRF",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const originalMemberId = owner.memberId;
+  assert.ok(originalMemberId);
+
+  const member = createSession("member");
+  await service.joinRoomForSession(
+    member,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  await service.leaveRoomForSession(owner);
+
+  const refreshedOwner = createSession("owner-refresh");
+  const joined = await service.joinRoomForSession(
+    refreshedOwner,
+    created.room.code,
+    created.room.joinToken,
+    "Alice",
+    created.memberToken,
+  );
+
+  assert.equal(joined.memberToken, created.memberToken);
+  assert.equal(refreshedOwner.memberId, originalMemberId);
+
+  const state = await service.getRoomStateForSession(
+    refreshedOwner,
+    joined.memberToken,
+    "sync:request",
+  );
+  assert.equal(state.hostMemberId, originalMemberId);
+  assert.deepEqual(
+    state.members.map((roomMember) => roomMember.id).sort(),
+    [member.memberId, originalMemberId].sort(),
+  );
+});
+
 test("room service updates member display name after join", async () => {
   const roomStore = createInMemoryRoomStore({ now: () => 1_000 });
   const service = createRoomService({

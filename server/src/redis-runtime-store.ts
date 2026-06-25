@@ -116,6 +116,7 @@ const RUNTIME_STORE_METHOD_NAMES = [
   "acquireRoomLock",
   "releaseRoomLock",
   "removeMember",
+  "removeMemberToken",
   "deleteRoom",
   "heartbeatNode",
   "listNodeStatuses",
@@ -787,6 +788,26 @@ export async function createRedisRuntimeStore(
         })(),
       );
       return removal;
+    },
+    removeMemberToken(code: string, memberId: string, memberToken?: string) {
+      ensurePendingCapacity("remove_member_token");
+      const removed = localRuntimeStore.removeMemberToken(
+        code,
+        memberId,
+        memberToken,
+      );
+      void trackOperation(
+        "remove_member_token",
+        (async () => {
+          const tokenKey = roomMemberTokensKey(keyPrefix, code);
+          const currentToken = await redis.hget(tokenKey, memberId);
+          if (!currentToken || (memberToken && currentToken !== memberToken)) {
+            return;
+          }
+          await redis.multi().hdel(tokenKey, memberId).exec();
+        })(),
+      );
+      return removed;
     },
     deleteRoom(code: string) {
       ensurePendingCapacity("delete_room");

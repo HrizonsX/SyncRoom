@@ -1240,11 +1240,7 @@ export function createRoomService(options: {
       previousMemberToken && activeRoom
         ? await resolveMemberIdByToken(roomCode, previousMemberToken)
         : null;
-    const reconnectMemberId =
-      tokenMemberId &&
-      (activeRoom?.members.has(tokenMemberId) || activeRoom?.members.size === 0)
-        ? tokenMemberId
-        : null;
+    const reconnectMemberId = tokenMemberId ?? null;
 
     return {
       activeRoom,
@@ -1443,6 +1439,17 @@ export function createRoomService(options: {
           roomEmpty: false,
           removed: false,
         };
+    if (
+      options.reason === "explicit" &&
+      session.memberId &&
+      session.memberToken
+    ) {
+      runtimeStore.removeMemberToken(
+        roomCode,
+        session.memberId,
+        session.memberToken,
+      );
+    }
     await runtimeStore.flush?.();
     clearSessionRoom(session);
 

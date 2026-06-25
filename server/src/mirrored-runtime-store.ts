@@ -93,6 +93,10 @@ export function createMirroredRuntimeStore(
       localRuntimeStore.removeMember,
       sharedRuntimeStore.removeMember,
     ),
+    removeMemberToken: mirrorLocalResult(
+      localRuntimeStore.removeMemberToken,
+      sharedRuntimeStore.removeMemberToken,
+    ),
     deleteRoom: mirrorVoidWrite(
       localRuntimeStore.deleteRoom,
       sharedRuntimeStore.deleteRoom,

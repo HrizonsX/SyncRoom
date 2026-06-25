@@ -58,6 +58,11 @@ export type RuntimeStore = {
     memberId: string,
     session?: Session,
   ) => { room: ActiveRoom | null; roomEmpty: boolean; removed: boolean };
+  removeMemberToken: (
+    code: string,
+    memberId: string,
+    memberToken?: string,
+  ) => boolean;
   deleteRoom: (code: string) => void;
   heartbeatNode: (status: ClusterNodeStatus) => Promise<void>;
   listNodeStatuses: (currentTime?: number) => Promise<ClusterNodeStatus[]>;
@@ -315,6 +320,17 @@ export function createInMemoryRuntimeStore(
     },
     removeMember(code, memberId, session) {
       return removeMemberFromRoom(rooms, code, memberId, session);
+    },
+    removeMemberToken(code, memberId, memberToken) {
+      const room = rooms.get(code) ?? null;
+      const currentToken = room?.memberTokens.get(memberId);
+      if (!room || !currentToken) {
+        return false;
+      }
+      if (memberToken && currentToken !== memberToken) {
+        return false;
+      }
+      return room.memberTokens.delete(memberId);
     },
     deleteRoom(code) {
       rooms.delete(code);

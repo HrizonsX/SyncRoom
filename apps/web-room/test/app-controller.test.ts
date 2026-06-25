@@ -995,6 +995,80 @@ test("starts iQIYI authorization through the provider API and keeps the modal op
   });
 });
 
+test("starts Huya authorization through the provider API and keeps the modal open", async () => {
+  const recorder = createSocketRecorder();
+  const calls: unknown[] = [];
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    providerApiClientFactory: (serverUrl) => ({
+      startAuth: async (input) => {
+        calls.push({ serverUrl, input });
+        throw new ProviderApiError(
+          "provider_auth_unavailable",
+          "Provider authorization is unavailable.",
+          501,
+          "auth_start_not_implemented",
+        );
+      },
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => ({
+        providerId: "generic",
+        sourceId: "unused",
+        sourceUrl: "https://example.com/watch",
+        title: "unused",
+        items: [],
+      }),
+    }),
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.startProviderAuth({ providerId: "huya", method: "qr" });
+
+  assert.deepEqual(calls, [
+    {
+      serverUrl: "ws://syncroom.example.test",
+      input: {
+        providerId: "huya",
+        roomCode: "ABC123",
+        memberToken: "valid-member-token-123",
+        method: "qr",
+      },
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.authStatus, "unauthorized");
+  assert.deepEqual(state.authPanel, {
+    open: true,
+    providerId: "huya",
+    method: "qr",
+    phase: "failed",
+    errorMessage: "Huya authorization is not connected yet.",
+  });
+});
+
 test("polls iQIYI QR authorization until the host is authorized", async () => {
   const recorder = createSocketRecorder();
   const pollCalls: unknown[] = [];
@@ -1681,8 +1755,11 @@ test("limits private room danmaku sends to one per second", () => {
     clearAuthPollTimeout: () => {},
   });
 
-  controller.sendDanmaku("first", { videoTime: 1 });
-  controller.sendDanmaku("second", { videoTime: 2 });
+  const firstAccepted = controller.sendDanmaku("first", { videoTime: 1 });
+  const secondAccepted = controller.sendDanmaku("second", { videoTime: 2 });
+
+  assert.equal(firstAccepted, true);
+  assert.equal(secondAccepted, false);
 
   assert.equal(
     recorder.sockets[0]?.sent.filter(
@@ -1707,7 +1784,9 @@ test("limits private room danmaku sends to one per second", () => {
 
   now = 11_000;
   timers[0]?.callback();
-  controller.sendDanmaku("third", { videoTime: 3 });
+  const thirdAccepted = controller.sendDanmaku("third", { videoTime: 3 });
+
+  assert.equal(thirdAccepted, true);
 
   assert.equal(
     recorder.sockets[0]?.sent.filter(

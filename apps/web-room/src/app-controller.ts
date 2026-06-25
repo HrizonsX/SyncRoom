@@ -96,6 +96,7 @@ const IQIYI_PROVIDER_HOSTS = new Set([
   "iq.com",
   "www.iq.com",
 ]);
+const HUYA_PROVIDER_HOSTS = new Set(["huya.com", "www.huya.com", "m.huya.com"]);
 
 function getProviderIdForParseUrl(url: string): VideoProviderId {
   try {
@@ -107,7 +108,9 @@ function getProviderIdForParseUrl(url: string): VideoProviderId {
           hostname.endsWith(".iqiyi.com") ||
           hostname.endsWith(".iq.com")
         ? "iqiyi"
-        : "generic";
+        : HUYA_PROVIDER_HOSTS.has(hostname) || hostname.endsWith(".huya.com")
+          ? "huya"
+          : "generic";
   } catch {
     return "generic";
   }
@@ -165,11 +168,11 @@ export type WebRoomAppController = {
   getState: () => WebRoomState;
   createRoom: (input?: CreateRoomInput) => void;
   joinRoom: (input: JoinRoomInput) => void;
-  sendChat: (content: string) => void;
+  sendChat: (content: string) => boolean;
   sendDanmaku: (
     content: string,
     options: { videoTime: number; color?: string },
-  ) => void;
+  ) => boolean;
   setRoomMemberPermission: (input: {
     targetMemberId: string;
     permission: RoomMemberPermissionName;
@@ -1070,6 +1073,50 @@ export function createWebRoomAppController(
     });
   }
 
+  function getProviderAuthPendingMessage(providerId: VideoProviderId): string {
+    if (providerId === "iqiyi") {
+      return "iQIYI authorization request is pending.";
+    }
+    if (providerId === "huya") {
+      return "Huya authorization request is pending.";
+    }
+    return "Provider authorization request is pending.";
+  }
+
+  function getProviderAuthUnavailableMessage(
+    providerId: VideoProviderId,
+  ): string {
+    if (providerId === "iqiyi") {
+      return "iQIYI authorization is not connected yet.";
+    }
+    if (providerId === "huya") {
+      return "Huya authorization is not connected yet.";
+    }
+    return "Provider authorization failed.";
+  }
+
+  function getProviderAuthVerificationFailedMessage(
+    providerId: VideoProviderId,
+  ): string {
+    if (providerId === "iqiyi") {
+      return "iQIYI authorization could not be verified.";
+    }
+    if (providerId === "huya") {
+      return "Huya authorization could not be verified.";
+    }
+    return "Bilibili authorization could not be verified.";
+  }
+
+  function getProviderAuthFailedMessage(providerId: VideoProviderId): string {
+    if (providerId === "huya") {
+      return "Huya QR authorization failed.";
+    }
+    if (providerId === "iqiyi") {
+      return "iQIYI authorization is not connected yet.";
+    }
+    return "Bilibili authorization failed.";
+  }
+
   function applyBilibiliAuthPollResult(
     method: WebRoomAuthMethod,
     providerId: VideoProviderId,
@@ -1140,10 +1187,7 @@ export function createWebRoomAppController(
           ...(providerId !== "bilibili" ? { providerId } : {}),
           method,
           phase: "failed",
-          message:
-            providerId === "iqiyi"
-              ? "iQIYI authorization could not be verified."
-              : "Bilibili authorization could not be verified.",
+          message: getProviderAuthVerificationFailedMessage(providerId),
         },
       });
       return;
@@ -1234,11 +1278,12 @@ export function createWebRoomAppController(
       resetBilibiliAuthPolling();
       applyProviderApiFailure({
         panel: "auth",
+        providerId,
         method: input.method,
         diagnostic: getProviderApiFailureDiagnostic(error, "auth"),
         message: getProviderApiFailureMessage(
           error,
-          "Bilibili authorization failed.",
+          getProviderAuthFailedMessage(providerId),
         ),
       });
     }
@@ -1632,37 +1677,45 @@ export function createWebRoomAppController(
     });
   }
 
-  function sendChat(content: string): void {
+  function sendChat(content: string): boolean {
     const trimmed = content.trim();
     if (!client || !activeSession || trimmed.length === 0) {
-      return;
+      return false;
     }
     if (!canUseMemberPermission("chat")) {
-      return;
+      return false;
+    }
+    if (
+      state.view === "joined" &&
+      typeof state.chatCooldownUntil === "number" &&
+      state.chatCooldownUntil > getCurrentTime()
+    ) {
+      return false;
     }
     client.sendChat({
       memberToken: activeSession.memberToken,
       content: trimmed,
     });
+    return true;
   }
 
   function sendDanmaku(
     content: string,
     options: { videoTime: number; color?: string },
-  ): void {
+  ): boolean {
     const trimmed = content.trim();
     if (!client || !activeSession || trimmed.length === 0) {
-      return;
+      return false;
     }
     if (!canUseMemberPermission("danmaku")) {
-      return;
+      return false;
     }
     if (
       state.view === "joined" &&
       typeof state.danmakuCooldownUntil === "number" &&
       state.danmakuCooldownUntil > getCurrentTime()
     ) {
-      return;
+      return false;
     }
     const videoTime =
       Number.isFinite(options.videoTime) && options.videoTime >= 0
@@ -1681,6 +1734,7 @@ export function createWebRoomAppController(
         danmakuCooldownUntil: getCurrentTime() + DANMAKU_SEND_COOLDOWN_MS,
       });
     }
+    return true;
   }
 
   function setRoomMemberPermission(input: {
@@ -1914,14 +1968,8 @@ export function createWebRoomAppController(
     resetBilibiliAuthPolling();
     const authGeneration = authPollGeneration;
     const context = getProviderRequestContext();
-    const pendingMessage =
-      input.providerId === "iqiyi"
-        ? "iQIYI authorization request is pending."
-        : "Provider authorization request is pending.";
-    const fallbackMessage =
-      input.providerId === "iqiyi"
-        ? "iQIYI authorization is not connected yet."
-        : "Provider authorization failed.";
+    const pendingMessage = getProviderAuthPendingMessage(input.providerId);
+    const fallbackMessage = getProviderAuthUnavailableMessage(input.providerId);
     emit({
       ...state,
       authStatus: "checking",
@@ -2375,7 +2423,8 @@ export function createWebRoomAppController(
       state.providerPlaybackStatus?.providerId;
     return providerId === "bilibili" ||
       providerId === "generic" ||
-      providerId === "iqiyi"
+      providerId === "iqiyi" ||
+      providerId === "huya"
       ? providerId
       : undefined;
   }

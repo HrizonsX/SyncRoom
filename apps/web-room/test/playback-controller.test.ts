@@ -511,6 +511,110 @@ test("loads MP4 sources with the native video element", async () => {
   assert.equal(video.loadCount, 1);
 });
 
+test("loads FLV and TS live sources through mpegts.js", async () => {
+  const createdSources: unknown[] = [];
+  const createdConfigs: unknown[] = [];
+  const lifecycleCalls: string[] = [];
+  const attachedVideos: FakeVideoElement[] = [];
+  const controller = createPlaybackElementController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for FLV playback");
+    },
+    loadMpegtsPlayer: async () => ({
+      isSupported: () => true,
+      createPlayer(source: unknown, config: unknown) {
+        createdSources.push(source);
+        createdConfigs.push(config);
+        return {
+          attachMediaElement(video: FakeVideoElement) {
+            lifecycleCalls.push("attach");
+            attachedVideos.push(video);
+          },
+          load() {
+            lifecycleCalls.push("load");
+          },
+          unload() {
+            lifecycleCalls.push("unload");
+          },
+          detachMediaElement() {
+            lifecycleCalls.push("detach");
+          },
+          destroy() {
+            lifecycleCalls.push("destroy");
+          },
+        };
+      },
+    }),
+  });
+  const video = new FakeVideoElement();
+
+  await controller.load(video, {
+    url: "https://syncroom.example.test/live.flv",
+    sourceType: "flv",
+    engine: "mpegts",
+    isLive: true,
+  });
+  await controller.load(video, {
+    url: "https://syncroom.example.test/live.ts",
+    sourceType: "ts",
+    engine: "mpegts",
+    isLive: true,
+  });
+  await controller.dispose();
+
+  assert.deepEqual(createdSources, [
+    {
+      type: "flv",
+      url: "https://syncroom.example.test/live.flv",
+      isLive: true,
+    },
+    {
+      type: "mpegts",
+      url: "https://syncroom.example.test/live.ts",
+      isLive: true,
+    },
+  ]);
+  assert.deepEqual(createdConfigs, [
+    {
+      enableStashBuffer: true,
+      stashInitialSize: 1048576,
+      lazyLoad: false,
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 10,
+      autoCleanupMinBackwardDuration: 5,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 6,
+      liveBufferLatencyMinRemain: 2,
+    },
+    {
+      enableStashBuffer: true,
+      stashInitialSize: 1048576,
+      lazyLoad: false,
+      autoCleanupSourceBuffer: true,
+      autoCleanupMaxBackwardDuration: 10,
+      autoCleanupMinBackwardDuration: 5,
+      liveBufferLatencyChasing: true,
+      liveBufferLatencyMaxLatency: 6,
+      liveBufferLatencyMinRemain: 2,
+    },
+  ]);
+  assert.deepEqual(lifecycleCalls, [
+    "attach",
+    "load",
+    "unload",
+    "detach",
+    "destroy",
+    "attach",
+    "load",
+    "unload",
+    "detach",
+    "destroy",
+  ]);
+  assert.deepEqual(attachedVideos, [video, video]);
+  assert.equal(video.src, "");
+  assert.deepEqual(video.removedAttributes, ["src", "src"]);
+});
+
 test("notifies when a new playback source finishes loading", async () => {
   const video = new FakeEventedVideoElement();
   const loadedSources: unknown[] = [];

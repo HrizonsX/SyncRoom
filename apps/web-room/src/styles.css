@@ -650,15 +650,14 @@ input:focus {
   height: 54px;
   display: grid;
   place-items: center;
-  padding: 10px;
-  border: 1px solid rgba(248, 250, 252, 0.16);
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.58);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: #f8fafc;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  backdrop-filter: blur(8px);
+  backdrop-filter: none;
   transition:
     opacity 0.16s ease,
     visibility 0.16s ease;
@@ -1800,6 +1799,10 @@ input:focus {
 
 .platform-logo-iqiyi {
   background: #00be06;
+}
+
+.platform-logo-huya {
+  background: #ff7a1a;
 }
 
 .platform-logo-svg {

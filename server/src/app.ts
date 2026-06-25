@@ -24,6 +24,7 @@ import { createPlaybackProxyRouter } from "./playback-proxy/router.js";
 import { createPlaybackProxyService } from "./playback-proxy/service.js";
 import { createBilibiliProvider } from "./providers/bilibili-provider.js";
 import { createGenericProvider } from "./providers/generic-provider.js";
+import { createHuyaProvider } from "./providers/huya-provider.js";
 import { createIqiyiProvider } from "./providers/iqiyi-provider.js";
 import {
   createMediaExtractorClient,
@@ -255,6 +256,11 @@ export async function createSyncServer(
       createIqiyiProvider({
         authSessions: videoAuthService,
         extractorClient: mediaExtractorClient,
+        fetch: dependencies.fetch,
+        now,
+      }),
+      createHuyaProvider({
+        authSessions: videoAuthService,
         fetch: dependencies.fetch,
         now,
       }),

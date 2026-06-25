@@ -5,7 +5,7 @@ The web room is the standalone static client under `apps/web-room/`. It reuses t
 ## When To Use It
 
 - Users want to join from a webpage without installing the extension.
-- A room host needs temporary Bilibili authorization to parse DASH/HLS playback sources.
+- A room host may use temporary platform authorization to parse login-required playback sources.
 - A room needs text chat, system messages, private room danmaku, and optional voice.
 - Operators want to host the web entry separately from the WebSocket/API server.
 
@@ -19,20 +19,20 @@ The default web nickname is `网页用户` plus two random uppercase letters. It
 
 ## Player
 
-The web room uses Shaka Player for DASH/MPD and HLS/m3u8 playback, and Media Chrome for player controls. Controls are still visible before a video is selected, but the timeline is not draggable without a playable source.
+The web room uses a small playback-engine layer above Media Chrome controls. Shaka Player handles DASH/MPD and HLS/m3u8 sources, native `<video>` handles direct MP4 sources, and mpegts.js handles FLV/TS live sources. Controls are still visible before a video is selected, but the timeline is not draggable without a playable source.
 
 Playback source selection:
 
 - DASH/HLS uses Shaka Player.
 - MP4 and similar direct links use native `<video>`.
-- FLV is not supported in the first release.
+- FLV/TS live sources use mpegts.js.
 - Browser-compatible AVC/H.264 candidates are preferred over HEVC candidates.
 
 The video title is shown inside the player controls instead of taking extra space under the announcement bar.
 
 ## Bilibili Authorization And Parsing
 
-Authorization lives behind the authorization-management dialog. Bilibili is the only adapted platform in this release. The web UI exposes QR login only.
+Authorization lives behind the authorization-management dialog. Bilibili, iQIYI, and Huya expose QR authorization in this release. Huya can still parse public live rooms without login when the room does not require authenticated playback.
 
 Only the room host can operate authorization:
 
@@ -40,7 +40,7 @@ Only the room host can operate authorization:
 - Members only see member-safe status and cannot operate host authorization.
 - Cookies, CSRF values, SESSDATA, Authorization headers, and equivalent credentials stay in temporary server-side state and are never sent to room members.
 
-Parsing converts Bilibili page links into playable candidates. Before playback starts, the host can choose quality and the `proxy` / `shared` policy.
+Parsing converts supported platform links into playable candidates. Before playback starts, the host can choose quality and the `proxy` / `shared` policy.
 
 ## proxy And shared
 
@@ -76,12 +76,12 @@ The web room reuses syncRoom's LiveKit voice flow. The voice entry is the microp
 - Mic on and mic off events create centered system chat messages.
 - Voice-service errors disappear after 3 seconds.
 
-LiveKit carries voice only. Main video is loaded by Shaka Player or native `<video>` from a URL.
+LiveKit carries voice only. Main video is loaded by the web-room playback engine from a URL.
 
 ## State And Persistence Boundaries
 
 - Chat and danmaku: session scoped, not persisted.
-- Bilibili authorization: temporary server-side state, not durable room storage.
+- Platform authorization: temporary server-side state, not durable room storage.
 - Web-room rejoin state: only safe room code, member token, server URL, and similar fields are stored.
 - Host authorization is cleared when the host leaves, the room is destroyed, the server restarts, or the host is offline past the server TTL.
 

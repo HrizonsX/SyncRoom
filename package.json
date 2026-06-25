@@ -48,5 +48,10 @@
     "prettier": "^3.5.3",
     "typescript-eslint": "^8.26.1",
     "tsx": "^4.20.6"
+  },
+  "overrides": {
+    "mpegts.js": {
+      "webworkify-webpack": "2.1.5"
+    }
   }
 }

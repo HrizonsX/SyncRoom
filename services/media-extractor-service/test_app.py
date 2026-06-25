@@ -202,6 +202,24 @@ class MediaExtractorServiceTests(unittest.TestCase):
         self.assertEqual(response["title"], "video.mp4")
         self.assertEqual(response["candidates"][0]["sourceType"], "mp4")
 
+    def test_static_extract_accepts_direct_flv_and_ts_urls(self):
+        def fail_extract(url, headers):
+            raise AssertionError("direct media URLs should not call yt-dlp")
+
+        flv_response = app.handle_extract_payload(
+            {"url": "https://cdn.example.com/live.flv"},
+            fail_extract,
+        )
+        ts_response = app.handle_extract_payload(
+            {"url": "https://cdn.example.com/live.ts"},
+            fail_extract,
+        )
+
+        self.assertEqual(flv_response["title"], "live.flv")
+        self.assertEqual(flv_response["candidates"][0]["sourceType"], "flv")
+        self.assertEqual(ts_response["title"], "live.ts")
+        self.assertEqual(ts_response["candidates"][0]["sourceType"], "ts")
+
     def test_static_extract_discovers_media_urls_from_html(self):
         html_body = """
             <html>
@@ -212,8 +230,10 @@ class MediaExtractorServiceTests(unittest.TestCase):
               <body>
                 <video src="/media/local.mp4"></video>
                 <source src="https://cdn.example.com/live/index.m3u8">
+                <source src="https://cdn.example.com/live/stream.flv">
                 <script>
                   window.dash = "https:\\/\\/cdn.example.com\\/dash\\/manifest.mpd";
+                  window.ts = "https:\\/\\/cdn.example.com\\/live\\/segment.ts";
                 </script>
               </body>
             </html>
@@ -273,8 +293,26 @@ class MediaExtractorServiceTests(unittest.TestCase):
                 },
                 {
                     "id": "static-4",
+                    "sourceType": "flv",
+                    "url": "https://cdn.example.com/live/stream.flv",
+                    "upstreamHeaders": {
+                        "Referer": "https://example.com/watch/123",
+                        "User-Agent": "SyncRoomTest/1.0",
+                    },
+                },
+                {
+                    "id": "static-5",
                     "sourceType": "mpd",
                     "url": "https://cdn.example.com/dash/manifest.mpd",
+                    "upstreamHeaders": {
+                        "Referer": "https://example.com/watch/123",
+                        "User-Agent": "SyncRoomTest/1.0",
+                    },
+                },
+                {
+                    "id": "static-6",
+                    "sourceType": "ts",
+                    "url": "https://cdn.example.com/live/segment.ts",
                     "upstreamHeaders": {
                         "Referer": "https://example.com/watch/123",
                         "User-Agent": "SyncRoomTest/1.0",

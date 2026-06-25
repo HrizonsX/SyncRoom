@@ -1,5 +1,6 @@
 import type { ClientMessage } from "@syncroom/protocol";
 import {
+  loadMpegtsPlayer as defaultLoadMpegtsPlayer,
   loadShakaPlayer as defaultLoadShakaPlayer,
   type PlaybackSource,
 } from "./playback-adapter.js";
@@ -38,8 +39,40 @@ export type ShakaPlayerModule = {
   };
 };
 
+export type MpegtsMediaDataSource = {
+  type: "flv" | "mpegts";
+  url: string;
+  isLive?: boolean;
+};
+
+export type MpegtsPlayerConfig = Record<string, unknown>;
+
+export type MpegtsPlayerInstance = {
+  attachMediaElement: (video: PlaybackVideoElement) => void;
+  load: () => void;
+  unload?: () => void;
+  detachMediaElement?: () => void;
+  destroy?: () => void;
+};
+
+export type MpegtsPlayerModule = {
+  isSupported?: () => boolean;
+  createPlayer?: (
+    mediaDataSource: MpegtsMediaDataSource,
+    config?: MpegtsPlayerConfig,
+  ) => MpegtsPlayerInstance;
+  default?: {
+    isSupported?: () => boolean;
+    createPlayer?: (
+      mediaDataSource: MpegtsMediaDataSource,
+      config?: MpegtsPlayerConfig,
+    ) => MpegtsPlayerInstance;
+  };
+};
+
 export type PlaybackElementControllerOptions = {
   loadShakaPlayer?: () => Promise<unknown>;
+  loadMpegtsPlayer?: () => Promise<unknown>;
   now?: () => number;
 };
 
@@ -69,6 +102,24 @@ function getShakaPlayerConstructor(
   return Player;
 }
 
+function getMpegtsApi(moduleValue: unknown): Required<MpegtsPlayerModule> {
+  const module = moduleValue as MpegtsPlayerModule;
+  const createPlayer = module.createPlayer ?? module.default?.createPlayer;
+  const isSupported =
+    module.isSupported ?? module.default?.isSupported ?? (() => true);
+  if (!createPlayer) {
+    throw new Error("mpegts.js module did not expose createPlayer.");
+  }
+  return {
+    isSupported,
+    createPlayer,
+    default: {
+      isSupported,
+      createPlayer,
+    },
+  };
+}
+
 function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}:${source.candidateId ?? ""}`;
 }
@@ -78,6 +129,11 @@ const LIVE_STREAMING_BUFFERING_GOAL_SECONDS = 8;
 const LIVE_STREAMING_PRESENTATION_DELAY_SECONDS = 6;
 const LIVE_STREAMING_REBUFFERING_GOAL_SECONDS = 3;
 const LIVE_RESUME_RELOAD_AFTER_PAUSE_MS = 1_500;
+const MPEGTS_LIVE_STASH_INITIAL_SIZE = 1024 * 1024;
+const MPEGTS_LIVE_BACKWARD_BUFFER_SECONDS = 10;
+const MPEGTS_LIVE_MIN_BACKWARD_BUFFER_SECONDS = 5;
+const MPEGTS_LIVE_MAX_LATENCY_SECONDS = 6;
+const MPEGTS_LIVE_MIN_REMAIN_SECONDS = 2;
 const LIVE_PLAYBACK_SYNC_EVENTS: readonly LocalPlaybackEvent[] = [
   "play",
   "pause",
@@ -201,6 +257,33 @@ function bindLivePlaybackResume(args: {
   };
 }
 
+function createMpegtsMediaDataSource(
+  source: PlaybackSource,
+): MpegtsMediaDataSource {
+  return {
+    type: source.sourceType === "ts" ? "mpegts" : "flv",
+    url: source.url,
+    ...(source.isLive ? { isLive: true } : {}),
+  };
+}
+
+function createMpegtsPlayerConfig(source: PlaybackSource): MpegtsPlayerConfig {
+  if (source.isLive !== true) {
+    return {};
+  }
+  return {
+    enableStashBuffer: true,
+    stashInitialSize: MPEGTS_LIVE_STASH_INITIAL_SIZE,
+    lazyLoad: false,
+    autoCleanupSourceBuffer: true,
+    autoCleanupMaxBackwardDuration: MPEGTS_LIVE_BACKWARD_BUFFER_SECONDS,
+    autoCleanupMinBackwardDuration: MPEGTS_LIVE_MIN_BACKWARD_BUFFER_SECONDS,
+    liveBufferLatencyChasing: true,
+    liveBufferLatencyMaxLatency: MPEGTS_LIVE_MAX_LATENCY_SECONDS,
+    liveBufferLatencyMinRemain: MPEGTS_LIVE_MIN_REMAIN_SECONDS,
+  };
+}
+
 type NativePlaybackVideoElement = PlaybackVideoElement & {
   readonly readyState?: number;
   readonly error?: { readonly code?: number; readonly message?: string } | null;
@@ -290,10 +373,12 @@ export function createPlaybackElementController(
   options: PlaybackElementControllerOptions = {},
 ) {
   const loadShakaPlayer = options.loadShakaPlayer ?? defaultLoadShakaPlayer;
+  const loadMpegtsPlayer = options.loadMpegtsPlayer ?? defaultLoadMpegtsPlayer;
   const getNow = (): number => options.now?.() ?? Date.now();
   let currentSourceKey: string | undefined;
   let currentVideo: PlaybackVideoElement | undefined;
   let shakaPlayer: ShakaPlayerInstance | undefined;
+  let mpegtsPlayer: MpegtsPlayerInstance | undefined;
   let livePlaybackResumeBinding: { dispose: () => void } | undefined;
   let pendingLoad:
     | {
@@ -315,6 +400,17 @@ export function createPlaybackElementController(
     }
     await shakaPlayer.destroy?.();
     shakaPlayer = undefined;
+  }
+
+  function destroyMpegtsPlayer(): void {
+    if (!mpegtsPlayer) {
+      return;
+    }
+    const player = mpegtsPlayer;
+    mpegtsPlayer = undefined;
+    player.unload?.();
+    player.detachMediaElement?.();
+    player.destroy?.();
   }
 
   async function ensureShakaPlayer(
@@ -389,6 +485,7 @@ export function createPlaybackElementController(
         pendingLoad = nextPendingLoad;
         nextPendingLoad.promise = (async () => {
           await destroyShakaPlayer();
+          destroyMpegtsPlayer();
           disposeLivePlaybackResumeBinding();
           currentSourceKey = undefined;
           video.src = source.url;
@@ -406,7 +503,49 @@ export function createPlaybackElementController(
         return true;
       }
 
+      if (source.engine === "mpegts") {
+        const nextPendingLoad = {
+          sourceKey: nextSourceKey,
+          video,
+          promise: Promise.resolve(),
+        };
+        pendingLoad = nextPendingLoad;
+        nextPendingLoad.promise = (async () => {
+          await destroyShakaPlayer();
+          destroyMpegtsPlayer();
+          disposeLivePlaybackResumeBinding();
+          currentSourceKey = undefined;
+          const mpegts = getMpegtsApi(await loadMpegtsPlayer());
+          if (!mpegts.isSupported()) {
+            throw new Error("mpegts.js is not supported in this browser.");
+          }
+          video.removeAttribute("src");
+          const player = mpegts.createPlayer(
+            createMpegtsMediaDataSource(source),
+            createMpegtsPlayerConfig(source),
+          );
+          mpegtsPlayer = player;
+          try {
+            player.attachMediaElement(video);
+            player.load();
+          } catch (error) {
+            destroyMpegtsPlayer();
+            throw error;
+          }
+          if (pendingLoad === nextPendingLoad) {
+            currentSourceKey = nextSourceKey;
+          }
+        })().finally(() => {
+          if (pendingLoad === nextPendingLoad) {
+            pendingLoad = undefined;
+          }
+        });
+        await nextPendingLoad.promise;
+        return true;
+      }
+
       await recreateShakaPlayerIfSourceChanged(video, nextSourceKey);
+      destroyMpegtsPlayer();
       const player = await ensureShakaPlayer(video);
       configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
@@ -445,6 +584,7 @@ export function createPlaybackElementController(
       currentVideo = undefined;
       pendingLoad = undefined;
       await destroyShakaPlayer();
+      destroyMpegtsPlayer();
     },
 
     async dispose(): Promise<void> {

@@ -27,6 +27,8 @@ restarting this process.
 - Accept one URL per request.
 - Use yt-dlp with `download=False`.
 - Return normalized playback candidates for SyncRoom providers.
+- Recognize direct/static `m3u8`, `mpd`, `mp4`, `flv`, and `ts`/`m2ts`
+  media URLs when yt-dlp does not have a platform extractor.
 - Treat headers and cookies as request-scoped input only.
 
 ## Non-goals
@@ -34,6 +36,7 @@ restarting this process.
 - Downloading media files.
 - Persisting cookies or login state.
 - Managing SyncRoom rooms, members, permissions, chat, or playback sync.
+- Executing page JavaScript or browser automation.
 - Handling DRM.
 
 ## Run

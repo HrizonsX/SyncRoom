@@ -363,13 +363,21 @@ async function proxyCandidate(args: {
     args.upstreamHeaders,
     args.candidate,
   );
-  if (args.candidate.sourceType === "mp4") {
+  if (
+    args.candidate.sourceType === "mp4" ||
+    args.candidate.sourceType === "flv" ||
+    args.candidate.sourceType === "ts"
+  ) {
+    const upstreamUrlAlternates = readCandidateUpstreamUrlAlternates(
+      args.candidate,
+    );
     const registered = args.playbackProxyService.registerSegment({
       roomCode: args.roomCode,
       providerId: args.providerId,
       upstreamUrl: args.candidate.url,
       publicBaseUrl: args.publicBaseUrl,
       upstreamHeaders,
+      fallbackUpstreamUrls: upstreamUrlAlternates?.[args.candidate.url],
     });
     return {
       ...args.candidate,

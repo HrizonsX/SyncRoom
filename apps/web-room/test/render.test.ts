@@ -661,6 +661,10 @@ test("disables danmaku sending during the one-second send cooldown", () => {
 
   assert.match(html, /data-danmaku-cooldown="true"/);
   assert.match(html, /data-danmaku-cooldown-seconds="1"/);
+  const playerDanmakuInputs =
+    html.match(/<input[\s\S]*?name="playerDanmaku"[\s\S]*?\/>/g) ?? [];
+  assert.ok(playerDanmakuInputs.length > 0);
+  assert.ok(playerDanmakuInputs.every((input) => !input.includes("disabled")));
   assert.match(html, /data-action="send-player-danmaku"[\s\S]*disabled/);
 });
 
@@ -779,18 +783,22 @@ test("renders authorization management as a platform list with platform auth ent
   assert.match(html, /data-platform-auth-list="true"/);
   assert.match(html, /data-platform-id="bilibili"/);
   assert.match(html, /data-platform-id="iqiyi"/);
+  assert.match(html, /data-platform-id="huya"/);
   assert.match(html, /data-auth-host="true"/);
   assert.match(html, /data-auth-method="qr"/);
   assert.match(html, /data-auth-phase="loading"/);
   assert.match(html, /class="platform-logo platform-logo-bilibili"/);
   assert.match(html, /class="platform-logo platform-logo-iqiyi"/);
+  assert.match(html, /class="platform-logo platform-logo-huya"/);
   assert.match(html, /aria-label="iQIYI Logo"/);
+  assert.match(html, /aria-label="Huya Logo"/);
   assert.match(html, /class="platform-logo-svg"/);
   assert.match(html, /aria-label="Bilibili 官方 Logo"/);
   assert.match(html, /正在准备二维码登录。/);
   assert.match(html, /data-action="collapse-bilibili-auth"/);
   assert.match(html, /data-action="iqiyi-login-qr"/);
   assert.match(html, /data-action="bilibili-login-qr"/);
+  assert.match(html, /data-action="huya-login-qr"/);
   assert.match(html, /data-ui-icon="refresh"/);
   assert.match(html, />收起二维码<\/span>/);
   assert.doesNotMatch(
@@ -895,6 +903,44 @@ test("localizes iQIYI authorization status inside the platform list", () => {
   assert.match(html, />刷新<\/span>/);
 });
 
+test("keeps inactive platform authorization actions visible while Huya QR is expanded", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "checking",
+    authPanel: {
+      open: true,
+      providerId: "huya",
+      method: "qr",
+      phase: "loading",
+      qrCodeUrl: "data:image/png;base64,huya",
+    },
+  });
+
+  const bilibiliStart = html.indexOf('data-platform-id="bilibili"');
+  const iqiyiStart = html.indexOf('data-platform-id="iqiyi"');
+  const huyaStart = html.indexOf('data-platform-id="huya"');
+  assert.ok(bilibiliStart >= 0);
+  assert.ok(iqiyiStart > bilibiliStart);
+  assert.ok(huyaStart > iqiyiStart);
+  const bilibiliRow = html.slice(bilibiliStart, iqiyiStart);
+  const iqiyiRow = html.slice(iqiyiStart, huyaStart);
+  const huyaRow = html.slice(huyaStart);
+
+  assert.match(
+    bilibiliRow,
+    /class="secondary-button platform-auth-action" data-action="bilibili-login-qr"/,
+  );
+  assert.match(
+    iqiyiRow,
+    /class="secondary-button platform-auth-action" data-action="iqiyi-login-qr"/,
+  );
+  assert.doesNotMatch(
+    huyaRow,
+    /class="secondary-button platform-auth-action" data-action="huya-login-qr"/,
+  );
+  assert.match(huyaRow, /class="auth-method auth-method-qr"/);
+});
+
 test("keeps authorized iQIYI profile out of the Bilibili authorization row", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,
@@ -918,6 +964,34 @@ test("keeps authorized iQIYI profile out of the Bilibili authorization row", () 
   assert.doesNotMatch(bilibiliRow, /爱奇艺用户/);
   assert.match(bilibiliRow, /B 站账号授权/);
   assert.match(iqiyiRow, /爱奇艺用户/);
+});
+
+test("keeps authorized Huya profile scoped to the Huya authorization row", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    authStatus: "authorized",
+    authPanel: {
+      open: true,
+      providerId: "huya",
+      method: "qr",
+      phase: "authorized",
+      profileName: "Huya User",
+    },
+  });
+
+  const bilibiliStart = html.indexOf('data-platform-id="bilibili"');
+  const iqiyiStart = html.indexOf('data-platform-id="iqiyi"');
+  const huyaStart = html.indexOf('data-platform-id="huya"');
+  assert.ok(bilibiliStart >= 0);
+  assert.ok(iqiyiStart > bilibiliStart);
+  assert.ok(huyaStart > iqiyiStart);
+  const bilibiliRow = html.slice(bilibiliStart, iqiyiStart);
+  const iqiyiRow = html.slice(iqiyiStart, huyaStart);
+  const huyaRow = html.slice(huyaStart);
+
+  assert.doesNotMatch(bilibiliRow, /Huya User/);
+  assert.doesNotMatch(iqiyiRow, /Huya User/);
+  assert.match(huyaRow, /Huya User/);
 });
 
 test("omits text-chat danmaku controls from the chat input", () => {

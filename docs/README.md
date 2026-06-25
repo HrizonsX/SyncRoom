@@ -18,8 +18,8 @@ This directory keeps the detailed docs that are intentionally linked from, but n
 - [Web room feature guide](./features/web-room.md)
 - [网页房间功能说明](./features/web-room.zh-CN.md)
 
-The web room docs cover the new standalone room workspace, Shaka Player + Media Chrome playback, QR-only Bilibili authorization management, `proxy/shared` playback policy, room chat, system messages, private danmaku, LiveKit voice entry, and persistence boundaries.
-网页房间文档覆盖本次新增的独立房间工作台、Shaka Player + Media Chrome 播放器、仅 QR 的 Bilibili 授权管理、`proxy/shared` 播放策略、房间聊天、系统消息、私有弹幕、LiveKit 语音入口和持久化边界。
+The web room docs cover the standalone room workspace, playback-engine routing for Shaka/native/mpegts.js, QR platform authorization management, `proxy/shared` playback policy, room chat, system messages, private danmaku, LiveKit voice entry, and persistence boundaries.
+网页房间文档覆盖独立房间工作台、Shaka/native/mpegts.js 播放引擎分发、平台二维码授权管理、`proxy/shared` 播放策略、房间聊天、系统消息、私有弹幕、LiveKit 语音入口和持久化边界。
 
 ## Operations / 运维
 

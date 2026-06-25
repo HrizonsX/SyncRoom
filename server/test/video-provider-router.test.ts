@@ -885,6 +885,67 @@ test("video provider router auto-proxies generic HTTP media on HTTPS pages", asy
   }
 });
 
+test("video provider router proxies FLV candidates as stream segments", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, registry } = createGenericProviderFixture({
+    candidate: {
+      id: "flv-live",
+      sourceType: "flv",
+      url: "https://cdn.example.test/live.flv",
+      qualityLabel: "720P FLV",
+    },
+  });
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "generic-flv",
+    now: () => 1_000,
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/generic/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.example.test/watch/live",
+      policy: { proxy: true, shared: false },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    const data = result.body.data as {
+      items?: Array<{ providerDescriptor?: Record<string, unknown> }>;
+    };
+    const descriptor = data.items?.[0]?.providerDescriptor as
+      | {
+          policy?: PlaybackProxyPolicy;
+          candidates?: Array<{ sourceType?: string; url?: string }>;
+        }
+      | undefined;
+    assert.deepEqual(descriptor?.policy, { proxy: true, shared: false });
+    assert.deepEqual(descriptor?.candidates?.[0], {
+      id: "flv-live",
+      sourceType: "flv",
+      url: `${baseUrl}/proxy/segment/generic-flv`,
+      qualityLabel: "720P FLV",
+    });
+  } finally {
+    await close(server);
+  }
+});
+
 test("video provider router requires owner authorization for shared playback parse", async () => {
   const { roomStore, runtimeStore } = await createRoomFixture();
   const { authService, parseInputs, registry } = createProviderFixture();

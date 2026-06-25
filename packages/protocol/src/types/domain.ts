@@ -6,9 +6,20 @@ export const PLAYBACK_SYNC_INTENTS = [
 ] as const;
 
 export type PlaybackSyncIntent = (typeof PLAYBACK_SYNC_INTENTS)[number];
-export const VIDEO_PROVIDER_IDS = ["bilibili", "generic", "iqiyi"] as const;
+export const VIDEO_PROVIDER_IDS = [
+  "bilibili",
+  "generic",
+  "iqiyi",
+  "huya",
+] as const;
 export type VideoProviderId = (typeof VIDEO_PROVIDER_IDS)[number];
-export const PLAYBACK_SOURCE_TYPES = ["mpd", "m3u8", "mp4"] as const;
+export const PLAYBACK_SOURCE_TYPES = [
+  "mpd",
+  "m3u8",
+  "mp4",
+  "flv",
+  "ts",
+] as const;
 export type PlaybackSourceType = (typeof PLAYBACK_SOURCE_TYPES)[number];
 export const PROVIDER_ITEM_KINDS = ["part", "episode", "live"] as const;
 export type ProviderItemKind = (typeof PROVIDER_ITEM_KINDS)[number];

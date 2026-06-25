@@ -95,6 +95,45 @@ test("accepts an iQIYI provider playback descriptor", () => {
   );
 });
 
+test("accepts FLV and TS provider playback descriptors", () => {
+  assert.equal(
+    isProviderPlaybackDescriptor({
+      ...validProviderPlaybackDescriptor,
+      providerId: "huya",
+      sourceId: "huya:660000",
+      sourceUrl: "https://www.huya.com/660000",
+      title: "Huya live",
+      item: {
+        itemId: "live-660000",
+        title: "Huya live",
+        kind: "live",
+        roomId: "660000",
+      },
+      policy: {
+        proxy: false,
+        shared: false,
+      },
+      candidates: [
+        {
+          id: "huya-flv-720p",
+          sourceType: "flv",
+          url: "https://cdn.huya.example/live/stream.flv",
+          qualityLabel: "720P",
+          default: true,
+        },
+        {
+          id: "huya-ts-source",
+          sourceType: "ts",
+          url: "https://cdn.huya.example/live/stream.ts",
+          qualityLabel: "TS",
+        },
+      ],
+      defaultCandidateId: "huya-flv-720p",
+    }),
+    true,
+  );
+});
+
 test("rejects provider playback descriptors with unsupported provider or source type", () => {
   assert.equal(
     isProviderPlaybackDescriptor({
@@ -108,9 +147,9 @@ test("rejects provider playback descriptors with unsupported provider or source 
       ...validProviderPlaybackDescriptor,
       candidates: [
         {
-          id: "flv",
-          sourceType: "flv",
-          url: "https://syncroom.example.test/video.flv",
+          id: "avi",
+          sourceType: "avi",
+          url: "https://syncroom.example.test/video.avi",
         },
       ],
     }),

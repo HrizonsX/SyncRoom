@@ -127,6 +127,10 @@ def infer_source_type(format_info: JsonObject) -> str | None:
         return "mpd"
     if ext == "mp4" or ".mp4" in url:
         return "mp4"
+    if ext == "flv" or ".flv" in url:
+        return "flv"
+    if ext in ("ts", "m2ts") or re.search(r"\.(?:ts|m2ts)(?:$|[?#])", url):
+        return "ts"
     return None
 
 
@@ -160,6 +164,10 @@ def get_static_media_source_type(value: str) -> str | None:
         return "mpd"
     if path.endswith(".mp4"):
         return "mp4"
+    if path.endswith(".flv"):
+        return "flv"
+    if path.endswith(".ts") or path.endswith(".m2ts"):
+        return "ts"
     return None
 
 
@@ -181,6 +189,10 @@ def build_static_format(
         format_info["ext"] = "mpd"
     elif source_type == "mp4":
         format_info["ext"] = "mp4"
+    elif source_type == "flv":
+        format_info["ext"] = "flv"
+    elif source_type == "ts":
+        format_info["ext"] = "ts"
     if headers:
         format_info["http_headers"] = headers
     return format_info
@@ -225,7 +237,7 @@ def collect_static_media_urls(page_url: str, body: str) -> list[str]:
             candidates.append(absolute_url)
 
     for match in re.finditer(
-        r"""(?P<url>(?:https?:)?//[^'"\\\s<>]+?\.(?:m3u8|mpd|mp4)(?:\?[^'"\\\s<>]*)?)""",
+        r"""(?P<url>(?:https?:)?//[^'"\\\s<>]+?\.(?:m3u8|mpd|mp4|flv|ts|m2ts)(?:\?[^'"\\\s<>]*)?)""",
         normalized_body,
         re.I,
     ):

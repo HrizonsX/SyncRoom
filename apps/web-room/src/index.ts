@@ -28,7 +28,9 @@ import {
 } from "./chat-scroll-state.js";
 import {
   readChatInputDraftState,
+  readPlayerDanmakuInputDraftState,
   restoreChatInputDraftState,
+  restorePlayerDanmakuInputDraftState,
 } from "./chat-input-draft-state.js";
 import {
   readDisclosureOpenState,
@@ -126,6 +128,8 @@ if (app) {
       ? findDanmakuLayerElement(appRoot)
       : null;
     const chatInputDraftState = readChatInputDraftState(appRoot);
+    const playerDanmakuInputDraftState =
+      readPlayerDanmakuInputDraftState(appRoot);
     const chatScrollState = readChatScrollState(appRoot);
     const disclosureOpenState = readDisclosureOpenState(appRoot);
     const danmakuLayerParking = parkDanmakuLayerElement(existingDanmakuLayer);
@@ -136,6 +140,10 @@ if (app) {
     try {
       appRoot.innerHTML = renderWebRoomApp(state);
       restoreChatInputDraftState(appRoot, chatInputDraftState);
+      restorePlayerDanmakuInputDraftState(
+        appRoot,
+        playerDanmakuInputDraftState,
+      );
       restoreChatScrollState(appRoot, chatScrollState);
       restoreDisclosureOpenState(appRoot, disclosureOpenState);
       preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
@@ -253,10 +261,14 @@ if (app) {
       'input[name="danmakuColor"]',
     );
 
-    controller.sendDanmaku(input?.value ?? "", {
+    const sent = controller.sendDanmaku(input?.value ?? "", {
       videoTime: getCurrentPlaybackTime(appRoot),
       color: colorInput?.value,
     });
+
+    if (!sent) {
+      return;
+    }
 
     if (input) {
       input.value = "";
@@ -275,8 +287,9 @@ if (app) {
       return;
     }
 
-    controller.sendChat(input.value);
-    input.value = "";
+    if (controller.sendChat(input.value)) {
+      input.value = "";
+    }
   }
 
   appRoot.addEventListener("click", (event) => {
@@ -339,11 +352,11 @@ if (app) {
       const colorInput = appRoot.querySelector<HTMLInputElement>(
         'input[name="danmakuColor"]',
       );
-      controller.sendDanmaku(chatInput?.value ?? "", {
+      const sent = controller.sendDanmaku(chatInput?.value ?? "", {
         videoTime: getCurrentPlaybackTime(appRoot),
         color: colorInput?.value,
       });
-      if (chatInput) {
+      if (sent && chatInput) {
         chatInput.value = "";
       }
       return;
@@ -394,6 +407,11 @@ if (app) {
 
     if (action === "iqiyi-login-qr") {
       controller.startProviderAuth({ providerId: "iqiyi", method: "qr" });
+      return;
+    }
+
+    if (action === "huya-login-qr") {
+      controller.startProviderAuth({ providerId: "huya", method: "qr" });
       return;
     }
 

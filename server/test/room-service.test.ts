@@ -183,6 +183,12 @@ test("room service keeps empty rooms for TTL and allows rejoin before expiry", a
   );
   assert.equal(joined.room.expiresAt, null);
   assert.ok(joiner.memberToken);
+  const joinedState = await service.getRoomStateForSession(
+    joiner,
+    joined.memberToken,
+    "sync:request",
+  );
+  assert.equal(joinedState.hostMemberId, joiner.memberId);
 });
 
 test("room service restores owner identity when the owner refreshes during empty-room TTL", async () => {

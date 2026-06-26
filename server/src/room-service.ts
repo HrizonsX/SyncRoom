@@ -1334,6 +1334,10 @@ export function createRoomService(options: {
       });
       const needsCapacitySerialization =
         joinTargetState.reconnectMemberId === null;
+      const shouldClaimRetainedRoomHost =
+        room.expiresAt !== null &&
+        joinTargetState.activeMemberCount === 0 &&
+        joinTargetState.reconnectMemberId === null;
 
       if (
         room.expiresAt === null &&
@@ -1352,10 +1356,27 @@ export function createRoomService(options: {
 
       const result = await roomStore.updateRoom(args.roomCode, room.version, {
         ...(room.expiresAt === null ? {} : { expiresAt: null }),
+        ...(shouldClaimRetainedRoomHost
+          ? {
+              ownerMemberId: args.session.id,
+              ownerDisplayName: args.session.displayName,
+            }
+          : {}),
         lastActiveAt: currentTime,
       });
       if (!result.ok) {
         return null;
+      }
+      if (
+        shouldClaimRetainedRoomHost &&
+        room.ownerMemberId &&
+        room.ownerMemberId !== args.session.id
+      ) {
+        await clearVideoAuthOwner({
+          roomCode: args.roomCode,
+          ownerMemberId: room.ownerMemberId,
+          reason: "retained_room_host_reclaimed",
+        });
       }
       return { room: result.room, joinTargetState };
     });

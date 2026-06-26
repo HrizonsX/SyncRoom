@@ -80,6 +80,7 @@ export type WebRoomPlaybackControllerOptions =
   PlaybackElementControllerOptions & {
     onPlaybackError?: (error: unknown, source: PlaybackSource) => void;
     onPlaybackLoaded?: (source: PlaybackSource) => void;
+    pageLifecycleTarget?: PlaybackPageLifecycleTarget | null;
     getSyncContext?: () => {
       memberToken: string;
       actorId: string;
@@ -90,6 +91,19 @@ export type WebRoomPlaybackControllerOptions =
       message: Extract<ClientMessage, { type: "playback:update" }>,
     ) => void;
   };
+
+type PlaybackPageLifecycleEvent = "pagehide" | "beforeunload" | "pageshow";
+
+type PlaybackPageLifecycleTarget = {
+  addEventListener?: (
+    type: PlaybackPageLifecycleEvent,
+    listener: () => void,
+  ) => void;
+  removeEventListener?: (
+    type: PlaybackPageLifecycleEvent,
+    listener: () => void,
+  ) => void;
+};
 
 function getShakaPlayerConstructor(
   moduleValue: unknown,
@@ -129,6 +143,8 @@ const LIVE_STREAMING_BUFFERING_GOAL_SECONDS = 8;
 const LIVE_STREAMING_PRESENTATION_DELAY_SECONDS = 6;
 const LIVE_STREAMING_REBUFFERING_GOAL_SECONDS = 3;
 const LIVE_RESUME_RELOAD_AFTER_PAUSE_MS = 1_500;
+const LIVE_HYDRATION_PLAY_RETRY_DELAY_MS = 500;
+const LIVE_HYDRATION_PLAY_RETRY_WINDOW_MS = 4_000;
 const MPEGTS_LIVE_STASH_INITIAL_SIZE = 1024 * 1024;
 const MPEGTS_LIVE_BACKWARD_BUFFER_SECONDS = 10;
 const MPEGTS_LIVE_MIN_BACKWARD_BUFFER_SECONDS = 5;
@@ -176,6 +192,16 @@ type LiveResumeVideoElement = PlaybackVideoElement & {
   removeEventListener?: (type: "play" | "pause", listener: () => void) => void;
   readonly paused?: boolean;
   play?: () => Promise<void> | void;
+};
+
+type LiveHydrationRetryMediaElement = EventedMediaElementLike & {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
+type MutableAudioMediaElement = EventedMediaElementLike & {
+  muted: boolean;
+  defaultMuted?: boolean;
 };
 
 function bindLivePlaybackResume(args: {
@@ -604,6 +630,31 @@ export function createWebRoomPlaybackController(
   let suppressLocalEventsUntil = 0;
   let syncGeneration = 0;
   let needsPlaybackHydration = true;
+  let liveHydrationPlayRetry: { dispose: () => void } | undefined;
+  let pageLifecycleEnding = false;
+  const pageLifecycleTarget =
+    options.pageLifecycleTarget === undefined
+      ? ((globalThis as Partial<PlaybackPageLifecycleTarget>) ?? null)
+      : options.pageLifecycleTarget;
+
+  const handlePageLifecycleEnd = (): void => {
+    // Browser refresh/navigation can emit a media pause while tearing down the
+    // page. Treat that as lifecycle noise instead of a user pause command.
+    pageLifecycleEnding = true;
+    suppressLocalEventsUntil = Number.POSITIVE_INFINITY;
+  };
+  const handlePageLifecycleShow = (): void => {
+    pageLifecycleEnding = false;
+    suppressLocalEventsUntil = 0;
+  };
+  if (typeof pageLifecycleTarget?.addEventListener === "function") {
+    pageLifecycleTarget.addEventListener("pagehide", handlePageLifecycleEnd);
+    pageLifecycleTarget.addEventListener(
+      "beforeunload",
+      handlePageLifecycleEnd,
+    );
+    pageLifecycleTarget.addEventListener("pageshow", handlePageLifecycleShow);
+  }
 
   function getNow(): number {
     return options.now?.() ?? Date.now();
@@ -615,6 +666,139 @@ export function createWebRoomPlaybackController(
     boundMedia = undefined;
     boundSyncUrl = undefined;
     boundSyncEventsKey = undefined;
+  }
+
+  function disposeLiveHydrationPlayRetry(): void {
+    liveHydrationPlayRetry?.dispose();
+    liveHydrationPlayRetry = undefined;
+  }
+
+  function isAutoplayBlockedError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    return (
+      error.name === "NotAllowedError" ||
+      /autoplay|user.*interact|user.*gesture|not allowed/i.test(error.message)
+    );
+  }
+
+  function isMutableAudioMediaElement(
+    media: EventedMediaElementLike,
+  ): media is MutableAudioMediaElement {
+    return (
+      typeof (media as Partial<MutableAudioMediaElement>).muted === "boolean"
+    );
+  }
+
+  async function tryMutedLiveHydrationPlayback(
+    media: EventedMediaElementLike,
+  ): Promise<boolean> {
+    if (!media.paused || !isMutableAudioMediaElement(media)) {
+      return false;
+    }
+    media.muted = true;
+    media.defaultMuted = true;
+    suppressLocalEventsUntil = Math.max(
+      suppressLocalEventsUntil,
+      getNow() + LIVE_HYDRATION_PLAY_RETRY_DELAY_MS,
+    );
+    try {
+      await media.play();
+      return !media.paused;
+    } catch {
+      return false;
+    }
+  }
+
+  function scheduleLiveHydrationPlayRetry(
+    media: EventedMediaElementLike,
+    generation: number,
+  ): void {
+    disposeLiveHydrationPlayRetry();
+    if (!media.paused) {
+      return;
+    }
+
+    const retryMedia = media as LiveHydrationRetryMediaElement;
+    const retryEvents = ["canplay", "loadeddata", "playing"] as const;
+    const deadline = getNow() + LIVE_HYDRATION_PLAY_RETRY_WINDOW_MS;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearRetryTimer = (): void => {
+      if (retryTimer === undefined) {
+        return;
+      }
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+
+    const cleanup = (): void => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      clearRetryTimer();
+      for (const event of retryEvents) {
+        retryMedia.removeEventListener(event, retryNow);
+      }
+      if (liveHydrationPlayRetry?.dispose === cleanup) {
+        liveHydrationPlayRetry = undefined;
+      }
+    };
+
+    const scheduleNextRetry = (): void => {
+      if (disposed || generation !== syncGeneration || getNow() >= deadline) {
+        cleanup();
+        return;
+      }
+      clearRetryTimer();
+      retryTimer = setTimeout(retryNow, LIVE_HYDRATION_PLAY_RETRY_DELAY_MS);
+    };
+
+    function retryNow(): void {
+      if (disposed || generation !== syncGeneration) {
+        cleanup();
+        return;
+      }
+      if (!media.paused) {
+        cleanup();
+        return;
+      }
+      suppressLocalEventsUntil = Math.max(
+        suppressLocalEventsUntil,
+        getNow() + LIVE_HYDRATION_PLAY_RETRY_DELAY_MS,
+      );
+      clearRetryTimer();
+      void Promise.resolve(media.play())
+        .then(() => {
+          if (media.paused) {
+            scheduleNextRetry();
+          } else {
+            cleanup();
+          }
+        })
+        .catch((error) => {
+          if (isAutoplayBlockedError(error)) {
+            void tryMutedLiveHydrationPlayback(media).then((played) => {
+              if (played) {
+                cleanup();
+              } else {
+                scheduleNextRetry();
+              }
+            });
+            return;
+          }
+          scheduleNextRetry();
+        });
+    }
+
+    for (const event of retryEvents) {
+      retryMedia.addEventListener(event, retryNow);
+    }
+    liveHydrationPlayRetry = { dispose: cleanup };
+    scheduleNextRetry();
   }
 
   function isEventedMediaElement(
@@ -664,7 +848,7 @@ export function createWebRoomPlaybackController(
       media,
       ...(events ? { events } : {}),
       getContext: () => {
-        if (getNow() < suppressLocalEventsUntil) {
+        if (pageLifecycleEnding || getNow() < suppressLocalEventsUntil) {
           return null;
         }
         const context = options.getSyncContext?.();
@@ -679,6 +863,7 @@ export function createWebRoomPlaybackController(
   return {
     async sync(root: ParentNode, state: WebRoomState): Promise<void> {
       const generation = ++syncGeneration;
+      disposeLiveHydrationPlayRetry();
       if (state.view !== "joined" || !state.playbackSource) {
         needsPlaybackHydration = true;
         disposePlaybackBinding();
@@ -731,7 +916,13 @@ export function createWebRoomPlaybackController(
       if (!state.playback || !currentUrl) {
         return;
       }
-      if (isLivePlayback && state.playback.userInitiated !== true) {
+      const shouldResumeLivePlayback =
+        isLivePlayback && state.playback.playState === "playing";
+      if (
+        isLivePlayback &&
+        state.playback.userInitiated !== true &&
+        state.playback.playState !== "playing"
+      ) {
         needsPlaybackHydration = false;
         return;
       }
@@ -749,10 +940,29 @@ export function createWebRoomPlaybackController(
             : {}),
           now: options.now,
         });
+        if (shouldResumeLivePlayback && video.paused) {
+          scheduleLiveHydrationPlayRetry(video, generation);
+        }
         if (result.applied || result.reason !== "url_mismatch") {
           needsPlaybackHydration = false;
         }
       } catch (error) {
+        if (
+          shouldResumeLivePlayback &&
+          generation === syncGeneration &&
+          video.paused
+        ) {
+          if (isAutoplayBlockedError(error)) {
+            const playedMuted = await tryMutedLiveHydrationPlayback(video);
+            if (playedMuted) {
+              needsPlaybackHydration = false;
+              return;
+            }
+          }
+          scheduleLiveHydrationPlayRetry(video, generation);
+          needsPlaybackHydration = false;
+          return;
+        }
         if (generation === syncGeneration) {
           options.onPlaybackError?.(error, state.playbackSource);
         }
@@ -760,7 +970,22 @@ export function createWebRoomPlaybackController(
     },
 
     async dispose(): Promise<void> {
+      if (typeof pageLifecycleTarget?.removeEventListener === "function") {
+        pageLifecycleTarget.removeEventListener(
+          "pagehide",
+          handlePageLifecycleEnd,
+        );
+        pageLifecycleTarget.removeEventListener(
+          "beforeunload",
+          handlePageLifecycleEnd,
+        );
+        pageLifecycleTarget.removeEventListener(
+          "pageshow",
+          handlePageLifecycleShow,
+        );
+      }
       disposePlaybackBinding();
+      disposeLiveHydrationPlayRetry();
       await elementController.dispose();
     },
   };

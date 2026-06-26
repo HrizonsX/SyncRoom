@@ -28,6 +28,7 @@ const PLAYBACK_EVENT_TYPES: readonly LocalPlaybackEvent[] = [
   "seeked",
   "ratechange",
 ];
+const LOCAL_PAUSE_TEARDOWN_GUARD_MS = 150;
 
 export type ApplyRemotePlaybackResult =
   | {
@@ -57,6 +58,10 @@ function deriveSyncIntent(event: LocalPlaybackEvent) {
   return undefined;
 }
 
+function normalizePlaybackRate(playbackRate: number): number {
+  return Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+}
+
 export function createPlaybackUpdateMessage(args: {
   memberToken: string;
   actorId: string;
@@ -74,7 +79,7 @@ export function createPlaybackUpdateMessage(args: {
     playState: derivePlayState(args.media, args.event),
     ...(syncIntent ? { syncIntent } : {}),
     userInitiated: args.event !== "waiting",
-    playbackRate: args.media.playbackRate,
+    playbackRate: normalizePlaybackRate(args.media.playbackRate),
     updatedAt: currentTime,
     serverTime: currentTime,
     actorId: args.actorId,
@@ -105,24 +110,61 @@ export function bindPlaybackSyncControls(args: {
   now?: () => number;
 }): { dispose: () => void } {
   const listeners = new Map<LocalPlaybackEvent, () => void>();
+  let pendingPauseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearPendingPause = (): void => {
+    if (pendingPauseTimer === null) {
+      return;
+    }
+    clearTimeout(pendingPauseTimer);
+    pendingPauseTimer = null;
+  };
+
+  const dispatchLocalEvent = (
+    event: LocalPlaybackEvent,
+    media: MediaElementLike = args.media,
+  ): void => {
+    const context = args.getContext();
+    if (!context) {
+      return;
+    }
+    args.dispatch(
+      createPlaybackUpdateMessage({
+        memberToken: context.memberToken,
+        actorId: context.actorId,
+        url: context.url,
+        media,
+        event,
+        seq: args.nextSeq(),
+        now: args.now,
+      }),
+    );
+  };
 
   for (const event of args.events ?? PLAYBACK_EVENT_TYPES) {
     const listener = () => {
-      const context = args.getContext();
-      if (!context) {
+      if (event === "pause") {
+        clearPendingPause();
+        const pausedSnapshot: MediaElementLike = {
+          currentTime: args.media.currentTime,
+          playbackRate: args.media.playbackRate,
+          paused: args.media.paused,
+          play: args.media.play,
+          pause: args.media.pause,
+        };
+        // Some browsers emit the media `pause` event just before `pagehide` on
+        // refresh/close. Re-read context after a short guard so teardown can
+        // suppress that synthetic pause without dropping ordinary user pauses.
+        pendingPauseTimer = setTimeout(() => {
+          pendingPauseTimer = null;
+          dispatchLocalEvent(event, pausedSnapshot);
+        }, LOCAL_PAUSE_TEARDOWN_GUARD_MS);
         return;
       }
-      args.dispatch(
-        createPlaybackUpdateMessage({
-          memberToken: context.memberToken,
-          actorId: context.actorId,
-          url: context.url,
-          media: args.media,
-          event,
-          seq: args.nextSeq(),
-          now: args.now,
-        }),
-      );
+      if (event === "play") {
+        clearPendingPause();
+      }
+      dispatchLocalEvent(event);
     };
     listeners.set(event, listener);
     args.media.addEventListener(event, listener);
@@ -130,6 +172,7 @@ export function bindPlaybackSyncControls(args: {
 
   return {
     dispose() {
+      clearPendingPause();
       for (const [event, listener] of listeners.entries()) {
         args.media.removeEventListener(event, listener);
       }
@@ -149,9 +192,8 @@ function getProjectedCurrentTime(args: {
     0,
     (args.nowMs - args.playback.serverTime) / 1_000,
   );
-  return (
-    args.playback.currentTime + elapsedSeconds * args.playback.playbackRate
-  );
+  const playbackRate = normalizePlaybackRate(args.playback.playbackRate);
+  return args.playback.currentTime + elapsedSeconds * playbackRate;
 }
 
 export async function applyRemotePlaybackState(args: {
@@ -184,8 +226,9 @@ export async function applyRemotePlaybackState(args: {
     actions.push("seek");
   }
 
-  if (Math.abs(args.media.playbackRate - args.playback.playbackRate) > 0.01) {
-    args.media.playbackRate = args.playback.playbackRate;
+  const playbackRate = normalizePlaybackRate(args.playback.playbackRate);
+  if (Math.abs(args.media.playbackRate - playbackRate) > 0.01) {
+    args.media.playbackRate = playbackRate;
     actions.push("ratechange");
   }
 

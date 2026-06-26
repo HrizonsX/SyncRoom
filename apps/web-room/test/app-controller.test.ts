@@ -2334,6 +2334,55 @@ test("shows live room offline parse guidance without shared/proxy fallback noise
   assert.match(state.diagnostics.at(-1) ?? "", /live_room_offline/);
 });
 
+test("shows Huya live unavailable guidance without Bilibili shared auth noise", async () => {
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "huya",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        assert.equal(input.providerId, "huya");
+        assert.deepEqual(input.policy, { proxy: false, shared: false });
+        throw Object.assign(
+          new ProviderApiError(
+            "provider_parse_failed",
+            "Provider request failed.",
+            400,
+          ),
+          { reason: "huya_live_room_unavailable" },
+        );
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.huya.com/cxy0714",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "failed");
+  assert.equal(
+    state.providerPicker?.errorMessage,
+    "虎牙直播间当前未开播或暂时没有可播放直播流。",
+  );
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /Bilibili/);
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /shared/);
+  assert.match(state.diagnostics.at(-1) ?? "", /huya_live_room_unavailable/);
+});
+
 test("parses non-Bilibili URLs through the generic provider without shared auth", async () => {
   const parseInputs: unknown[] = [];
   const { controller } = createJoinedHostController({
@@ -2783,8 +2832,10 @@ test("shares the selected provider quality as the default playback candidate", (
   );
 });
 
-test("does not share provider playback after the room socket disconnects", () => {
-  const { controller, recorder } = createJoinedHostController();
+test("does not share provider playback after disconnect when auto reconnect is disabled", () => {
+  const { controller, recorder } = createJoinedHostController({
+    autoReconnect: false,
+  });
 
   controller.setProviderPickerResults({
     items: [
@@ -2813,6 +2864,106 @@ test("does not share provider playback after the room socket disconnects", () =>
       /provider share denied: room disconnected/,
     );
   }
+});
+
+test("reconnects an active room session after socket close before sharing parsed live playback", async () => {
+  const { controller, recorder } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => ({
+        providerId: "bilibili",
+        sourceId: "35",
+        sourceUrl: "https://live.bilibili.com/35",
+        title: "Live room",
+        items: [
+          {
+            itemId: "live-35",
+            title: "Live room",
+            kind: "live",
+            qualityLabel: "720P",
+            sourceType: "m3u8",
+            providerDescriptor: {
+              providerId: "bilibili",
+              sourceId: "35",
+              sourceUrl: "https://live.bilibili.com/35",
+              title: "Live room",
+              item: {
+                itemId: "live-35",
+                title: "Live room",
+                kind: "live",
+                roomId: "35",
+              },
+              policy: input.policy,
+              candidates: [
+                {
+                  id: "hls-live",
+                  sourceType: "m3u8",
+                  url: "https://syncroom.example.test/proxy/live.m3u8",
+                  qualityLabel: "720P",
+                  codecs: "avc",
+                  default: true,
+                },
+              ],
+              defaultCandidateId: "hls-live",
+            },
+          },
+        ],
+      }),
+    }),
+  });
+
+  recorder.sockets[0]?.emit("close");
+
+  assert.equal(recorder.sockets.length, 2);
+  recorder.sockets[1]?.emit("open");
+  const rejoin = recorder.sockets[1]?.sent.at(-1) as
+    | { type?: string; payload?: Record<string, unknown> }
+    | undefined;
+  assert.equal(rejoin?.type, "room:join");
+  assert.deepEqual(rejoin?.payload, {
+    roomCode: "ABC123",
+    joinToken: "valid-join-token-123",
+    memberToken: "valid-member-token-123",
+    displayName: "Alice",
+    protocolVersion: rejoin?.payload?.protocolVersion,
+  });
+  assert.equal(typeof rejoin?.payload?.protocolVersion, "number");
+  recorder.sockets[1]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:joined",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.parseBilibiliUrl({
+    url: "https://live.bilibili.com/35",
+    proxy: false,
+    shared: false,
+  });
+  controller.shareSelectedProviderItem();
+
+  const shared = recorder.sockets[1]?.sent.at(-1) as
+    | {
+        type?: string;
+        payload?: { video?: { provider?: ProviderPlaybackDescriptor } };
+      }
+    | undefined;
+  assert.equal(shared?.type, "video:share");
+  assert.equal(shared?.payload?.video?.provider?.item.kind, "live");
 });
 
 test("shares live provider playback with an initial playing state", () => {

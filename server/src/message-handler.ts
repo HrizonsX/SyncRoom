@@ -37,6 +37,8 @@ type RoomEventBusPublishInput<T> = T extends unknown
   ? Omit<T, "sourceInstanceId" | "emittedAt">
   : never;
 
+const HOST_DISCONNECT_TRANSFER_GRACE_MS = 5_000;
+
 export function createMessageHandler(options: {
   config: {
     maxMembersPerRoom: number;
@@ -102,6 +104,10 @@ export function createMessageHandler(options: {
       memberToken: string,
       targetMemberId: string,
     ) => Promise<{ room: { code: string } }>;
+    transferDisconnectedHostIfMissing?: (
+      roomCode: string,
+      ownerMemberId: string,
+    ) => Promise<{ room: { code: string } | null; hostTransferred: boolean }>;
     shareVideoForSession: (
       session: Session,
       memberToken: string,
@@ -179,6 +185,7 @@ export function createMessageHandler(options: {
   maxPendingPublishes?: number;
   backpressureWaitMs?: number;
   publishTimeoutMs?: number;
+  hostDisconnectTransferGraceMs?: number;
   onRoomJoined?: (
     session: Session,
     roomCode: string,
@@ -201,6 +208,8 @@ export function createMessageHandler(options: {
   const maxPendingPublishes = options.maxPendingPublishes ?? 256;
   const backpressureWaitMs = options.backpressureWaitMs ?? 5_000;
   const publishTimeoutMs = options.publishTimeoutMs ?? 5_000;
+  const hostDisconnectTransferGraceMs =
+    options.hostDisconnectTransferGraceMs ?? HOST_DISCONNECT_TRANSFER_GRACE_MS;
 
   const systemChatSuffix: Record<RoomSystemChatEventType, string> = {
     member_joined: "加入了房间",
@@ -569,6 +578,53 @@ export function createMessageHandler(options: {
           origin: session.origin,
         },
       );
+    }
+    if (
+      reason === "disconnect" &&
+      memberRemoved &&
+      room &&
+      roomService.transferDisconnectedHostIfMissing
+    ) {
+      // Closing a tab and refreshing both surface as WebSocket disconnects.
+      // Wait briefly so a refreshed host can reclaim the same member token
+      // before we promote the next still-online member.
+      const transferTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            const transfer =
+              await roomService.transferDisconnectedHostIfMissing!(
+                roomCode,
+                memberId,
+              );
+            if (!transfer.hostTransferred || !transfer.room) {
+              return;
+            }
+            await firePublishRoomEvent(
+              {
+                type: "room_state_updated",
+                roomCode: transfer.room.code,
+              },
+              {
+                reason: "host_disconnect_transfer_broadcast_failed",
+                sessionId: session.id,
+                remoteAddress: session.remoteAddress,
+                origin: session.origin,
+              },
+            );
+          } catch (error) {
+            logEvent("host_disconnect_transfer_failed", {
+              sessionId: session.id,
+              roomCode,
+              memberId,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+              result: "error",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        })();
+      }, hostDisconnectTransferGraceMs);
+      transferTimer.unref?.();
     }
   }
 

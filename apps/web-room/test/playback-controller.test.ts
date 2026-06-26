@@ -57,6 +57,26 @@ class FakeEventedVideoElement extends FakeVideoElement {
   }
 }
 
+class FakePageLifecycleTarget {
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const listeners = this.listeners.get(type) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  emit(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener();
+    }
+  }
+}
+
 function createPlaybackRoot(video: FakeEventedVideoElement): ParentNode {
   return {
     querySelector(selector: string) {
@@ -988,6 +1008,86 @@ test("hydrates persisted self playback when a refreshed controller sees an alrea
   assert.equal(video.currentTime, 0);
 });
 
+test("does not broadcast unload-time pause while the page is refreshing", async () => {
+  const video = new FakeEventedVideoElement();
+  const pageLifecycleTarget = new FakePageLifecycleTarget();
+  const dispatched: unknown[] = [];
+  let seq = 0;
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const controller = createWebRoomPlaybackController({
+    pageLifecycleTarget,
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-host",
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    dispatchPlaybackUpdate: (message) => dispatched.push(message),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+
+  pageLifecycleTarget.emit("pagehide");
+  video.paused = true;
+  video.emit("pause");
+
+  assert.deepEqual(dispatched, []);
+});
+
+test("does not broadcast pause when media pauses just before pagehide", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const video = new FakeEventedVideoElement();
+  const pageLifecycleTarget = new FakePageLifecycleTarget();
+  const dispatched: unknown[] = [];
+  let seq = 0;
+  const playbackSource = {
+    url: "https://syncroom.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const controller = createWebRoomPlaybackController({
+    pageLifecycleTarget,
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-host",
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    dispatchPlaybackUpdate: (message) => dispatched.push(message),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+
+  video.paused = true;
+  video.emit("pause");
+  pageLifecycleTarget.emit("pagehide");
+  t.mock.timers.tick(150);
+
+  assert.deepEqual(dispatched, []);
+});
+
 test("does not seek or pause live playback from persisted room playback state", async () => {
   const video = new FakeEventedVideoElement();
   video.currentTime = 62;
@@ -1027,6 +1127,175 @@ test("does not seek or pause live playback from persisted room playback state", 
   });
 
   assert.equal(video.currentTime, 62);
+  assert.equal(video.paused, false);
+});
+
+test("resumes live playback from refreshed room state when the room was playing", async () => {
+  const video = new FakeEventedVideoElement();
+  video.currentTime = 62;
+  video.paused = true;
+  const sharedUrl = "https://live.bilibili.com/22889518";
+  const playbackSource = {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playbackSource,
+    playback: {
+      url: sharedUrl,
+      currentTime: 0,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  assert.equal(video.currentTime, 62);
+  assert.equal(video.paused, false);
+});
+
+test("retries refreshed live playback when the initial play is interrupted", async () => {
+  class InterruptedFirstPlayVideoElement extends FakeEventedVideoElement {
+    playCalls = 0;
+
+    override async play(): Promise<void> {
+      this.playCalls += 1;
+      if (this.playCalls === 1) {
+        throw new Error("play interrupted by source load");
+      }
+      this.paused = false;
+    }
+  }
+
+  const video = new InterruptedFirstPlayVideoElement();
+  video.currentTime = 62;
+  video.paused = true;
+  const sharedUrl = "https://live.bilibili.com/22889518";
+  const playbackSource = {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playbackSource,
+    playback: {
+      url: sharedUrl,
+      currentTime: 0,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  assert.equal(video.playCalls, 1);
+  assert.equal(video.paused, true);
+
+  video.emit("canplay");
+  await Promise.resolve();
+
+  assert.equal(video.playCalls, 2);
+  assert.equal(video.paused, false);
+});
+
+test("starts refreshed live playback muted when autoplay blocks sound", async () => {
+  class AutoplayBlockedVideoElement extends FakeEventedVideoElement {
+    muted = false;
+    playCalls = 0;
+
+    override async play(): Promise<void> {
+      this.playCalls += 1;
+      if (!this.muted) {
+        const error = new Error("autoplay blocked");
+        error.name = "NotAllowedError";
+        throw error;
+      }
+      this.paused = false;
+    }
+  }
+
+  const video = new AutoplayBlockedVideoElement();
+  video.currentTime = 62;
+  video.paused = true;
+  const sharedUrl = "https://live.bilibili.com/22889518";
+  const playbackSource = {
+    url: "https://syncroom.example.test/proxy/manifest/live.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playbackSource,
+    playback: {
+      url: sharedUrl,
+      currentTime: 0,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  assert.equal(video.playCalls, 2);
+  assert.equal(video.muted, true);
   assert.equal(video.paused, false);
 });
 
@@ -1073,7 +1342,8 @@ test("starts live playback from a user initiated shared state", async () => {
   assert.equal(video.paused, false);
 });
 
-test("syncs local live play and pause without broadcasting live seek or buffering", async () => {
+test("syncs local live play and pause without broadcasting live seek or buffering", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const video = new FakeEventedVideoElement();
   const dispatched: unknown[] = [];
   const sharedUrl = "https://live.bilibili.com/22889518";
@@ -1131,6 +1401,7 @@ test("syncs local live play and pause without broadcasting live seek or bufferin
   video.currentTime = 24;
   video.emit("seeked");
   video.emit("waiting");
+  t.mock.timers.tick(150);
 
   assert.deepEqual(dispatched, [
     {

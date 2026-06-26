@@ -381,6 +381,130 @@ test("room service transfers host to next joined member on explicit owner leave"
   );
 });
 
+test("room service transfers disconnected host to earliest still-online member", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "HOST0D",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const ownerMemberId = owner.memberId!;
+  const firstJoiner = createSession("first-joiner");
+  const firstJoined = await service.joinRoomForSession(
+    firstJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const secondJoiner = createSession("second-joiner");
+  await service.joinRoomForSession(
+    secondJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Carol",
+  );
+
+  currentTime = 2_000;
+  const disconnected = await service.leaveRoomForSession(owner);
+  assert.equal(disconnected.hostTransferred, false);
+  assert.equal(
+    (await roomStore.getRoom(created.room.code))?.ownerMemberId,
+    ownerMemberId,
+  );
+
+  const transferred = await service.transferDisconnectedHostIfMissing(
+    created.room.code,
+    ownerMemberId,
+  );
+  const state = await service.getRoomStateForSession(
+    firstJoiner,
+    firstJoined.memberToken,
+    "sync:request",
+  );
+  const persisted = await roomStore.getRoom(created.room.code);
+
+  assert.equal(transferred.hostTransferred, true);
+  assert.equal(state.hostMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerMemberId, firstJoiner.memberId);
+  assert.equal(persisted?.ownerDisplayName, "Bob");
+  assert.deepEqual(
+    state.members.map((member) => member.id),
+    [firstJoiner.memberId, secondJoiner.memberId],
+  );
+});
+
+test("room service keeps host when disconnected owner reconnects before transfer", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "HOST0R",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const ownerMemberId = owner.memberId!;
+  const firstJoiner = createSession("first-joiner");
+  const firstJoined = await service.joinRoomForSession(
+    firstJoiner,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+
+  currentTime = 2_000;
+  await service.leaveRoomForSession(owner);
+  const refreshedOwner = createSession("owner-refresh");
+  await service.joinRoomForSession(
+    refreshedOwner,
+    created.room.code,
+    created.room.joinToken,
+    "Alice",
+    created.memberToken,
+  );
+
+  const transferred = await service.transferDisconnectedHostIfMissing(
+    created.room.code,
+    ownerMemberId,
+  );
+  const ownerState = await service.getRoomStateForSession(
+    refreshedOwner,
+    created.memberToken,
+    "sync:request",
+  );
+  const joinerState = await service.getRoomStateForSession(
+    firstJoiner,
+    firstJoined.memberToken,
+    "sync:request",
+  );
+
+  assert.equal(transferred.hostTransferred, false);
+  assert.equal(refreshedOwner.memberId, ownerMemberId);
+  assert.equal(ownerState.hostMemberId, ownerMemberId);
+  assert.equal(joinerState.hostMemberId, ownerMemberId);
+});
+
 test("room service enforces host-managed member permissions", async () => {
   const service = createRoomService({
     config: getDefaultSecurityConfig(),

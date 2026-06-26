@@ -242,6 +242,7 @@ type PendingAction =
       memberToken?: string;
       displayName: string;
       serverUrl: string;
+      reconnect?: boolean;
     };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -545,6 +546,7 @@ export function createWebRoomAppController(
   let client: WebRoomSocketClient | null = null;
   let activeSession: PersistedWebRoomSession | null = null;
   let pendingAction: PendingAction | null = null;
+  let suppressNextSocketReconnect = false;
   let authPollTimer: AuthPollTimeoutHandle | null = null;
   let authPollGeneration = 0;
   let chatCooldownTimer: AuthPollTimeoutHandle | null = null;
@@ -1339,6 +1341,7 @@ export function createWebRoomAppController(
   function getProviderApiFailureMessage(
     error: unknown,
     fallbackMessage: string,
+    providerId?: VideoProviderId,
   ): string {
     const providerError = error as Partial<ProviderApiError>;
     if (providerError.code === "provider_auth_required") {
@@ -1374,10 +1377,36 @@ export function createWebRoomAppController(
     if (providerError.reason === "extractor_auth_required") {
       return "当前平台需要登录态或 Cookie，通用解析暂不支持；可以使用公开可访问的 mp4/m3u8 链接，或后续接入该平台专属 provider。";
     }
+    if (providerId === "huya") {
+      if (
+        providerError.reason === "huya_live_room_offline" ||
+        providerError.reason === "huya_live_room_unavailable"
+      ) {
+        return "虎牙直播间当前未开播或暂时没有可播放直播流。";
+      }
+      if (providerError.reason === "huya_no_live_flv_candidates") {
+        return "虎牙直播间暂时没有可播放的 FLV 直播流。";
+      }
+      if (
+        typeof providerError.reason === "string" &&
+        providerError.reason.startsWith("huya_room_")
+      ) {
+        return "虎牙直播间请求失败，请稍后重试。";
+      }
+      if (providerError.code === "unsupported_source") {
+        return "暂不支持这个虎牙链接。";
+      }
+      if (providerError.code === "provider_parse_failed") {
+        return "虎牙直播解析失败，请稍后重试。";
+      }
+    }
     if (
       providerError.code === "provider_parse_failed" ||
       (error instanceof Error && error.message === "Provider request failed.")
     ) {
+      if (providerId && providerId !== "bilibili") {
+        return "解析失败，请稍后重试。";
+      }
       return "解析失败，请稍后重试；如果开启了 shared，请确认 Bilibili 授权有效。";
     }
     return error instanceof Error ? error.message : fallbackMessage;
@@ -1464,6 +1493,8 @@ export function createWebRoomAppController(
       return;
     }
 
+    const isReconnect =
+      pendingAction.reconnect === true && state.view === "joined";
     const session: PersistedWebRoomSession = {
       roomCode: message.payload.roomCode,
       joinToken: pendingAction.joinToken,
@@ -1473,17 +1504,29 @@ export function createWebRoomAppController(
     };
     persistActiveSession(session);
     pendingAction = null;
-    emit(
-      createInitialJoinedState({
+    if (isReconnect && state.view === "joined") {
+      emit({
+        ...state,
+        connectionState: "connected",
         roomCode: message.payload.roomCode,
         currentMemberId: message.payload.memberId,
-        hostMemberId: "",
         displayName: session.displayName,
-        themeMode: getCurrentThemeMode(),
         serverUrl: session.serverUrl,
         joinToken: session.joinToken,
-      }),
-    );
+      });
+    } else {
+      emit(
+        createInitialJoinedState({
+          roomCode: message.payload.roomCode,
+          currentMemberId: message.payload.memberId,
+          hostMemberId: "",
+          displayName: session.displayName,
+          themeMode: getCurrentThemeMode(),
+          serverUrl: session.serverUrl,
+          joinToken: session.joinToken,
+        }),
+      );
+    }
     startClockSyncTimer();
     requestCurrentRoomState(message.payload.memberToken);
   }
@@ -1524,6 +1567,7 @@ export function createWebRoomAppController(
         const serverUrl = state.serverUrl ?? activeSession?.serverUrl;
         resetBilibiliAuthPolling();
         void voiceController.disconnect("member kicked");
+        suppressNextSocketReconnect = true;
         client?.close();
         client = null;
         activeSession = null;
@@ -1574,6 +1618,24 @@ export function createWebRoomAppController(
   function handleClose(): void {
     clearClockSyncTimer();
     void voiceController.disconnect("socket closed");
+    if (suppressNextSocketReconnect) {
+      suppressNextSocketReconnect = false;
+      emit(setConnectionState(state, "disconnected"));
+      return;
+    }
+    if (pendingAction?.type === "join" && pendingAction.reconnect === true) {
+      pendingAction = null;
+      emit(setConnectionState(state, "disconnected"));
+      return;
+    }
+    if (
+      state.view === "joined" &&
+      activeSession &&
+      options.autoReconnect !== false
+    ) {
+      reconnectActiveSession(activeSession);
+      return;
+    }
     emit(setConnectionState(state, "disconnected"));
   }
 
@@ -1586,7 +1648,10 @@ export function createWebRoomAppController(
     pendingAction = action;
     void voiceController.disconnect("room entry changed");
     clearClockSyncTimer();
-    client?.close();
+    if (client) {
+      suppressNextSocketReconnect = true;
+      client.close();
+    }
     activeSession = null;
     emit(
       setConnectionState(
@@ -1615,6 +1680,37 @@ export function createWebRoomAppController(
           message,
         ),
       );
+      return false;
+    }
+  }
+
+  function reconnectActiveSession(session: PersistedWebRoomSession): boolean {
+    pendingAction = {
+      type: "join",
+      roomCode: session.roomCode,
+      joinToken: session.joinToken,
+      memberToken: session.memberToken,
+      displayName: session.displayName,
+      serverUrl: session.serverUrl,
+      reconnect: true,
+    };
+    emit(setConnectionState(state, "connecting"));
+
+    try {
+      client = createWebRoomSocketClient({
+        serverUrl: session.serverUrl,
+        socketFactory: options.socketFactory,
+        onOpen: handleOpen,
+        onMessage: handleMessage,
+        onClose: handleClose,
+        onError: handleSocketError,
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "服务器地址无效";
+      client = null;
+      pendingAction = null;
+      emit(withEntryError(state, message));
       return false;
     }
   }
@@ -1839,6 +1935,7 @@ export function createWebRoomAppController(
     if (client && activeSession) {
       client.leaveRoom(activeSession.memberToken);
     }
+    suppressNextSocketReconnect = true;
     client?.close();
     client = null;
     activeSession = null;
@@ -2216,6 +2313,7 @@ export function createWebRoomAppController(
           providerId === "bilibili"
             ? "Bilibili URL parse failed."
             : "Provider URL parse failed.",
+          providerId,
         ),
       });
     }

@@ -402,6 +402,10 @@ export function createRoomService(options: {
     memberToken: string,
     targetMemberId: string,
   ) => Promise<{ room: PersistedRoom }>;
+  transferDisconnectedHostIfMissing: (
+    roomCode: string,
+    ownerMemberId: string,
+  ) => Promise<{ room: PersistedRoom | null; hostTransferred: boolean }>;
   shareVideoForSession: (
     session: Session,
     memberToken: string,
@@ -1838,6 +1842,47 @@ export function createRoomService(options: {
     },
 
     leaveRoomForSession: leaveCurrentRoom,
+
+    async transferDisconnectedHostIfMissing(roomCode, ownerMemberId) {
+      const persistedRoom = await resolveRoom(roomCode);
+      if (!persistedRoom || persistedRoom.ownerMemberId !== ownerMemberId) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      const activeRoom = await resolveActiveRoom(roomCode);
+      if (!activeRoom || activeRoom.members.has(ownerMemberId)) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      const nextHostSession = selectNextHostSession(activeRoom);
+      if (!nextHostSession?.memberId) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      // Disconnect and refresh look identical at WebSocket close time. This
+      // method is called only after a reconnect grace period, then re-checks
+      // whether the original host has returned before transferring authority.
+      const updatedRoom = await updateRoomHost({
+        roomCode,
+        expectedOwnerMemberId: ownerMemberId,
+        targetSession: nextHostSession,
+        targetMemberId: nextHostSession.memberId,
+        reason: "owner_disconnected",
+      });
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "internal_error",
+          INTERNAL_SERVER_ERROR_MESSAGE,
+          "internal_error",
+          { roomCode, reason: "disconnected_host_transfer_failed" },
+        );
+      }
+
+      return {
+        room: updatedRoom,
+        hostTransferred: updatedRoom.ownerMemberId === nextHostSession.memberId,
+      };
+    },
 
     async setRoomMemberPermissionForSession(
       session,

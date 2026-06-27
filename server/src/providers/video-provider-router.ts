@@ -38,12 +38,6 @@ import {
 const BILIBILI_MEDIA_REFERER = "https://www.bilibili.com";
 const BILIBILI_MEDIA_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
-const SERVER_ONLY_HEADER_NAMES = new Set([
-  "authorization",
-  "cookie",
-  "origin",
-  "referer",
-]);
 
 type JsonObject = Record<string, unknown>;
 
@@ -236,65 +230,6 @@ function mergeUpstreamHeaders(
     ...(providerHeaders ?? {}),
     ...(candidateHeaders ?? {}),
   };
-}
-
-function hasServerOnlyUpstreamHeaders(
-  candidate: ProviderPlaybackCandidate & Record<string, unknown>,
-): boolean {
-  const headers = readCandidateUpstreamHeaders(candidate);
-  if (!headers) {
-    return false;
-  }
-  return Object.keys(headers).some((name) =>
-    SERVER_ONLY_HEADER_NAMES.has(name.toLowerCase()),
-  );
-}
-
-function isHttpsPageHttpMedia(input: {
-  publicBaseUrl: string;
-  candidateUrl: string;
-}): boolean {
-  try {
-    return (
-      new URL(input.publicBaseUrl).protocol === "https:" &&
-      new URL(input.candidateUrl).protocol === "http:"
-    );
-  } catch {
-    return false;
-  }
-}
-
-function shouldAutoProxyCandidate(input: {
-  candidate: ProviderPlaybackCandidate & Record<string, unknown>;
-  publicBaseUrl: string;
-}): boolean {
-  return (
-    hasServerOnlyUpstreamHeaders(input.candidate) ||
-    isHttpsPageHttpMedia({
-      publicBaseUrl: input.publicBaseUrl,
-      candidateUrl: input.candidate.url,
-    })
-  );
-}
-
-function resolveProviderDeliveryPolicy(input: {
-  providerId: VideoProviderId;
-  policy: PlaybackProxyPolicy;
-  result: ProviderParseResult;
-  publicBaseUrl: string;
-}): PlaybackProxyPolicy {
-  if (input.policy.proxy || input.providerId === "bilibili") {
-    return input.policy;
-  }
-  const requiresProxy = input.result.items.some((item) =>
-    item.candidates.some((candidate) =>
-      shouldAutoProxyCandidate({
-        candidate,
-        publicBaseUrl: input.publicBaseUrl,
-      }),
-    ),
-  );
-  return requiresProxy ? { ...input.policy, proxy: true } : input.policy;
 }
 
 function getDefaultCandidate(
@@ -738,12 +673,9 @@ export function createVideoProviderRouter(
     });
     const upstreamHeaders = createProviderHeaders(providerId, credentials);
     const publicBaseUrl = getPublicBaseUrl(request);
-    const deliveryPolicy = resolveProviderDeliveryPolicy({
-      providerId,
-      policy: parsePolicy,
-      result,
-      publicBaseUrl,
-    });
+    // Delivery mode is an explicit front-end choice: direct mode returns CDN
+    // URLs untouched; proxy mode registers media resources under /proxy.
+    const deliveryPolicy = parsePolicy;
     const items = await createPickerItems({
       result,
       policy: deliveryPolicy,

@@ -916,6 +916,7 @@ export function createWebRoomAppController(
     getVoiceState,
     setVoiceState,
     runtime: voiceRuntime,
+    canRequestAccess: () => canUseMemberPermission("voice"),
     sendVoiceAccess: (memberToken) => client?.requestVoiceAccess(memberToken),
     sendVoiceState: (input) => client?.updateVoiceState(input),
     onLocalMicrophoneStateChange: (input) => {

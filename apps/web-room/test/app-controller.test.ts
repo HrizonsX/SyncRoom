@@ -190,7 +190,7 @@ const multiQualityProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
   defaultCandidateId: "dash-avc-1080p",
 };
 
-const genericAutoProxyProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
+const genericDirectProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
   providerId: "generic",
   sourceId: "generic:source",
   sourceUrl: "https://www.example.test/watch/1",
@@ -201,14 +201,14 @@ const genericAutoProxyProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
     kind: "part",
   },
   policy: {
-    proxy: true,
+    proxy: false,
     shared: false,
   },
   candidates: [
     {
       id: "hls-720",
       sourceType: "m3u8",
-      url: "https://syncroom.example.test/proxy/manifest/generic-manifest",
+      url: "https://cdn.example.test/generic/index.m3u8",
       qualityLabel: "720P",
       codecs: "avc1.64001f,mp4a.40.2",
       default: true,
@@ -2032,6 +2032,104 @@ test("enables the microphone after the first voice button click connects", async
   assert.equal(state.voice.muted, false);
 });
 
+test("auto joins voice room as a listener when another member unmutes", async () => {
+  const recorder = createSocketRecorder();
+  const runtime = new FakeVoiceRuntime();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    voiceRuntime: runtime,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: null,
+        playback: null,
+        members: [
+          { id: "member-host", name: "Alice" },
+          { id: "member-2", name: "Bob" },
+        ],
+      },
+    }),
+  );
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: false,
+        speaking: false,
+      },
+    }),
+  );
+
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "voice:access",
+    payload: {
+      memberToken: "valid-member-token-123",
+    },
+  });
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "wss://livekit.example.test",
+        token: "voice-token",
+        roomName: "syncroom-ABC123",
+        participantIdentity: "member-host",
+        expiresAt: 11_000,
+      },
+    }),
+  );
+  await flushAsyncTasks();
+
+  assert.deepEqual(runtime.connectCalls, [
+    {
+      livekitUrl: "wss://livekit.example.test",
+      token: "voice-token",
+      roomName: "syncroom-ABC123",
+      participantIdentity: "member-host",
+    },
+  ]);
+  assert.deepEqual(runtime.microphoneCalls, []);
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "voice:state",
+    payload: {
+      memberToken: "valid-member-token-123",
+      connected: true,
+      muted: true,
+      speaking: false,
+    },
+  });
+});
+
 test("adds system chat messages from actual voice state websocket events", () => {
   let now = 14_000;
   const { controller, recorder } = createJoinedHostController({
@@ -2485,7 +2583,7 @@ test("parses iQIYI URLs through the iQIYI provider without shared auth", async (
   assert.equal(state.providerPicker?.shared, false);
 });
 
-test("keeps server-required generic proxy policy when sharing parsed playback", async () => {
+test("keeps explicit direct generic policy when sharing parsed playback", async () => {
   const { controller, recorder } = createJoinedHostController({
     providerApiClientFactory: () => ({
       startAuth: async () => ({
@@ -2510,7 +2608,7 @@ test("keeps server-required generic proxy policy when sharing parsed playback", 
             kind: "part",
             qualityLabel: "720P",
             sourceType: "m3u8",
-            providerDescriptor: genericAutoProxyProviderPlaybackDescriptor,
+            providerDescriptor: genericDirectProviderPlaybackDescriptor,
           },
         ],
       }),
@@ -2528,7 +2626,7 @@ test("keeps server-required generic proxy policy when sharing parsed playback", 
   if (state.view !== "joined") {
     throw new Error("Expected joined state.");
   }
-  assert.equal(state.providerPicker?.proxy, true);
+  assert.equal(state.providerPicker?.proxy, false);
   assert.equal(state.providerPicker?.shared, false);
 
   controller.shareSelectedProviderItem();
@@ -2543,7 +2641,7 @@ test("keeps server-required generic proxy policy when sharing parsed playback", 
       }
     | undefined;
   assert.deepEqual(shared?.payload?.video?.provider?.policy, {
-    proxy: true,
+    proxy: false,
     shared: false,
   });
 });

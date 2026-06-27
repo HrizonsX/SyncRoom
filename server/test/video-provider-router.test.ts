@@ -548,7 +548,7 @@ test("video provider router returns proxied descriptors without leaking credenti
   }
 });
 
-test("video provider router passes iQIYI credentials server-side without leaking them", async () => {
+test("video provider router passes iQIYI credentials server-side and honors direct delivery", async () => {
   const { roomStore, runtimeStore } = await createRoomFixture();
   const { authService, parseInputs, registry } = createIqiyiProviderFixture();
   await authService.authorize({
@@ -599,8 +599,9 @@ test("video provider router passes iQIYI credentials server-side without leaking
       "P00001=secret-cookie; P00003=10086",
     );
     const serialized = JSON.stringify(result.body);
-    assert.doesNotMatch(serialized, /P00001|secret-cookie|cache\.video/i);
-    assert.match(serialized, /\/proxy\/segment\/iqiyi-proxied-mp4/);
+    assert.doesNotMatch(serialized, /P00001|secret-cookie/i);
+    assert.match(serialized, /https:\/\/cache\.video\.iqiyi\.com\/video\.mp4/);
+    assert.doesNotMatch(serialized, /\/proxy\/segment\/iqiyi-proxied-mp4/);
   } finally {
     await close(server);
   }
@@ -730,7 +731,7 @@ test("video provider router proxies inline DASH manifests without leaking upstre
   }
 });
 
-test("video provider router auto-proxies generic candidates that require upstream headers", async () => {
+test("video provider router keeps direct candidates with upstream headers when proxy is off", async () => {
   const { roomStore, runtimeStore } = await createRoomFixture();
   const { authService, parseInputs, registry } = createGenericProviderFixture({
     candidate: {
@@ -788,15 +789,7 @@ test("video provider router auto-proxies generic candidates that require upstrea
       proxy: false,
       shared: false,
     });
-    assert.deepEqual(upstreamRequests, [
-      {
-        url: "https://cdn.example.test/protected/index.m3u8",
-        headers: {
-          referer: "https://www.example.test/watch/1",
-          "user-agent": "SyncRoomTest/1.0",
-        },
-      },
-    ]);
+    assert.deepEqual(upstreamRequests, []);
     const data = result.body.data as {
       items?: Array<{ providerDescriptor?: Record<string, unknown> }>;
     };
@@ -806,10 +799,10 @@ test("video provider router auto-proxies generic candidates that require upstrea
           candidates?: Array<{ url?: string; upstreamHeaders?: unknown }>;
         }
       | undefined;
-    assert.deepEqual(descriptor?.policy, { proxy: true, shared: false });
+    assert.deepEqual(descriptor?.policy, { proxy: false, shared: false });
     assert.equal(
       descriptor?.candidates?.[0]?.url,
-      `${baseUrl}/proxy/manifest/generic-manifest`,
+      "https://cdn.example.test/protected/index.m3u8",
     );
     assert.equal(descriptor?.candidates?.[0]?.upstreamHeaders, undefined);
   } finally {
@@ -817,7 +810,7 @@ test("video provider router auto-proxies generic candidates that require upstrea
   }
 });
 
-test("video provider router auto-proxies generic HTTP media on HTTPS pages", async () => {
+test("video provider router keeps HTTP media direct on HTTPS pages when proxy is off", async () => {
   const { roomStore, runtimeStore } = await createRoomFixture();
   const { authService, registry } = createGenericProviderFixture({
     candidate: {
@@ -875,10 +868,10 @@ test("video provider router auto-proxies generic HTTP media on HTTPS pages", asy
           candidates?: Array<{ url?: string }>;
         }
       | undefined;
-    assert.deepEqual(descriptor?.policy, { proxy: true, shared: false });
+    assert.deepEqual(descriptor?.policy, { proxy: false, shared: false });
     assert.equal(
       descriptor?.candidates?.[0]?.url,
-      "https://room.example.test/proxy/segment/generic-mp4",
+      "http://cdn.example.test/video.mp4",
     );
   } finally {
     await close(server);

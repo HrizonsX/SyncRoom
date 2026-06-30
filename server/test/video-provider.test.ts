@@ -146,6 +146,58 @@ window.HNF_GLOBAL_INIT = {
   );
 });
 
+test("Huya provider upgrades direct FLV media urls to HTTPS for browser playback", async () => {
+  const antiCode = new URLSearchParams({
+    wsSecret: "old-secret",
+    wsTime: "65ff0000",
+    seqid: "1",
+    fm: Buffer.from("fm-prefix_extra").toString("base64"),
+    ctype: "tars_mobile",
+    t: "100",
+  }).toString();
+  const provider = createHuyaProvider({
+    random: () => 0.123456,
+    fetch: async () =>
+      new Response(
+        `<script>
+          var hyPlayerConfig = {
+            stream: {
+              "data": [{
+                "gameLiveInfo": {
+                  "roomName": "Huya Room",
+                  "profileRoom": "cxy0714",
+                  "liveStatus": "ON"
+                },
+                "gameStreamInfoList": [{
+                  "sFlvUrl": "http://live-huya.example.com/live",
+                  "sStreamName": "660000-1234567890-1234567890-1",
+                  "sFlvUrlSuffix": "flv",
+                  "sFlvAntiCode": "${antiCode}",
+                  "iLineIndex": 0,
+                  "iIsMaster": 1
+                }],
+                "vMultiStreamInfo": [{"sDisplayName": "720P", "iBitRate": 2000}]
+              }]
+            }
+          };
+        </script>`,
+        { status: 200 },
+      ),
+  });
+
+  const matchedUrl = provider.matchUrl("https://www.huya.com/cxy0714");
+  assert.ok(matchedUrl);
+  const result = await provider.parse({
+    matchedUrl,
+    policy: { proxy: false, shared: false },
+  });
+
+  assert.match(
+    result.items[0]?.candidates[0]?.url ?? "",
+    /^https:\/\/live-huya\.example\.com\/live\/660000-1234567890-1234567890-1\.flv\?/,
+  );
+});
+
 test("Huya provider reads top-level live qualities without duplicating stream lines", async () => {
   const antiCode = new URLSearchParams({
     wsSecret: "old-secret",

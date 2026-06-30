@@ -180,6 +180,8 @@ if (app) {
       return playbackSeq;
     },
     dispatchPlaybackUpdate: (message) => controller.sendPlaybackUpdate(message),
+    dispatchPlaybackBufferReport: (report) =>
+      controller.sendPlaybackBufferReport(report),
     onPlaybackLoaded: () => controller.reportPlaybackLoaded(),
     onPlaybackError: ((error, source) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -457,6 +459,14 @@ if (app) {
       const candidateId = actionElement.dataset.candidateId;
       if (candidateId) {
         controller.selectProviderQuality(candidateId);
+      }
+      return;
+    }
+
+    if (action === "set-playback-sync-strategy") {
+      const strategy = actionElement.dataset.syncStrategy;
+      if (strategy === "smooth" || strategy === "wait") {
+        controller.setPlaybackSyncStrategy(strategy);
       }
       return;
     }

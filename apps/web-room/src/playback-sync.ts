@@ -1,4 +1,8 @@
-import type { ClientMessage, PlaybackState } from "@syncroom/protocol";
+import type {
+  ClientMessage,
+  PlaybackState,
+  PlaybackSyncIntent,
+} from "@syncroom/protocol";
 
 export type MediaElementLike = {
   currentTime: number;
@@ -9,13 +13,21 @@ export type MediaElementLike = {
 };
 
 export type EventedMediaElementLike = MediaElementLike & {
-  addEventListener: (type: LocalPlaybackEvent, listener: () => void) => void;
-  removeEventListener: (type: LocalPlaybackEvent, listener: () => void) => void;
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
+export type PlaybackPlayToggleControlLike = {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+  disabled?: boolean;
+  hasAttribute?: (name: string) => boolean;
 };
 
 export type LocalPlaybackEvent =
   | "play"
   | "pause"
+  | "seeking"
   | "seeked"
   | "ratechange"
   | "waiting";
@@ -25,10 +37,12 @@ export type RemotePlaybackAction = "seek" | "ratechange" | "play" | "pause";
 const PLAYBACK_EVENT_TYPES: readonly LocalPlaybackEvent[] = [
   "play",
   "pause",
+  "seeking",
   "seeked",
   "ratechange",
 ];
 const LOCAL_PAUSE_TEARDOWN_GUARD_MS = 150;
+const EXPLICIT_PLAY_TOGGLE_ECHO_GUARD_MS = 300;
 
 export type ApplyRemotePlaybackResult =
   | {
@@ -49,7 +63,7 @@ function derivePlayState(media: MediaElementLike, event: LocalPlaybackEvent) {
 }
 
 function deriveSyncIntent(event: LocalPlaybackEvent) {
-  if (event === "seeked") {
+  if (event === "seeking" || event === "seeked") {
     return "explicit-seek";
   }
   if (event === "ratechange") {
@@ -69,10 +83,11 @@ export function createPlaybackUpdateMessage(args: {
   media: MediaElementLike;
   event: LocalPlaybackEvent;
   seq: number;
+  syncIntent?: PlaybackSyncIntent;
   now?: () => number;
 }): Extract<ClientMessage, { type: "playback:update" }> {
   const currentTime = args.now?.() ?? Date.now();
-  const syncIntent = deriveSyncIntent(args.event);
+  const syncIntent = args.syncIntent ?? deriveSyncIntent(args.event);
   const playback: PlaybackState = {
     url: args.url,
     currentTime: args.media.currentTime,
@@ -97,6 +112,7 @@ export function createPlaybackUpdateMessage(args: {
 
 export function bindPlaybackSyncControls(args: {
   media: EventedMediaElementLike;
+  playToggleControl?: PlaybackPlayToggleControlLike;
   events?: readonly LocalPlaybackEvent[];
   getContext: () => {
     memberToken: string;
@@ -110,7 +126,12 @@ export function bindPlaybackSyncControls(args: {
   now?: () => number;
 }): { dispose: () => void } {
   const listeners = new Map<LocalPlaybackEvent, () => void>();
+  const eventTypes = args.events ?? PLAYBACK_EVENT_TYPES;
+  const shouldUseSeekedAsSeekCommit = eventTypes.includes("seeked");
   let pendingPauseTimer: ReturnType<typeof setTimeout> | null = null;
+  let optimisticPlayState: "playing" | "paused" | null = null;
+  let explicitEchoState: "playing" | "paused" | null = null;
+  let explicitEchoUntil = 0;
 
   const clearPendingPause = (): void => {
     if (pendingPauseTimer === null) {
@@ -123,6 +144,7 @@ export function bindPlaybackSyncControls(args: {
   const dispatchLocalEvent = (
     event: LocalPlaybackEvent,
     media: MediaElementLike = args.media,
+    syncIntent?: PlaybackSyncIntent,
   ): void => {
     const context = args.getContext();
     if (!context) {
@@ -136,15 +158,71 @@ export function bindPlaybackSyncControls(args: {
         media,
         event,
         seq: args.nextSeq(),
+        ...(syncIntent ? { syncIntent } : {}),
         now: args.now,
       }),
     );
   };
 
-  for (const event of args.events ?? PLAYBACK_EVENT_TYPES) {
+  const getGuardNow = (): number => args.now?.() ?? Date.now();
+
+  const isPlayToggleDisabled = (): boolean =>
+    args.playToggleControl?.disabled === true ||
+    args.playToggleControl?.hasAttribute?.("disabled") === true;
+
+  const shouldSuppressExplicitEcho = (state: "playing" | "paused"): boolean => {
+    if (explicitEchoState === null) {
+      return false;
+    }
+    if (getGuardNow() > explicitEchoUntil) {
+      explicitEchoState = null;
+      return false;
+    }
+    return explicitEchoState === state;
+  };
+
+  const handlePlayToggleClick = (): void => {
+    if (isPlayToggleDisabled()) {
+      return;
+    }
+    clearPendingPause();
+    const currentState =
+      optimisticPlayState ?? (args.media.paused ? "paused" : "playing");
+    const nextState = currentState === "playing" ? "paused" : "playing";
+    const event: LocalPlaybackEvent =
+      nextState === "playing" ? "play" : "pause";
+    optimisticPlayState = nextState;
+    explicitEchoState = nextState;
+    explicitEchoUntil = getGuardNow() + EXPLICIT_PLAY_TOGGLE_ECHO_GUARD_MS;
+    // The media element may not emit `pause` if the user cancels a still-pending
+    // play() call. Send the clicked intent immediately and let the real media
+    // event be treated as an echo if it arrives a moment later.
+    dispatchLocalEvent(
+      event,
+      {
+        currentTime: args.media.currentTime,
+        playbackRate: args.media.playbackRate,
+        paused: nextState === "paused",
+        play: args.media.play,
+        pause: args.media.pause,
+      },
+      nextState === "playing" ? "explicit-play" : "explicit-pause",
+    );
+  };
+
+  args.playToggleControl?.addEventListener("click", handlePlayToggleClick);
+
+  for (const event of eventTypes) {
     const listener = () => {
+      if (event === "seeking" && shouldUseSeekedAsSeekCommit) {
+        return;
+      }
       if (event === "pause") {
         clearPendingPause();
+        optimisticPlayState = "paused";
+        if (shouldSuppressExplicitEcho("paused")) {
+          return;
+        }
         const pausedSnapshot: MediaElementLike = {
           currentTime: args.media.currentTime,
           playbackRate: args.media.playbackRate,
@@ -163,6 +241,10 @@ export function bindPlaybackSyncControls(args: {
       }
       if (event === "play") {
         clearPendingPause();
+        optimisticPlayState = "playing";
+        if (shouldSuppressExplicitEcho("playing")) {
+          return;
+        }
       }
       dispatchLocalEvent(event);
     };
@@ -173,6 +255,10 @@ export function bindPlaybackSyncControls(args: {
   return {
     dispose() {
       clearPendingPause();
+      args.playToggleControl?.removeEventListener(
+        "click",
+        handlePlayToggleClick,
+      );
       for (const [event, listener] of listeners.entries()) {
         args.media.removeEventListener(event, listener);
       }

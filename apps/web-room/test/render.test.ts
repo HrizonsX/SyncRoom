@@ -253,6 +253,45 @@ test("renders room clock sync metrics in the room metadata card", () => {
   assert.match(html, /42ms/);
 });
 
+test("renders host playback sync strategy controls", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-2",
+        startedAt: 1_000,
+        deadlineAt: 11_000,
+      },
+      bufferingMemberIds: ["member-2"],
+    },
+  });
+
+  assert.match(html, /data-panel="playback-sync"/);
+  assert.match(html, /data-action="set-playback-sync-strategy"/);
+  assert.match(html, /data-sync-strategy="smooth"/);
+  assert.match(html, /data-sync-strategy="wait"/);
+  assert.match(html, /data-playback-sync-hold="true"/);
+});
+
+test("renders non-host playback sync status without strategy controls", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    currentMemberId: "member-2",
+    playbackSync: {
+      strategy: "smooth",
+      hold: {
+        active: false,
+      },
+      bufferingMemberIds: [],
+    },
+  });
+
+  assert.match(html, /data-panel="playback-sync"/);
+  assert.doesNotMatch(html, /data-action="set-playback-sync-strategy"/);
+});
+
 test("renders the joined room in dark theme mode", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,
@@ -285,6 +324,7 @@ test("renders the player controls even before a video source is selected", () =>
   assert.doesNotMatch(html, /fullscreenelement="app"/);
   assert.match(html, /<media-control-bar\b/);
   assert.match(html, /data-playback-video="true"/);
+  assert.match(html, /preload="auto"/);
   assert.match(html, /data-player-empty="true"/);
   assert.match(
     html,

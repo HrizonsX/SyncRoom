@@ -2965,7 +2965,17 @@ test("does not share provider playback after disconnect when auto reconnect is d
 });
 
 test("reconnects an active room session after socket close before sharing parsed live playback", async () => {
+  const scheduledReconnects: Array<{
+    callback: () => void;
+    delayMs: number;
+  }> = [];
   const { controller, recorder } = createJoinedHostController({
+    reconnectBaseDelayMs: 1_000,
+    setReconnectTimeout: (callback: () => void, delayMs: number) => {
+      scheduledReconnects.push({ callback, delayMs });
+      return scheduledReconnects.length;
+    },
+    clearReconnectTimeout: () => {},
     providerApiClientFactory: () => ({
       startAuth: async () => ({
         providerId: "bilibili",
@@ -3021,6 +3031,11 @@ test("reconnects an active room session after socket close before sharing parsed
 
   recorder.sockets[0]?.emit("close");
 
+  assert.equal(recorder.sockets.length, 1);
+  assert.equal(scheduledReconnects.length, 1);
+  assert.equal(scheduledReconnects[0]?.delayMs, 1_000);
+  scheduledReconnects[0]?.callback();
+
   assert.equal(recorder.sockets.length, 2);
   recorder.sockets[1]?.emit("open");
   const rejoin = recorder.sockets[1]?.sent.at(-1) as
@@ -3062,6 +3077,57 @@ test("reconnects an active room session after socket close before sharing parsed
     | undefined;
   assert.equal(shared?.type, "video:share");
   assert.equal(shared?.payload?.video?.provider?.item.kind, "live");
+});
+
+test("backs off active session auto reconnect after socket close", () => {
+  const scheduledReconnects: Array<{
+    callback: () => void;
+    delayMs: number;
+  }> = [];
+  const reconnectOptions = {
+    reconnectBaseDelayMs: 1_000,
+    setReconnectTimeout: (callback: () => void, delayMs: number) => {
+      scheduledReconnects.push({ callback, delayMs });
+      return scheduledReconnects.length;
+    },
+    clearReconnectTimeout: () => {},
+  };
+  const { controller, recorder } = createJoinedHostController(reconnectOptions);
+
+  recorder.sockets[0]?.emit("close");
+
+  assert.equal(recorder.sockets.length, 1);
+  assert.equal(scheduledReconnects.length, 1);
+  assert.equal(scheduledReconnects[0]?.delayMs, 1_000);
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.connectionState, "connecting");
+
+  scheduledReconnects[0]?.callback();
+
+  assert.equal(recorder.sockets.length, 2);
+  recorder.sockets[1]?.emit("open");
+  assert.deepEqual(recorder.sockets[1]?.sent, [
+    {
+      type: "room:join",
+      payload: {
+        roomCode: "ABC123",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+        displayName: "Alice",
+        protocolVersion: 3,
+      },
+    },
+  ]);
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.connectionState, "connected");
 });
 
 test("shares live provider playback with an initial playing state", () => {

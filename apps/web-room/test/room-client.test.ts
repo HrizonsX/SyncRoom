@@ -343,6 +343,42 @@ test("sends low-cardinality playback report messages", () => {
   ]);
 });
 
+test("sends playback buffer coordination messages", () => {
+  const { client, sent } = createSentMessageRecorder();
+
+  client.reportPlaybackBuffer({
+    memberToken: "valid-member-token-123",
+    state: "buffering",
+    currentTime: 42,
+    bufferAheadSeconds: 0,
+  });
+  client.setPlaybackSyncStrategy({
+    memberToken: "valid-member-token-123",
+    strategy: "wait",
+  });
+
+  assert.equal(isClientMessage(sent[0]), true);
+  assert.equal(isClientMessage(sent[1]), true);
+  assert.deepEqual(sent, [
+    {
+      type: "playback:buffer",
+      payload: {
+        memberToken: "valid-member-token-123",
+        state: "buffering",
+        currentTime: 42,
+        bufferAheadSeconds: 0,
+      },
+    },
+    {
+      type: "playback:sync-strategy:set",
+      payload: {
+        memberToken: "valid-member-token-123",
+        strategy: "wait",
+      },
+    },
+  ]);
+});
+
 test("persists only safe web room rejoin state", () => {
   const storage = new MemoryStorage();
 

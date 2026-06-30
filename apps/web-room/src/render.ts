@@ -1,5 +1,6 @@
 import type {
   DanmakuMode,
+  PlaybackSyncState,
   PlaybackState,
   ProviderPlaybackDescriptor,
   RoomMemberPermissionName,
@@ -179,6 +180,7 @@ export type WebRoomJoinedState = {
   providerPlaybackStatus?: WebRoomProviderPlaybackStatus;
   playbackSource?: PlaybackSource;
   playback?: PlaybackState;
+  playbackSync?: PlaybackSyncState;
   playbackUrl?: string;
   playbackError?: WebRoomPlaybackError;
   members: WebRoomMember[];
@@ -562,7 +564,7 @@ function renderPlaybackVideo(source: PlaybackSource | undefined): string {
                 class="player-video"
                 data-playback-video="true"${sourceAttributes}
                 playsinline
-                preload="metadata"
+                preload="auto"
               ></video>
   `;
 }
@@ -1200,6 +1202,48 @@ function renderPolicyHelp(policy: "proxy" | "shared"): string {
   `;
 }
 
+function getPlaybackSyncState(state: WebRoomJoinedState): PlaybackSyncState {
+  return (
+    state.playbackSync ?? {
+      strategy: "smooth",
+      hold: { active: false },
+      bufferingMemberIds: [],
+    }
+  );
+}
+
+function renderPlaybackSyncPanel(state: WebRoomJoinedState): string {
+  const isHost = state.currentMemberId === state.hostMemberId;
+  const playbackSync = getPlaybackSyncState(state);
+  const smoothSelected = playbackSync.strategy === "smooth";
+  const waitSelected = playbackSync.strategy === "wait";
+  const waitingCount = playbackSync.bufferingMemberIds.length;
+  const holdText =
+    playbackSync.hold.active && waitingCount > 0
+      ? `等待 ${waitingCount} 人缓冲`
+      : waitingCount > 0
+        ? `${waitingCount} 人缓冲中`
+        : "状态正常";
+  const modeLabel = smoothSelected ? "流畅优先" : "等人同步";
+
+  return `
+    <section class="playback-sync-panel" data-panel="playback-sync" data-playback-sync-strategy="${playbackSync.strategy}" data-playback-sync-hold="${playbackSync.hold.active ? "true" : "false"}">
+      <div class="settings-tile-heading">
+        ${renderSettingsHeadingLabel("同步策略", "settings")}
+        <small>${escapeHtml(holdText)}</small>
+      </div>
+      ${
+        isHost
+          ? `<div class="sync-strategy-options" role="group" aria-label="同步策略">
+              <button type="button" class="sync-strategy-button${smoothSelected ? " is-active" : ""}" data-action="set-playback-sync-strategy" data-sync-strategy="smooth">流畅优先</button>
+              <button type="button" class="sync-strategy-button${waitSelected ? " is-active" : ""}" data-action="set-playback-sync-strategy" data-sync-strategy="wait">等人同步</button>
+            </div>`
+          : `<div class="sync-strategy-status">${escapeHtml(modeLabel)}</div>`
+      }
+    </section>
+  `;
+}
+
 function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const isHost = state.currentMemberId === state.hostMemberId;
   const picker = state.providerPicker ?? {
@@ -1649,6 +1693,7 @@ function renderJoined(state: WebRoomJoinedState): string {
             ${renderAuthorizationManagementHeaderAction(state)}
           </div>
           <div class="settings-grid">
+            ${renderPlaybackSyncPanel(state)}
             ${renderProviderPickerPanel(state)}
             ${renderPlaybackError(state)}
           </div>

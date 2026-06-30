@@ -29,6 +29,7 @@ class FakeEventedVideoElement extends FakeVideoElement {
   playbackRate = 1;
   paused = true;
   readyState = 1;
+  buffered?: TimeRanges;
   error: { code?: number; message?: string } | null = null;
   private readonly listeners = new Map<string, Set<() => void>>();
 
@@ -57,6 +58,59 @@ class FakeEventedVideoElement extends FakeVideoElement {
   }
 }
 
+function createBufferedRanges(
+  ranges: Array<{ start: number; end: number }>,
+): TimeRanges {
+  return {
+    length: ranges.length,
+    start(index: number) {
+      const range = ranges[index];
+      if (!range) {
+        throw new DOMException("IndexSizeError", "IndexSizeError");
+      }
+      return range.start;
+    },
+    end(index: number) {
+      const range = ranges[index];
+      if (!range) {
+        throw new DOMException("IndexSizeError", "IndexSizeError");
+      }
+      return range.end;
+    },
+  };
+}
+
+class FailingOncePlayVideoElement extends FakeEventedVideoElement {
+  playAttempts = 0;
+
+  override async play(): Promise<void> {
+    this.playAttempts += 1;
+    if (this.playAttempts === 1) {
+      throw new Error("play interrupted while media is buffering");
+    }
+    await super.play();
+  }
+}
+
+class FakePlayToggleControl {
+  disabled = false;
+  private readonly listeners = new Map<string, Set<() => void>>();
+
+  addEventListener(type: string, listener: () => void): void {
+    const listeners = this.listeners.get(type) ?? new Set<() => void>();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  hasAttribute(name: string): boolean {
+    return name === "disabled" && this.disabled;
+  }
+}
+
 class FakePageLifecycleTarget {
   private readonly listeners = new Map<string, Set<() => void>>();
 
@@ -81,6 +135,23 @@ function createPlaybackRoot(video: FakeEventedVideoElement): ParentNode {
   return {
     querySelector(selector: string) {
       return selector === '[data-playback-video="true"]' ? video : null;
+    },
+  } as ParentNode;
+}
+
+function createPlaybackRootWithPlayToggle(
+  video: FakeEventedVideoElement,
+  playToggle: FakePlayToggleControl,
+): ParentNode {
+  return {
+    querySelector(selector: string) {
+      if (selector === '[data-playback-video="true"]') {
+        return video;
+      }
+      if (selector === "media-play-button") {
+        return playToggle;
+      }
+      return null;
     },
   } as ParentNode;
 }
@@ -417,6 +488,9 @@ test("restores Shaka paused fetching defaults for non-live playback", async () =
       continueLoadingWhenPaused: true,
     },
     streaming: {
+      bufferBehind: 30,
+      bufferingGoal: 8,
+      rebufferingGoal: 3,
       stopFetchingOnPause: false,
     },
   });
@@ -857,6 +931,8 @@ test("syncs web-room playback events with the original shared video URL", async 
   now = 5_600;
   video.currentTime = 21;
   video.paused = false;
+  video.emit("seeking");
+  video.currentTime = 33;
   video.emit("seeked");
 
   assert.deepEqual(dispatched, [
@@ -866,7 +942,7 @@ test("syncs web-room playback events with the original shared video URL", async 
         memberToken: "valid-member-token-123",
         playback: {
           url: "https://www.bilibili.com/video/BV1xx411c7mD",
-          currentTime: 21,
+          currentTime: 33,
           playState: "playing",
           syncIntent: "explicit-seek",
           userInitiated: true,
@@ -1439,6 +1515,566 @@ test("syncs local live play and pause without broadcasting live seek or bufferin
       },
     },
   ]);
+});
+
+test("reports VOD buffering through the buffer coordination channel", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const video = new FakeEventedVideoElement();
+  const reports: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  let now = 1_000;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    dispatchPlaybackBufferReport: (report) => reports.push(report),
+    nextSeq: () => 1,
+    bufferReportDelayMs: 10,
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 12,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  now = 2_000;
+  video.currentTime = 12;
+  video.emit("waiting");
+  t.mock.timers.tick(9);
+  assert.deepEqual(reports, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(reports, [
+    {
+      state: "buffering",
+      currentTime: 12,
+      bufferAheadSeconds: 0,
+    },
+  ]);
+
+  video.emit("playing");
+  assert.deepEqual(reports.at(-1), {
+    state: "ready",
+    currentTime: 12,
+    bufferAheadSeconds: 0,
+  });
+});
+
+test("continues reporting ready buffer growth while VOD wait mode is holding", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const video = new FakeEventedVideoElement();
+  const reports: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  let now = 1_000;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    dispatchPlaybackBufferReport: (report) => reports.push(report),
+    nextSeq: () => 1,
+    bufferReportDelayMs: 10,
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 12,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 1_500,
+        deadlineAt: 11_500,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  now = 2_000;
+  video.currentTime = 12;
+  video.buffered = createBufferedRanges([{ start: 12, end: 13 }]);
+  video.emit("canplay");
+  assert.deepEqual(reports, [
+    {
+      state: "ready",
+      currentTime: 12,
+      bufferAheadSeconds: 1,
+    },
+  ]);
+
+  video.buffered = createBufferedRanges([{ start: 12, end: 15 }]);
+  video.emit("progress");
+  assert.deepEqual(reports.at(-1), {
+    state: "ready",
+    currentTime: 12,
+    bufferAheadSeconds: 3,
+  });
+});
+
+test("counts a tiny buffered-range gap after seek as ready buffer ahead", async () => {
+  const video = new FakeEventedVideoElement();
+  const reports: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  let now = 1_000;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    dispatchPlaybackBufferReport: (report) => reports.push(report),
+    nextSeq: () => 1,
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 12,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  });
+
+  now = 2_000;
+  video.currentTime = 12;
+  video.buffered = createBufferedRanges([{ start: 12.05, end: 15.25 }]);
+  video.emit("canplay");
+
+  assert.deepEqual(reports, [
+    {
+      state: "ready",
+      currentTime: 12,
+      bufferAheadSeconds: 3.25,
+    },
+  ]);
+});
+
+test("applies room playback hold without broadcasting a local pause", async () => {
+  const video = new FakeEventedVideoElement();
+  video.paused = false;
+  const dispatched: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: (message) => dispatched.push(message),
+    nextSeq: () => 1,
+    now: () => 2_000,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 12,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 1_500,
+        deadlineAt: 11_500,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  assert.equal(video.paused, true);
+  assert.deepEqual(dispatched, []);
+});
+
+test("resumes playback after wait-mode hold releases for the local playback actor", async () => {
+  const video = new FakeEventedVideoElement();
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-host",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    nextSeq: () => 1,
+    now: () => 2_000,
+  });
+  const playingState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-host",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 42,
+      playState: "playing" as const,
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 1,
+    },
+  };
+
+  await controller.sync(createPlaybackRoot(video), playingState);
+  assert.equal(video.paused, false);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 1_500,
+        deadlineAt: 11_500,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+  assert.equal(video.paused, true);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: { active: false },
+      bufferingMemberIds: [],
+    },
+  });
+
+  assert.equal(video.paused, false);
+});
+
+test("resumes playback after wait-mode hold releases for a remote playback actor", async () => {
+  const video = new FakeEventedVideoElement();
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    nextSeq: () => 1,
+    now: () => 2_000,
+  });
+  const playingState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "playing" as const,
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-seeker",
+      seq: 3,
+    },
+  };
+
+  await controller.sync(createPlaybackRoot(video), playingState);
+  assert.equal(video.paused, false);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-follower",
+        startedAt: 1_500,
+        deadlineAt: 11_500,
+      },
+      bufferingMemberIds: ["member-follower"],
+    },
+  });
+  assert.equal(video.paused, true);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: { active: false },
+      bufferingMemberIds: [],
+    },
+  });
+
+  assert.equal(video.paused, false);
+});
+
+test("retries remote wait-mode resume when the first VOD play attempt is interrupted", async () => {
+  const video = new FailingOncePlayVideoElement();
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    nextSeq: () => 1,
+    now: () => 2_000,
+  });
+  const playingState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "playing" as const,
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-seeker",
+      seq: 3,
+    },
+  };
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-follower",
+        startedAt: 1_500,
+        deadlineAt: 11_500,
+      },
+      bufferingMemberIds: ["member-follower"],
+    },
+  });
+  assert.equal(video.paused, true);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "wait",
+      hold: { active: false },
+      bufferingMemberIds: [],
+    },
+  });
+  assert.equal(video.paused, true);
+  assert.equal(video.playAttempts, 1);
+
+  video.emit("canplay");
+  await waitForCondition(
+    () => !video.paused && video.playAttempts >= 2,
+    "remote follower should retry VOD playback after media becomes playable",
+  );
+});
+
+test("keeps wait-mode resume intent when player controls are rebound during render", async () => {
+  const video = new FailingOncePlayVideoElement();
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    nextSeq: () => 1,
+    now: () => 2_000,
+  });
+  const playingState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "playing" as const,
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-seeker",
+      seq: 3,
+    },
+  };
+
+  await controller.sync(
+    createPlaybackRootWithPlayToggle(video, new FakePlayToggleControl()),
+    {
+      ...playingState,
+      playbackSync: {
+        strategy: "wait",
+        hold: {
+          active: true,
+          reasonMemberId: "member-follower",
+          startedAt: 1_500,
+          deadlineAt: 11_500,
+        },
+        bufferingMemberIds: ["member-follower"],
+      },
+    },
+  );
+  assert.equal(video.paused, true);
+
+  await controller.sync(
+    createPlaybackRootWithPlayToggle(video, new FakePlayToggleControl()),
+    {
+      ...playingState,
+      playbackSync: {
+        strategy: "wait",
+        hold: { active: false },
+        bufferingMemberIds: [],
+      },
+    },
+  );
+  assert.equal(video.paused, true);
+  assert.equal(video.playAttempts, 1);
+
+  video.emit("canplay");
+  await waitForCondition(
+    () => !video.paused && video.playAttempts >= 2,
+    "remote follower should keep hold-resume intent after player chrome rerenders",
+  );
 });
 
 test("applies later remote live pause without seeking to the remote live timestamp", async () => {

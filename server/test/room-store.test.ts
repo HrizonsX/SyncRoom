@@ -100,6 +100,13 @@ test("roomStateOf serializes persisted room state with active members", () => {
     hostMemberId: "member-1",
     sharedVideo: persistedRoom.sharedVideo,
     playback: persistedRoom.playback,
+    playbackSync: {
+      strategy: "smooth",
+      hold: {
+        active: false,
+      },
+      bufferingMemberIds: [],
+    },
     members: [{ id: "member-1", name: "Alice" }],
     chatMessages: persistedRoom.chatMessages,
   });

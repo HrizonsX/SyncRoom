@@ -129,6 +129,22 @@ export function createMessageHandler(options: {
         { type: "playback:update" }
       >["payload"]["playback"],
     ) => Promise<{ room: { code: string } | null; ignored: boolean }>;
+    updatePlaybackBufferForSession?: (
+      session: Session,
+      memberToken: string,
+      report: Omit<
+        Extract<ClientMessage, { type: "playback:buffer" }>["payload"],
+        "memberToken"
+      >,
+    ) => Promise<{ room: { code: string } }>;
+    setPlaybackSyncStrategyForSession?: (
+      session: Session,
+      memberToken: string,
+      strategy: Extract<
+        ClientMessage,
+        { type: "playback:sync-strategy:set" }
+      >["payload"]["strategy"],
+    ) => Promise<{ room: { code: string } }>;
     updateProfileForSession: (
       session: Session,
       memberToken: string,
@@ -1058,6 +1074,79 @@ export function createMessageHandler(options: {
               );
             }
           });
+          return;
+        }
+        case "playback:buffer": {
+          await measureMessageHandling("playback:buffer", async () => {
+            const serviceResult =
+              await roomService.updatePlaybackBufferForSession?.(
+                session,
+                message.payload.memberToken,
+                {
+                  state: message.payload.state,
+                  currentTime: message.payload.currentTime,
+                  ...(message.payload.bufferAheadSeconds === undefined
+                    ? {}
+                    : {
+                        bufferAheadSeconds: message.payload.bufferAheadSeconds,
+                      }),
+                },
+              );
+            if (serviceResult) {
+              await firePublishRoomEvent(
+                {
+                  type: "room_state_updated",
+                  roomCode: serviceResult.room.code,
+                },
+                {
+                  reason: "playback_buffer_broadcast_failed",
+                  sessionId: session.id,
+                  remoteAddress: session.remoteAddress,
+                  origin: session.origin,
+                },
+              );
+            } else {
+              await roomService.getRoomStateForSession(
+                session,
+                message.payload.memberToken,
+                message.type,
+              );
+            }
+          });
+          return;
+        }
+        case "playback:sync-strategy:set": {
+          await measureMessageHandling(
+            "playback:sync-strategy:set",
+            async () => {
+              const serviceResult =
+                await roomService.setPlaybackSyncStrategyForSession?.(
+                  session,
+                  message.payload.memberToken,
+                  message.payload.strategy,
+                );
+              if (serviceResult) {
+                await firePublishRoomEvent(
+                  {
+                    type: "room_state_updated",
+                    roomCode: serviceResult.room.code,
+                  },
+                  {
+                    reason: "playback_sync_strategy_broadcast_failed",
+                    sessionId: session.id,
+                    remoteAddress: session.remoteAddress,
+                    origin: session.origin,
+                  },
+                );
+              } else {
+                await roomService.getRoomStateForSession(
+                  session,
+                  message.payload.memberToken,
+                  message.type,
+                );
+              }
+            },
+          );
           return;
         }
         case "sync:request": {

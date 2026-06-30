@@ -3,6 +3,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  type AudioCaptureOptions,
   type Participant,
   type RemoteParticipant,
   type RemoteTrack,
@@ -53,6 +54,12 @@ export type WebRoomVoiceRuntime = {
   setMicrophoneEnabled: (enabled: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
 };
+
+export const DEFAULT_VOICE_AUDIO_CAPTURE_OPTIONS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+} satisfies AudioCaptureOptions;
 
 export function createUnavailableVoiceRuntime(
   message = "LiveKit voice runtime is unavailable.",
@@ -105,7 +112,10 @@ export function createWebRoomLiveKitVoiceRuntime(args: {
       args.log(
         `Web microphone permission state before toggle: ${await queryMicrophonePermissionState()}`,
       );
-      await room.localParticipant.setMicrophoneEnabled(enabled);
+      await room.localParticipant.setMicrophoneEnabled(
+        enabled,
+        enabled ? DEFAULT_VOICE_AUDIO_CAPTURE_OPTIONS : undefined,
+      );
     } catch (error) {
       throw new WebRoomVoiceRuntimeError(formatError(error), {
         permissionDenied: isPermissionDenied(error),

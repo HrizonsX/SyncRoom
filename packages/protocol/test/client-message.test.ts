@@ -414,6 +414,80 @@ test("accepts a valid playback:update message", () => {
   );
 });
 
+test("accepts explicit play and pause playback intents", () => {
+  for (const syncIntent of ["explicit-play", "explicit-pause"] as const) {
+    assert.equal(
+      isClientMessage({
+        type: "playback:update",
+        payload: {
+          memberToken: VALID_TOKEN,
+          playback: {
+            url: "https://www.bilibili.com/video/BV1xx411c7mD",
+            currentTime: 12,
+            playState: syncIntent === "explicit-play" ? "playing" : "paused",
+            syncIntent,
+            playbackRate: 1,
+            updatedAt: 1_000,
+            serverTime: 1_000,
+            actorId: "member-1",
+            seq: 7,
+          },
+        },
+      }),
+      true,
+    );
+  }
+});
+
+test("accepts playback buffer coordination messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "buffering",
+        currentTime: 42,
+        bufferAheadSeconds: 0.25,
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "playback:sync-strategy:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        strategy: "wait",
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects malformed playback buffer coordination messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "stalled",
+        currentTime: 42,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "playback:sync-strategy:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        strategy: "strict",
+      },
+    }),
+    false,
+  );
+});
+
 test("accepts host member management messages", () => {
   assert.equal(
     isClientMessage({

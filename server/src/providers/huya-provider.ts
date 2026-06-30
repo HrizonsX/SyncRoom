@@ -808,7 +808,7 @@ function createHuyaStreamUrl(args: {
   quality: HuyaQualityOption;
   random: () => number;
 }): string | null {
-  const flvUrl = readString(args.streamInfo.sFlvUrl)?.replace(/\/+$/, "");
+  const flvUrl = normalizeHuyaMediaBaseUrl(readString(args.streamInfo.sFlvUrl));
   const streamName = readString(args.streamInfo.sStreamName);
   const suffix = readString(args.streamInfo.sFlvUrlSuffix) ?? "flv";
   const antiCode = readString(args.streamInfo.sFlvAntiCode);
@@ -823,6 +823,21 @@ function createHuyaStreamUrl(args: {
     random: args.random,
   });
   return `${flvUrl}/${streamName}.${suffix}?${params.toString()}`;
+}
+
+function normalizeHuyaMediaBaseUrl(value: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.startsWith("//") ? `https:${value}` : value;
+  const url = parseUrl(normalized);
+  if (!url) {
+    return null;
+  }
+  // Huya sometimes emits http FLV CDN URLs. The web room is served over HTTPS,
+  // so direct playback must use HTTPS instead of relying on browser mixed-content fallback.
+  url.protocol = "https:";
+  return url.toString().replace(/\/+$/, "");
 }
 
 function createUniqueCandidateId(usedIds: Set<string>, baseId: string): string {

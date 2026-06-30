@@ -4,6 +4,7 @@ import type {
   ErrorCode,
   ErrorMessage,
   PlaybackState,
+  PlaybackSyncState,
   RoomChatMessage,
   RoomMemberPermissions,
   RoomState,
@@ -80,6 +81,7 @@ export type PersistedRoom = {
   memberPermissions: Record<string, RoomMemberPermissions>;
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
+  playbackSync?: PlaybackSyncState;
   chatMessages: RoomChatMessage[];
   version: number;
   lastActiveAt: number;

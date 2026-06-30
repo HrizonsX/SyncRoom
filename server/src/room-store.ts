@@ -1,5 +1,7 @@
 import type {
   PlaybackState,
+  PlaybackSyncState,
+  PlaybackSyncStrategy,
   RoomChatMessage,
   RoomMemberPermissions,
   SharedVideo,
@@ -24,6 +26,7 @@ export type PersistedRoomPatch = {
   memberPermissions?: Record<string, RoomMemberPermissions>;
   sharedVideo?: SharedVideo | null;
   playback?: PlaybackState | null;
+  playbackSync?: PlaybackSyncState;
   chatMessages?: RoomChatMessage[];
   lastActiveAt?: number;
   expiresAt?: number | null;
@@ -82,14 +85,41 @@ export function createRoomCode(): string {
 }
 
 function cloneRoom(room: PersistedRoom): PersistedRoom {
+  const playbackSync = clonePlaybackSyncState(room.playbackSync);
   return {
     ...room,
     memberPermissions: cloneMemberPermissions(room.memberPermissions),
     sharedVideo: room.sharedVideo ? { ...room.sharedVideo } : null,
     playback: room.playback ? { ...room.playback } : null,
+    playbackSync,
     chatMessages: (room.chatMessages ?? []).map((message) => ({
       ...message,
     })),
+  };
+}
+
+export function createDefaultPlaybackSyncState(
+  strategy: PlaybackSyncStrategy = "smooth",
+): PlaybackSyncState {
+  return {
+    strategy,
+    hold: {
+      active: false,
+    },
+    bufferingMemberIds: [],
+  };
+}
+
+export function clonePlaybackSyncState(
+  state: PlaybackSyncState | undefined,
+): PlaybackSyncState {
+  if (!state) {
+    return createDefaultPlaybackSyncState();
+  }
+  return {
+    strategy: state.strategy,
+    hold: { ...state.hold },
+    bufferingMemberIds: [...state.bufferingMemberIds],
   };
 }
 
@@ -117,6 +147,7 @@ export function createPersistedRoom(
     memberPermissions: {},
     sharedVideo: null,
     playback: null,
+    playbackSync: createDefaultPlaybackSyncState(),
     chatMessages: [],
     version: 0,
     lastActiveAt: input.createdAt,
@@ -281,6 +312,7 @@ export function roomStateFromSessions(
     ...(room.ownerMemberId ? { hostMemberId: room.ownerMemberId } : {}),
     sharedVideo: room.sharedVideo,
     playback: room.playback,
+    playbackSync: clonePlaybackSyncState(room.playbackSync),
     members: Array.from(members.values()),
     chatMessages: (room.chatMessages ?? []).slice(-ROOM_CHAT_HISTORY_LIMIT),
   };

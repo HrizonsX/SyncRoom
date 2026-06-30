@@ -3,7 +3,9 @@ import {
   normalizeSharedVideoUrl,
   type ClientMessage,
   type ErrorCode,
+  type PlaybackBufferReport,
   type PlaybackState,
+  type PlaybackSyncStrategy,
   type RoomChatMessage,
   type RoomMemberPermissionName,
   type RoomMemberPermissions,
@@ -25,7 +27,17 @@ import {
 } from "./messages.js";
 import { decidePlaybackAcceptance } from "./playback-authority.js";
 import {
+  derivePlaybackAuthorityKind,
+  isLiveSharedVideo,
+  isSamePlaybackSyncState,
+  preservePlayingIntentForSeek,
+  shouldIgnorePlaybackUpdateDuringHold,
+  updatePlaybackSyncForBufferReport,
+} from "./playback-coordinator.js";
+import {
+  createDefaultPlaybackSyncState,
   createRoomCode,
+  clonePlaybackSyncState,
   roomStateFromSessions,
   roomStateOf,
   type RoomStore,
@@ -417,6 +429,16 @@ export function createRoomService(options: {
     memberToken: string,
     playback: PlaybackState,
   ) => Promise<{ room: PersistedRoom | null; ignored: boolean }>;
+  updatePlaybackBufferForSession: (
+    session: Session,
+    memberToken: string,
+    report: PlaybackBufferReport,
+  ) => Promise<{ room: PersistedRoom }>;
+  setPlaybackSyncStrategyForSession: (
+    session: Session,
+    memberToken: string,
+    strategy: PlaybackSyncStrategy,
+  ) => Promise<{ room: PersistedRoom }>;
   updateProfileForSession: (
     session: Session,
     memberToken: string,
@@ -845,48 +867,6 @@ export function createRoomService(options: {
     return authority;
   }
 
-  function derivePlaybackAuthorityKind(args: {
-    currentPlayback: PlaybackState | null;
-    nextPlayback: PlaybackState;
-  }): PlaybackAuthority["kind"] | null {
-    if (!args.currentPlayback) {
-      return "play";
-    }
-    if (
-      args.nextPlayback.playState === "paused" ||
-      args.nextPlayback.playState === "buffering"
-    ) {
-      return "pause";
-    }
-    if (
-      Math.abs(
-        args.nextPlayback.playbackRate - args.currentPlayback.playbackRate,
-      ) > 0.01
-    ) {
-      return "ratechange";
-    }
-    if (
-      args.nextPlayback.syncIntent === "explicit-seek" &&
-      args.nextPlayback.playState === "playing"
-    ) {
-      return "seek";
-    }
-    if (
-      Math.abs(
-        args.nextPlayback.currentTime - args.currentPlayback.currentTime,
-      ) >= 2.5
-    ) {
-      return "seek";
-    }
-    if (
-      args.currentPlayback.playState !== "playing" &&
-      args.nextPlayback.playState === "playing"
-    ) {
-      return "play";
-    }
-    return null;
-  }
-
   function recordPlaybackAuthority(args: {
     roomCode: string;
     actorId: string;
@@ -1115,7 +1095,10 @@ export function createRoomService(options: {
     memberToken: string,
     messageType: Extract<
       ClientMessage["type"],
-      "room:member-permission:set" | "room:member:kick" | "room:host:transfer"
+      | "room:member-permission:set"
+      | "room:member:kick"
+      | "room:host:transfer"
+      | "playback:sync-strategy:set"
     >,
   ): Promise<JoinedRoomAccess> {
     const access = await requireJoinedRoomSession(
@@ -2062,6 +2045,9 @@ export function createRoomService(options: {
                   sharedByDisplayName: session.displayName,
                 },
                 playback: nextPlayback,
+                playbackSync: createDefaultPlaybackSyncState(
+                  currentRoom.playbackSync?.strategy ?? "smooth",
+                ),
                 expiresAt: null,
                 lastActiveAt: currentTime,
               },
@@ -2183,11 +2169,43 @@ export function createRoomService(options: {
       }
 
       const currentTime = now();
-      const nextPlayback: PlaybackState = {
-        ...playback,
-        actorId: session.memberId ?? session.id,
-        serverTime: currentTime,
-      };
+      const nextPlayback = preservePlayingIntentForSeek({
+        room: access.persistedRoom,
+        nextPlayback: {
+          ...playback,
+          actorId: session.memberId ?? session.id,
+          serverTime: currentTime,
+        },
+      });
+      if (
+        shouldIgnorePlaybackUpdateDuringHold({
+          room: access.persistedRoom,
+          nextPlayback,
+          currentTime,
+        })
+      ) {
+        const authority = getPlaybackAuthority(access.persistedRoom.code);
+        logEvent("playback_update_ignored", {
+          roomCode: access.persistedRoom.code,
+          sessionId: session.id,
+          actorId: nextPlayback.actorId,
+          seq: nextPlayback.seq,
+          playState: nextPlayback.playState,
+          currentTime: nextPlayback.currentTime,
+          playbackRate: nextPlayback.playbackRate,
+          syncIntent: nextPlayback.syncIntent ?? "none",
+          result: "ignored",
+          reason: "playback-hold-follow",
+          authorityActorId: authority?.actorId ?? null,
+          authorityKind: authority?.kind ?? null,
+          authorityUntil: authority?.until ?? null,
+          currentActorId: access.persistedRoom.playback?.actorId ?? null,
+          currentPlayState: access.persistedRoom.playback?.playState ?? null,
+          currentPlaybackTime:
+            access.persistedRoom.playback?.currentTime ?? null,
+        });
+        return { room: access.persistedRoom, ignored: true };
+      }
       const authorityKind = derivePlaybackAuthorityKind({
         currentPlayback: access.persistedRoom.playback,
         nextPlayback,
@@ -2197,6 +2215,7 @@ export function createRoomService(options: {
         authority: getPlaybackAuthority(access.persistedRoom.code),
         incomingPlayback: nextPlayback,
         currentTime,
+        isLivePlayback: isLiveSharedVideo(access.persistedRoom.sharedVideo),
       });
       if (acceptance.decision !== "accept") {
         const authority = getPlaybackAuthority(access.persistedRoom.code);
@@ -2322,6 +2341,107 @@ export function createRoomService(options: {
       }
 
       return { room: result.room, ignored: false };
+    },
+
+    async updatePlaybackBufferForSession(session, memberToken, report) {
+      const access = await requireJoinedRoomSession(
+        session,
+        memberToken,
+        "playback:buffer",
+      );
+      const memberId = session.memberId ?? session.id;
+      const currentTime = now();
+      const updatedRoom = await withVersionRetry(
+        access.persistedRoom.code,
+        async (currentRoom) => {
+          const playbackSync = updatePlaybackSyncForBufferReport({
+            room: currentRoom,
+            memberId,
+            report,
+            currentTime,
+          });
+          if (isSamePlaybackSyncState(currentRoom.playbackSync, playbackSync)) {
+            return currentRoom;
+          }
+          const result = await roomStore.updateRoom(
+            currentRoom.code,
+            currentRoom.version,
+            {
+              playbackSync,
+              expiresAt: null,
+              lastActiveAt: currentTime,
+            },
+          );
+          return result.ok ? result.room : null;
+        },
+      );
+
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "room_not_found",
+          ROOM_NOT_FOUND_MESSAGE,
+          "room_not_found",
+        );
+      }
+
+      const playbackSync = clonePlaybackSyncState(updatedRoom.playbackSync);
+      logEvent("playback_buffer_report_applied", {
+        roomCode: updatedRoom.code,
+        sessionId: session.id,
+        ...actorDetails(session),
+        state: report.state,
+        currentTime: report.currentTime,
+        bufferAheadSeconds: report.bufferAheadSeconds ?? null,
+        strategy: playbackSync.strategy,
+        holdActive: playbackSync.hold.active,
+        result: "ok",
+      });
+      return { room: updatedRoom };
+    },
+
+    async setPlaybackSyncStrategyForSession(session, memberToken, strategy) {
+      const access = await requireHostRoomAccess(
+        session,
+        memberToken,
+        "playback:sync-strategy:set",
+      );
+      const currentTime = now();
+      const updatedRoom = await withVersionRetry(
+        access.persistedRoom.code,
+        async (currentRoom) => {
+          const playbackSync = createDefaultPlaybackSyncState(strategy);
+          if (isSamePlaybackSyncState(currentRoom.playbackSync, playbackSync)) {
+            return currentRoom;
+          }
+          const result = await roomStore.updateRoom(
+            currentRoom.code,
+            currentRoom.version,
+            {
+              playbackSync,
+              expiresAt: null,
+              lastActiveAt: currentTime,
+            },
+          );
+          return result.ok ? result.room : null;
+        },
+      );
+
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "room_not_found",
+          ROOM_NOT_FOUND_MESSAGE,
+          "room_not_found",
+        );
+      }
+
+      logEvent("playback_sync_strategy_updated", {
+        roomCode: updatedRoom.code,
+        sessionId: session.id,
+        ...actorDetails(session),
+        strategy,
+        result: "ok",
+      });
+      return { room: updatedRoom };
     },
 
     async updateProfileForSession(session, memberToken, displayName) {

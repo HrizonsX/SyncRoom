@@ -141,6 +141,120 @@ test("binds player events to playback update dispatch", () => {
   });
 });
 
+test("dispatches explicit seek on seeking when seeked is not bound", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ currentTime: 64, paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  const binding = bindPlaybackSyncControls({
+    media,
+    events: ["seeking"],
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => 7,
+    now: () => 3_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  listeners.get("seeking")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.deepEqual(dispatched, [
+    {
+      type: "playback:update",
+      payload: {
+        memberToken: "valid-member-token-123",
+        playback: {
+          url: "https://syncroom.example.test/video.mpd",
+          currentTime: 64,
+          playState: "playing",
+          syncIntent: "explicit-seek",
+          userInitiated: true,
+          playbackRate: 1,
+          updatedAt: 3_000,
+          serverTime: 3_000,
+          actorId: "member-1",
+          seq: 7,
+        },
+      },
+    },
+  ]);
+});
+
+test("dispatches final seeked position instead of intermediate drag position", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ currentTime: 24, paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    now: () => 4_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  media.currentTime = 36;
+  listeners.get("seeking")?.forEach((listener) => listener());
+  media.currentTime = 72;
+  listeners.get("seeked")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.deepEqual(dispatched, [
+    {
+      type: "playback:update",
+      payload: {
+        memberToken: "valid-member-token-123",
+        playback: {
+          url: "https://syncroom.example.test/video.mpd",
+          currentTime: 72,
+          playState: "playing",
+          syncIntent: "explicit-seek",
+          userInitiated: true,
+          playbackRate: 1,
+          updatedAt: 4_000,
+          serverTime: 4_000,
+          actorId: "member-1",
+          seq: 1,
+        },
+      },
+    },
+  ]);
+});
+
 test("defers local pause briefly so page teardown can suppress it", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const listeners = new Map<string, Set<() => void>>();
@@ -232,6 +346,72 @@ test("dispatches ordinary local pause after the lifecycle guard", async (t) => {
       },
     },
   });
+  binding.dispose();
+});
+
+test("dispatches rapid play toggle clicks as explicit last-intent controls", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const toggleListeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ paused: true }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const playToggleControl = {
+    addEventListener(type: string, listener: () => void) {
+      const items = toggleListeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      toggleListeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      toggleListeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    playToggleControl,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    now: () => 2_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  toggleListeners.get("click")?.forEach((listener) => listener());
+  toggleListeners.get("click")?.forEach((listener) => listener());
+
+  assert.equal(dispatched.length, 2);
+  assert.deepEqual(
+    dispatched.map((message) => {
+      const playback = (
+        message as Extract<
+          ReturnType<typeof createPlaybackUpdateMessage>,
+          { type: "playback:update" }
+        >
+      ).payload.playback;
+      return [playback.playState, playback.syncIntent, playback.seq];
+    }),
+    [
+      ["playing", "explicit-play", 1],
+      ["paused", "explicit-pause", 2],
+    ],
+  );
   binding.dispose();
 });
 

@@ -1,7 +1,9 @@
 import {
   parseSharedVideoRef,
   type ClientMessage,
+  type PlaybackBufferReport,
   type PlaybackProxyPolicy,
+  type PlaybackSyncStrategy,
   type PlaybackState,
   type ProviderPlaybackDescriptor,
   type RoomMemberPermissionName,
@@ -61,6 +63,8 @@ export type WebRoomPageLocation = Pick<
 const DEFAULT_DISPLAY_NAME = "网页用户";
 const DEFAULT_AUTH_POLL_INTERVAL_MS = 2_000;
 const CLOCK_SYNC_INTERVAL_MS = 60_000;
+const DEFAULT_RECONNECT_BASE_DELAY_MS = 1_000;
+const DEFAULT_RECONNECT_MAX_DELAY_MS = 30_000;
 const DANMAKU_SEND_COOLDOWN_MS = 1_000;
 const TRANSIENT_VOICE_ERROR_MS = 3_000;
 const TRANSIENT_PLAYBACK_ERROR_MS = 10_000;
@@ -135,6 +139,12 @@ type AuthPollTimeoutScheduler = (
   delayMs: number,
 ) => AuthPollTimeoutHandle;
 type AuthPollTimeoutClearer = (handle: AuthPollTimeoutHandle) => void;
+type ReconnectTimeoutHandle = unknown;
+type ReconnectTimeoutScheduler = (
+  callback: () => void,
+  delayMs: number,
+) => ReconnectTimeoutHandle;
+type ReconnectTimeoutClearer = (handle: ReconnectTimeoutHandle) => void;
 type ClockSyncIntervalHandle = unknown;
 type ClockSyncIntervalScheduler = (
   callback: () => void,
@@ -153,6 +163,10 @@ export type WebRoomAppControllerOptions = {
   authPollIntervalMs?: number;
   setAuthPollTimeout?: AuthPollTimeoutScheduler;
   clearAuthPollTimeout?: AuthPollTimeoutClearer;
+  reconnectBaseDelayMs?: number;
+  reconnectMaxDelayMs?: number;
+  setReconnectTimeout?: ReconnectTimeoutScheduler;
+  clearReconnectTimeout?: ReconnectTimeoutClearer;
   setClockSyncInterval?: ClockSyncIntervalScheduler;
   clearClockSyncInterval?: ClockSyncIntervalClearer;
   providerApiClientFactory?: (serverUrl: string) => ProviderApiClient;
@@ -227,6 +241,8 @@ export type WebRoomAppController = {
   sendPlaybackUpdate: (
     message: Extract<ClientMessage, { type: "playback:update" }>,
   ) => void;
+  sendPlaybackBufferReport: (report: PlaybackBufferReport) => void;
+  setPlaybackSyncStrategy: (strategy: PlaybackSyncStrategy) => void;
 };
 
 type PendingAction =
@@ -557,6 +573,8 @@ export function createWebRoomAppController(
   let voiceErrorTimerKey: string | null = null;
   let playbackErrorTimer: AuthPollTimeoutHandle | null = null;
   let playbackErrorTimerKey: string | null = null;
+  let reconnectTimer: ReconnectTimeoutHandle | null = null;
+  let reconnectAttempt = 0;
   let clockSyncTimer: ClockSyncIntervalHandle | null = null;
   const authPollIntervalMs =
     options.authPollIntervalMs ?? DEFAULT_AUTH_POLL_INTERVAL_MS;
@@ -565,6 +583,23 @@ export function createWebRoomAppController(
     ((callback, delayMs) => globalThis.setTimeout(callback, delayMs));
   const clearAuthPollTimeout: AuthPollTimeoutClearer =
     options.clearAuthPollTimeout ??
+    ((handle) =>
+      globalThis.clearTimeout(
+        handle as ReturnType<typeof globalThis.setTimeout>,
+      ));
+  const reconnectBaseDelayMs =
+    options.reconnectBaseDelayMs ?? DEFAULT_RECONNECT_BASE_DELAY_MS;
+  const reconnectMaxDelayMs =
+    options.reconnectMaxDelayMs ?? DEFAULT_RECONNECT_MAX_DELAY_MS;
+  const setReconnectTimeout: ReconnectTimeoutScheduler =
+    options.setReconnectTimeout ??
+    ((callback, delayMs) => {
+      const handle = globalThis.setTimeout(callback, delayMs);
+      unrefTimerHandle(handle);
+      return handle;
+    });
+  const clearReconnectTimeout: ReconnectTimeoutClearer =
+    options.clearReconnectTimeout ??
     ((handle) =>
       globalThis.clearTimeout(
         handle as ReturnType<typeof globalThis.setTimeout>,
@@ -835,6 +870,65 @@ export function createWebRoomAppController(
     );
   }
 
+  function clearReconnectTimer(): void {
+    if (reconnectTimer === null) {
+      return;
+    }
+    clearReconnectTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  function resetReconnectBackoff(): void {
+    reconnectAttempt = 0;
+    clearReconnectTimer();
+  }
+
+  function getReconnectDelayMs(): number {
+    const boundedAttempt = Math.min(reconnectAttempt, 10);
+    return Math.min(
+      reconnectMaxDelayMs,
+      reconnectBaseDelayMs * 2 ** boundedAttempt,
+    );
+  }
+
+  function isSamePersistedSession(
+    current: PersistedWebRoomSession | null,
+    expected: PersistedWebRoomSession,
+  ): boolean {
+    return (
+      current?.roomCode === expected.roomCode &&
+      current.joinToken === expected.joinToken &&
+      current.memberToken === expected.memberToken &&
+      current.serverUrl === expected.serverUrl
+    );
+  }
+
+  function scheduleActiveSessionReconnect(
+    session: PersistedWebRoomSession,
+  ): void {
+    if (options.autoReconnect === false) {
+      emit(setConnectionState(state, "disconnected"));
+      return;
+    }
+    clearReconnectTimer();
+    const delayMs = getReconnectDelayMs();
+    reconnectAttempt += 1;
+    emit(setConnectionState(state, "connecting"));
+    // WebSocket upgrade failures only surface as close/error in browsers.
+    // Delaying reconnects prevents a rejected socket from hammering the
+    // server-side per-IP connection-attempt limiter.
+    reconnectTimer = setReconnectTimeout(() => {
+      reconnectTimer = null;
+      if (
+        state.view !== "joined" ||
+        !isSamePersistedSession(activeSession, session)
+      ) {
+        return;
+      }
+      reconnectActiveSession(session);
+    }, delayMs);
+  }
+
   function clearBilibiliAuthPollTimer(): void {
     if (authPollTimer === null) {
       return;
@@ -888,6 +982,26 @@ export function createWebRoomAppController(
       return;
     }
     client.updatePlayback(message);
+  }
+
+  function sendPlaybackBufferReport(report: PlaybackBufferReport): void {
+    if (!client || !activeSession) {
+      return;
+    }
+    client.reportPlaybackBuffer({
+      memberToken: activeSession.memberToken,
+      ...report,
+    });
+  }
+
+  function setPlaybackSyncStrategy(strategy: PlaybackSyncStrategy): void {
+    if (!client || !activeSession || !isHostState()) {
+      return;
+    }
+    client.setPlaybackSyncStrategy({
+      memberToken: activeSession.memberToken,
+      strategy,
+    });
   }
 
   function getVoiceState() {
@@ -1474,6 +1588,7 @@ export function createWebRoomAppController(
     };
     persistActiveSession(session);
     pendingAction = null;
+    resetReconnectBackoff();
     emit(
       createInitialJoinedState({
         roomCode: message.payload.roomCode,
@@ -1505,6 +1620,7 @@ export function createWebRoomAppController(
     };
     persistActiveSession(session);
     pendingAction = null;
+    resetReconnectBackoff();
     if (isReconnect && state.view === "joined") {
       emit({
         ...state,
@@ -1567,6 +1683,7 @@ export function createWebRoomAppController(
       if (message.payload.code === "member_kicked") {
         const serverUrl = state.serverUrl ?? activeSession?.serverUrl;
         resetBilibiliAuthPolling();
+        resetReconnectBackoff();
         void voiceController.disconnect("member kicked");
         suppressNextSocketReconnect = true;
         client?.close();
@@ -1626,6 +1743,10 @@ export function createWebRoomAppController(
     }
     if (pendingAction?.type === "join" && pendingAction.reconnect === true) {
       pendingAction = null;
+      if (state.view === "joined" && activeSession) {
+        scheduleActiveSessionReconnect(activeSession);
+        return;
+      }
       emit(setConnectionState(state, "disconnected"));
       return;
     }
@@ -1634,7 +1755,7 @@ export function createWebRoomAppController(
       activeSession &&
       options.autoReconnect !== false
     ) {
-      reconnectActiveSession(activeSession);
+      scheduleActiveSessionReconnect(activeSession);
       return;
     }
     emit(setConnectionState(state, "disconnected"));
@@ -1646,6 +1767,7 @@ export function createWebRoomAppController(
 
   function connect(serverUrl: string, action: PendingAction): boolean {
     resetBilibiliAuthPolling();
+    resetReconnectBackoff();
     pendingAction = action;
     void voiceController.disconnect("room entry changed");
     clearClockSyncTimer();
@@ -1931,6 +2053,7 @@ export function createWebRoomAppController(
           }
         : {};
     resetBilibiliAuthPolling();
+    resetReconnectBackoff();
     void voiceController.disconnect("leave room requested");
     clearClockSyncTimer();
     if (client && activeSession) {
@@ -2648,5 +2771,7 @@ export function createWebRoomAppController(
     reportPlaybackLoaded,
     getPlaybackSyncContext,
     sendPlaybackUpdate,
+    sendPlaybackBufferReport,
+    setPlaybackSyncStrategy,
   };
 }

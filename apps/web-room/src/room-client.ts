@@ -1,6 +1,8 @@
 import type {
   ClientMessage,
   DanmakuMode,
+  PlaybackBufferReport,
+  PlaybackSyncStrategy,
   PlaybackState,
   RoomMemberPermissionName,
   SharedVideo,
@@ -93,6 +95,15 @@ type PlaybackReportInput = {
   stage?: WebPlayerErrorStage;
   browser?: WebPlaybackBrowserLabel;
   system?: WebPlaybackSystemLabel;
+};
+
+type PlaybackBufferReportInput = {
+  memberToken: string;
+} & PlaybackBufferReport;
+
+type PlaybackSyncStrategyInput = {
+  memberToken: string;
+  strategy: PlaybackSyncStrategy;
 };
 
 type MemberPermissionInput = {
@@ -316,6 +327,30 @@ export function createWebRoomSocketClient(options: WebRoomSocketClientOptions) {
           ...(input.stage ? { stage: input.stage } : {}),
           ...(input.browser ? { browser: input.browser } : {}),
           ...(input.system ? { system: input.system } : {}),
+        },
+      });
+    },
+
+    reportPlaybackBuffer(input: PlaybackBufferReportInput): void {
+      sendJson(socket, {
+        type: "playback:buffer",
+        payload: {
+          memberToken: input.memberToken,
+          state: input.state,
+          currentTime: input.currentTime,
+          ...(input.bufferAheadSeconds === undefined
+            ? {}
+            : { bufferAheadSeconds: input.bufferAheadSeconds }),
+        },
+      });
+    },
+
+    setPlaybackSyncStrategy(input: PlaybackSyncStrategyInput): void {
+      sendJson(socket, {
+        type: "playback:sync-strategy:set",
+        payload: {
+          memberToken: input.memberToken,
+          strategy: input.strategy,
         },
       });
     },

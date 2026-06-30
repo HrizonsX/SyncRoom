@@ -3,6 +3,8 @@ import type { PlaybackPlayState, RoomCode } from "./common.js";
 export const PLAYBACK_SYNC_INTENTS = [
   "explicit-seek",
   "explicit-ratechange",
+  "explicit-play",
+  "explicit-pause",
 ] as const;
 
 export type PlaybackSyncIntent = (typeof PLAYBACK_SYNC_INTENTS)[number];
@@ -61,6 +63,10 @@ export const WEB_PLAYBACK_SYSTEM_LABELS = [
 ] as const;
 export type WebPlaybackSystemLabel =
   (typeof WEB_PLAYBACK_SYSTEM_LABELS)[number];
+export const PLAYBACK_BUFFER_STATES = ["ready", "buffering"] as const;
+export type PlaybackBufferState = (typeof PLAYBACK_BUFFER_STATES)[number];
+export const PLAYBACK_SYNC_STRATEGIES = ["smooth", "wait"] as const;
+export type PlaybackSyncStrategy = (typeof PLAYBACK_SYNC_STRATEGIES)[number];
 export const MAX_ANNOUNCEMENT_ITEMS = 8;
 export const ANNOUNCEMENT_TEXT_MAX_LENGTH = 160;
 export const ANNOUNCEMENT_ID_MAX_LENGTH = 64;
@@ -92,7 +98,7 @@ export function isPlaybackSyncIntent(
 export function isExplicitControlSyncIntent(
   syncIntent: PlaybackSyncIntent | null | undefined,
 ): boolean {
-  return syncIntent === "explicit-seek" || syncIntent === "explicit-ratechange";
+  return isPlaybackSyncIntent(syncIntent);
 }
 
 export interface PlaybackProxyPolicy {
@@ -166,6 +172,25 @@ export interface PlaybackState {
   seq: number;
 }
 
+export interface PlaybackBufferReport {
+  state: PlaybackBufferState;
+  currentTime: number;
+  bufferAheadSeconds?: number;
+}
+
+export interface PlaybackBufferHoldState {
+  active: boolean;
+  reasonMemberId?: string;
+  startedAt?: number;
+  deadlineAt?: number;
+}
+
+export interface PlaybackSyncState {
+  strategy: PlaybackSyncStrategy;
+  hold: PlaybackBufferHoldState;
+  bufferingMemberIds: string[];
+}
+
 export interface RoomMember {
   id: string;
   name: string;
@@ -209,6 +234,7 @@ export interface RoomState {
   hostMemberId?: string;
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
+  playbackSync?: PlaybackSyncState;
   members: RoomMember[];
   chatMessages?: RoomChatMessage[];
 }

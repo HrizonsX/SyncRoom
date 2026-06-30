@@ -17,6 +17,7 @@ import type {
   AnnouncementItem,
   AnnouncementState,
   PlaybackState,
+  PlaybackSyncState,
   RoomChatMessage,
   RoomMember,
   RoomState,
@@ -29,6 +30,7 @@ import {
   DANMAKU_MESSAGE_MAX_LENGTH,
   DANMAKU_MODES,
   MAX_ANNOUNCEMENT_ITEMS,
+  PLAYBACK_SYNC_STRATEGIES,
   ROOM_CHAT_HISTORY_LIMIT,
   ROOM_CHAT_MESSAGE_KINDS,
   ROOM_MEMBER_PERMISSION_NAMES,
@@ -63,6 +65,8 @@ const CLIENT_MESSAGE_TYPES = new Set([
   "room:leave",
   "video:share",
   "playback:update",
+  "playback:buffer",
+  "playback:sync-strategy:set",
   "sync:request",
   "sync:ping",
   "voice:access",
@@ -156,6 +160,31 @@ function isPlaybackState(value: unknown): value is PlaybackState {
   );
 }
 
+function isPlaybackSyncState(value: unknown): value is PlaybackSyncState {
+  if (
+    !isRecord(value) ||
+    !(
+      typeof value.strategy === "string" &&
+      (PLAYBACK_SYNC_STRATEGIES as readonly string[]).includes(value.strategy)
+    ) ||
+    !isRecord(value.hold) ||
+    typeof value.hold.active !== "boolean" ||
+    !Array.isArray(value.bufferingMemberIds) ||
+    !value.bufferingMemberIds.every((memberId) => isActorId(memberId))
+  ) {
+    return false;
+  }
+
+  return (
+    (value.hold.reasonMemberId === undefined ||
+      isActorId(value.hold.reasonMemberId)) &&
+    (value.hold.startedAt === undefined ||
+      isFiniteNumber(value.hold.startedAt)) &&
+    (value.hold.deadlineAt === undefined ||
+      isFiniteNumber(value.hold.deadlineAt))
+  );
+}
+
 export function isRoomMember(value: unknown): value is RoomMember {
   const permissions = isRecord(value) ? value.permissions : undefined;
   return (
@@ -203,6 +232,8 @@ export function isRoomState(value: unknown): value is RoomState {
     (value.hostMemberId === undefined || isActorId(value.hostMemberId)) &&
     (value.sharedVideo === null || isSharedVideo(value.sharedVideo)) &&
     (value.playback === null || isPlaybackState(value.playback)) &&
+    (value.playbackSync === undefined ||
+      isPlaybackSyncState(value.playbackSync)) &&
     Array.isArray(value.members) &&
     value.members.every((member) => isRoomMember(member)) &&
     isOptionalRoomChatHistory(value.chatMessages)

@@ -307,7 +307,7 @@ test("room service restores owner identity when the owner refreshes during empty
   assert.deepEqual(state.members, [{ id: ownerMemberId!, name: "Alice" }]);
 });
 
-test("room service keeps chat messages out of persisted room state", async () => {
+test("room service keeps room-scoped chat messages for refresh rejoin state", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -358,8 +358,25 @@ test("room service keeps chat messages out of persisted room state", async () =>
   );
   const storedRoom = await roomStore.getRoom(created.room.code);
 
-  assert.deepEqual(state.chatMessages, []);
-  assert.deepEqual(storedRoom?.chatMessages, []);
+  const expectedMessages = [
+    {
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "hello",
+      timestamp: 1_200,
+    },
+    {
+      kind: "system" as const,
+      systemEventType: "member_joined" as const,
+      memberId: owner.memberId ?? owner.id,
+      displayName: "Alice",
+      content: "Alice joined room",
+      timestamp: 1_400,
+    },
+  ];
+
+  assert.deepEqual(state.chatMessages, expectedMessages);
+  assert.deepEqual(storedRoom?.chatMessages, expectedMessages);
 });
 
 test("room service transfers host to next joined member on explicit owner leave", async () => {

@@ -1061,6 +1061,28 @@ export function createRoomService(options: {
     return null;
   }
 
+  async function appendRoomChatMessage(
+    roomCode: string,
+    message: RoomChatMessage,
+  ): Promise<PersistedRoom | null> {
+    return await withVersionRetry(roomCode, async (currentRoom) => {
+      // Chat is room-scoped and expires with the room, but it must live in
+      // room state so refreshes and late joiners can hydrate the recent chat.
+      const result = await roomStore.updateRoom(
+        currentRoom.code,
+        currentRoom.version,
+        {
+          chatMessages: [...currentRoom.chatMessages, message],
+          lastActiveAt: now(),
+        },
+      );
+      if (!result.ok) {
+        return null;
+      }
+      return result.room;
+    });
+  }
+
   function getTargetActiveMember(
     access: JoinedRoomAccess,
     targetMemberId: string,
@@ -2495,13 +2517,32 @@ export function createRoomService(options: {
         memberToken,
         "chat:message",
       );
-      void message;
-      return { room: access.persistedRoom };
+      const room = await appendRoomChatMessage(
+        access.persistedRoom.code,
+        message,
+      );
+      if (!room) {
+        logEvent("chat_history_persist_failed", {
+          roomCode: access.persistedRoom.code,
+          sessionId: session.id,
+          provider: persistence.provider,
+          result: "error",
+          reason: "room_version_conflict",
+        });
+      }
+      return { room: room ?? access.persistedRoom };
     },
 
     async appendSystemChatMessageForRoom(roomCode, message) {
-      void message;
-      const room = await resolveRoom(roomCode);
+      const room = await appendRoomChatMessage(roomCode, message);
+      if (!room) {
+        logEvent("chat_history_system_persist_failed", {
+          roomCode,
+          provider: persistence.provider,
+          result: "error",
+          reason: "room_not_found_or_version_conflict",
+        });
+      }
       return room ? { room } : null;
     },
 

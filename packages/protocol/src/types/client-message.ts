@@ -1,6 +1,8 @@
 import type { RoomCode } from "./common.js";
 import type {
   DanmakuMode,
+  PlaybackBufferReport,
+  PlaybackSyncStrategy,
   PlaybackState,
   RoomMemberPermissionName,
   SharedVideo,
@@ -61,6 +63,21 @@ export interface PlaybackUpdateMessage {
   payload: {
     memberToken: string;
     playback: PlaybackState;
+  };
+}
+
+export interface PlaybackBufferReportMessage {
+  type: "playback:buffer";
+  payload: {
+    memberToken: string;
+  } & PlaybackBufferReport;
+}
+
+export interface PlaybackSyncStrategySetMessage {
+  type: "playback:sync-strategy:set";
+  payload: {
+    memberToken: string;
+    strategy: PlaybackSyncStrategy;
   };
 }
 
@@ -161,6 +178,8 @@ export type ClientMessage =
   | LeaveRoomMessage
   | ShareVideoMessage
   | PlaybackUpdateMessage
+  | PlaybackBufferReportMessage
+  | PlaybackSyncStrategySetMessage
   | SyncRequestMessage
   | SyncPingMessage
   | VoiceAccessMessage

@@ -6,6 +6,8 @@ import type {
   DanmakuMessage,
   JoinRoomMessage,
   LeaveRoomMessage,
+  PlaybackBufferReportMessage,
+  PlaybackSyncStrategySetMessage,
   PlaybackUpdateMessage,
   PlaybackReportMessage,
   ProfileUpdateMessage,
@@ -24,6 +26,8 @@ import {
   WEB_PLAYBACK_REPORT_EVENTS,
   WEB_PLAYBACK_SYSTEM_LABELS,
   WEB_PLAYER_ERROR_STAGES,
+  PLAYBACK_BUFFER_STATES,
+  PLAYBACK_SYNC_STRATEGIES,
   DANMAKU_MESSAGE_MAX_LENGTH,
   DANMAKU_MODES,
   ROOM_MEMBER_PERMISSION_NAMES,
@@ -429,6 +433,41 @@ function isPlaybackReportMessage(
   );
 }
 
+function isPlaybackBufferReportPayload(
+  value: unknown,
+): value is PlaybackBufferReportMessage["payload"] {
+  return (
+    isRecord(value) &&
+    isToken(value.memberToken) &&
+    isOneOf(value.state, PLAYBACK_BUFFER_STATES) &&
+    isNonNegativeFiniteNumber(value.currentTime) &&
+    (value.bufferAheadSeconds === undefined ||
+      isNonNegativeFiniteNumber(value.bufferAheadSeconds))
+  );
+}
+
+function isPlaybackBufferReportMessage(
+  value: unknown,
+): value is PlaybackBufferReportMessage {
+  return (
+    isRecord(value) &&
+    value.type === "playback:buffer" &&
+    isPlaybackBufferReportPayload(value.payload)
+  );
+}
+
+function isPlaybackSyncStrategySetMessage(
+  value: unknown,
+): value is PlaybackSyncStrategySetMessage {
+  return (
+    isRecord(value) &&
+    value.type === "playback:sync-strategy:set" &&
+    isRecord(value.payload) &&
+    isToken(value.payload.memberToken) &&
+    isOneOf(value.payload.strategy, PLAYBACK_SYNC_STRATEGIES)
+  );
+}
+
 export function isClientMessage(value: unknown): value is ClientMessage {
   if (!isRecord(value) || !isString(value.type)) {
     return false;
@@ -447,6 +486,10 @@ export function isClientMessage(value: unknown): value is ClientMessage {
       return isShareVideoMessage(value);
     case "playback:update":
       return isPlaybackUpdateMessage(value);
+    case "playback:buffer":
+      return isPlaybackBufferReportMessage(value);
+    case "playback:sync-strategy:set":
+      return isPlaybackSyncStrategySetMessage(value);
     case "sync:request":
       return isSyncRequestMessage(value);
     case "sync:ping":

@@ -1,9 +1,11 @@
 import type {
   DanmakuMode,
+  PlaybackSyncState,
   PlaybackState,
   ProviderPlaybackDescriptor,
   RoomMemberPermissionName,
   RoomMemberPermissions,
+  VideoProviderId,
 } from "@syncroom/protocol";
 import { formatRoomJoinInvite } from "./actions.js";
 import {
@@ -82,6 +84,7 @@ export type WebRoomAuthPanelPhase =
 
 export type WebRoomAuthPanelState = {
   open: boolean;
+  providerId?: VideoProviderId;
   method: WebRoomAuthMethod;
   phase: WebRoomAuthPanelPhase;
   flowId?: string;
@@ -177,6 +180,7 @@ export type WebRoomJoinedState = {
   providerPlaybackStatus?: WebRoomProviderPlaybackStatus;
   playbackSource?: PlaybackSource;
   playback?: PlaybackState;
+  playbackSync?: PlaybackSyncState;
   playbackUrl?: string;
   playbackError?: WebRoomPlaybackError;
   members: WebRoomMember[];
@@ -251,6 +255,7 @@ type UiIconName =
   | "send"
   | "auth"
   | "qr"
+  | "refresh"
   | "logout"
   | "parse"
   | "play"
@@ -340,6 +345,12 @@ function renderIconSvg(
       <rect x="3" y="14" width="7" height="7" rx="1"></rect>
       <path d="M14 14h3v3"></path>
       <path d="M21 14v7h-7"></path>
+    `,
+    refresh: `
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+      <path d="M3 21v-5h5"></path>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+      <path d="M21 3v5h-5"></path>
     `,
     logout: `
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
@@ -553,13 +564,17 @@ function renderPlaybackVideo(source: PlaybackSource | undefined): string {
                 class="player-video"
                 data-playback-video="true"${sourceAttributes}
                 playsinline
-                preload="metadata"
+                preload="auto"
               ></video>
   `;
 }
 
-function renderPlayerDanmakuInlineControls(canSendDanmaku: boolean): string {
-  const disabled = canSendDanmaku ? "" : " disabled";
+function renderPlayerDanmakuInlineControls(
+  canUseDanmaku: boolean,
+  canSendDanmaku: boolean,
+): string {
+  const inputDisabled = canUseDanmaku ? "" : " disabled";
+  const toggleDisabled = canUseDanmaku ? "" : " disabled";
   return `
                 <div class="player-danmaku-inline" data-player-danmaku-controls="inline">
                   <input
@@ -568,7 +583,7 @@ function renderPlayerDanmakuInlineControls(canSendDanmaku: boolean): string {
                     name="playerDanmaku"
                     maxlength="120"
                     autocomplete="off"
-                    ${disabled}
+                    ${inputDisabled}
                     placeholder="发弹幕"
                     aria-label="发送弹幕"
                   />
@@ -578,7 +593,7 @@ function renderPlayerDanmakuInlineControls(canSendDanmaku: boolean): string {
                   type="button"
                   class="player-danmaku-toggle"
                   data-action="toggle-player-danmaku"
-                  ${disabled}
+                  ${toggleDisabled}
                   aria-label="发弹幕"
                   aria-controls="player-danmaku-panel"
                   aria-expanded="false"
@@ -626,8 +641,11 @@ function renderPlayerLoadingIndicator(): string {
   `;
 }
 
-function renderPlayerDanmakuPopover(canSendDanmaku: boolean): string {
-  const disabled = canSendDanmaku ? "" : " disabled";
+function renderPlayerDanmakuPopover(
+  canUseDanmaku: boolean,
+  canSendDanmaku: boolean,
+): string {
+  const inputDisabled = canUseDanmaku ? "" : " disabled";
   return `
               <div
                 id="player-danmaku-panel"
@@ -642,7 +660,7 @@ function renderPlayerDanmakuPopover(canSendDanmaku: boolean): string {
                   name="playerDanmaku"
                   maxlength="120"
                   autocomplete="off"
-                  ${disabled}
+                  ${inputDisabled}
                   placeholder="发弹幕"
                   aria-label="发送弹幕"
                 />
@@ -701,8 +719,8 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
   const danmakuCooldownSeconds = danmakuCoolingDown
     ? Math.max(1, Math.ceil(danmakuCooldownRemainingMs / 1000))
     : 0;
-  const canSendDanmaku =
-    canCurrentMember(state, "danmaku") && !danmakuCoolingDown;
+  const canUseDanmaku = canCurrentMember(state, "danmaku");
+  const canSendDanmaku = canUseDanmaku && !danmakuCoolingDown;
   const playerDisabled = canControlPlayback ? "" : " disabled";
   const timeRangeDisabled = canControlPlayback ? "" : " disabled";
   return `
@@ -711,12 +729,12 @@ function renderPlayerSurface(state: WebRoomJoinedState): string {
               ${renderDanmakuLayer(state)}
               ${renderPlayerVideoTitle(state.videoTitle)}
               ${hasPlaybackSource ? renderPlayerLoadingIndicator() : ""}
-              ${renderPlayerDanmakuPopover(canSendDanmaku)}
+              ${renderPlayerDanmakuPopover(canUseDanmaku, canSendDanmaku)}
               <media-control-bar class="player-controls">
                 <media-play-button notooltip${playerDisabled}></media-play-button>
                 ${renderPlayerProgressControl(state.playbackSource, timeRangeDisabled)}
                 ${renderPlayerTimePair()}
-                ${renderPlayerDanmakuInlineControls(canSendDanmaku)}
+                ${renderPlayerDanmakuInlineControls(canUseDanmaku, canSendDanmaku)}
                 ${renderPlayerVolumeControl()}
                 <media-playback-rate-button notooltip${playerDisabled}></media-playback-rate-button>
                 <media-pip-button notooltip></media-pip-button>
@@ -815,6 +833,34 @@ function renderBilibiliLogo(): string {
   `;
 }
 
+function renderIqiyiLogo(): string {
+  return `
+    <span class="platform-logo platform-logo-iqiyi">
+      <svg class="platform-logo-svg" viewBox="0 0 64 32" role="img" aria-label="iQIYI Logo" focusable="false">
+        <rect x="10" y="6" width="44" height="22" rx="5"></rect>
+        <path d="M21 12v10"></path>
+        <path d="M27 12h10"></path>
+        <path d="M32 12v10"></path>
+        <path d="M43 12v10"></path>
+      </svg>
+    </span>
+  `;
+}
+
+function renderHuyaLogo(): string {
+  return `
+    <span class="platform-logo platform-logo-huya">
+      <svg class="platform-logo-svg" viewBox="0 0 64 32" role="img" aria-label="Huya Logo" focusable="false">
+        <path d="M14 10h8l4 5 6-7 6 7 4-5h8"></path>
+        <path d="M18 12v8c0 5 5 8 14 8s14-3 14-8v-8"></path>
+        <path d="M25 19h.01"></path>
+        <path d="M39 19h.01"></path>
+        <path d="M29 24h6"></path>
+      </svg>
+    </span>
+  `;
+}
+
 function localizeProviderAuthMessage(message: string): string {
   switch (message) {
     case "Bilibili QR authorization request is pending.":
@@ -844,6 +890,30 @@ function localizeProviderAuthMessage(message: string): string {
       return "B 站授权已清除。";
     case "Bilibili authorization logout failed.":
       return "B 站授权退出失败。";
+    case "iQIYI authorization request is pending.":
+      return "正在请求爱奇艺授权。";
+    case "Scan the iQIYI QR code to authorize playback.":
+      return "请使用爱奇艺 App 扫描二维码。";
+    case "Waiting for iQIYI scan confirmation.":
+      return "等待爱奇艺扫码确认。";
+    case "iQIYI authorization could not be verified.":
+      return "爱奇艺授权未通过验证。";
+    case "iQIYI authorization expired.":
+      return "爱奇艺二维码已过期，请重新授权。";
+    case "iQIYI authorization is not connected yet.":
+      return "爱奇艺授权暂未接入。";
+    case "Huya authorization request is pending.":
+      return "正在请求虎牙授权。";
+    case "Scan the Huya QR code to authorize playback.":
+      return "请使用虎牙 App 扫描二维码。";
+    case "Waiting for Huya scan confirmation.":
+      return "等待虎牙扫码确认。";
+    case "Huya authorization could not be verified.":
+      return "虎牙授权未通过验证。";
+    case "Huya authorization is not connected yet.":
+      return "虎牙授权暂未接入。";
+    case "Huya QR authorization failed.":
+      return "虎牙二维码授权失败，请重试。";
     default:
       return message;
   }
@@ -862,30 +932,69 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
   const profileSummary = [panel.profileName, panel.vipLabel]
     .filter((item): item is string => Boolean(item))
     .join(" - ");
+  const activeProviderId = panel.providerId ?? "bilibili";
   const rawMessage =
     panel.errorMessage ??
     panel.message ??
     (profileSummary || (isHost ? "Bilibili" : "房主可管理"));
   const message = localizeProviderAuthMessage(rawMessage);
+  const iqiyiMessage = localizeProviderAuthMessage(
+    activeProviderId === "iqiyi" ? rawMessage : "爱奇艺账号授权",
+  );
+  const huyaMessage = localizeProviderAuthMessage(
+    activeProviderId === "huya" ? rawMessage : "虎牙账号授权",
+  );
+  const bilibiliMessage =
+    activeProviderId === "bilibili" ? message : "B 站账号授权";
+  const qrCodeAlt =
+    activeProviderId === "iqiyi"
+      ? "iQIYI QR"
+      : activeProviderId === "huya"
+        ? "Huya QR"
+        : "Bilibili QR";
   const qrCode = panel.qrCodeUrl
-    ? `<img class="auth-qr" src="${escapeHtml(panel.qrCodeUrl)}" alt="Bilibili QR" />`
+    ? `<img class="auth-qr" src="${escapeHtml(panel.qrCodeUrl)}" alt="${qrCodeAlt}" />`
     : '<div class="auth-qr-placeholder">QR</div>';
   const shouldShowQrMethod =
     panel.phase === "loading" ||
     panel.phase === "pending" ||
     Boolean(panel.qrCodeUrl) ||
     state.authStatus === "checking";
-  const platformAuthAction = shouldShowQrMethod
-    ? ""
-    : `<button type="button" class="secondary-button platform-auth-action" data-action="bilibili-login-qr">${renderButtonText("授权", "auth")}</button>`;
+  const platformAuthAction =
+    activeProviderId === "bilibili" && shouldShowQrMethod
+      ? ""
+      : `<button type="button" class="secondary-button platform-auth-action" data-action="bilibili-login-qr">${renderButtonText("授权", "auth")}</button>`;
+  const iqiyiAuthAction =
+    activeProviderId === "iqiyi" && shouldShowQrMethod
+      ? ""
+      : `<button type="button" class="secondary-button platform-auth-action" data-action="iqiyi-login-qr">${renderButtonText("授权", "auth")}</button>`;
+  const huyaAuthAction =
+    activeProviderId === "huya" && shouldShowQrMethod
+      ? ""
+      : `<button type="button" class="secondary-button platform-auth-action" data-action="huya-login-qr">${renderButtonText("授权", "auth")}</button>`;
+  const refreshAuthAction =
+    activeProviderId === "iqiyi"
+      ? "iqiyi-login-qr"
+      : activeProviderId === "huya"
+        ? "huya-login-qr"
+        : "bilibili-login-qr";
   const authMethod = shouldShowQrMethod
     ? `
           <div class="auth-method auth-method-qr">
             ${qrCode}
-            <button type="button" class="secondary-button" data-action="collapse-bilibili-auth">${renderButtonText("收起二维码", "qr")}</button>
+            <div class="auth-method-actions">
+              <button type="button" class="secondary-button" data-action="collapse-bilibili-auth">${renderButtonText("收起二维码", "qr")}</button>
+              <button type="button" class="secondary-button auth-refresh-button" data-action="${refreshAuthAction}" aria-label="刷新二维码" title="刷新二维码">
+                ${renderUiIcon("refresh", "button-icon")}
+                <span>刷新</span>
+              </button>
+            </div>
           </div>
         `
     : "";
+  const bilibiliAuthMethod = activeProviderId === "bilibili" ? authMethod : "";
+  const iqiyiAuthMethod = activeProviderId === "iqiyi" ? authMethod : "";
+  const huyaAuthMethod = activeProviderId === "huya" ? authMethod : "";
 
   if (!isHost) {
     return `
@@ -917,10 +1026,28 @@ function renderProviderAuthPanel(state: WebRoomJoinedState): string {
           ${renderBilibiliLogo()}
           <div class="platform-auth-copy">
             <strong>B 站</strong>
-            <small>${escapeHtml(message)}</small>
+            <small>${escapeHtml(bilibiliMessage)}</small>
           </div>
           ${platformAuthAction}
-          ${authMethod}
+          ${bilibiliAuthMethod}
+        </section>
+        <section class="platform-auth-item" data-platform-id="iqiyi">
+          ${renderIqiyiLogo()}
+          <div class="platform-auth-copy">
+            <strong>爱奇艺</strong>
+            <small>${escapeHtml(iqiyiMessage)}</small>
+          </div>
+          ${iqiyiAuthAction}
+          ${iqiyiAuthMethod}
+        </section>
+        <section class="platform-auth-item" data-platform-id="huya">
+          ${renderHuyaLogo()}
+          <div class="platform-auth-copy">
+            <strong>虎牙</strong>
+            <small>${escapeHtml(huyaMessage)}</small>
+          </div>
+          ${huyaAuthAction}
+          ${huyaAuthMethod}
         </section>
       </div>
       </section>
@@ -1075,6 +1202,48 @@ function renderPolicyHelp(policy: "proxy" | "shared"): string {
   `;
 }
 
+function getPlaybackSyncState(state: WebRoomJoinedState): PlaybackSyncState {
+  return (
+    state.playbackSync ?? {
+      strategy: "smooth",
+      hold: { active: false },
+      bufferingMemberIds: [],
+    }
+  );
+}
+
+function renderPlaybackSyncPanel(state: WebRoomJoinedState): string {
+  const isHost = state.currentMemberId === state.hostMemberId;
+  const playbackSync = getPlaybackSyncState(state);
+  const smoothSelected = playbackSync.strategy === "smooth";
+  const waitSelected = playbackSync.strategy === "wait";
+  const waitingCount = playbackSync.bufferingMemberIds.length;
+  const holdText =
+    playbackSync.hold.active && waitingCount > 0
+      ? `等待 ${waitingCount} 人缓冲`
+      : waitingCount > 0
+        ? `${waitingCount} 人缓冲中`
+        : "状态正常";
+  const modeLabel = smoothSelected ? "流畅优先" : "等人同步";
+
+  return `
+    <section class="playback-sync-panel" data-panel="playback-sync" data-playback-sync-strategy="${playbackSync.strategy}" data-playback-sync-hold="${playbackSync.hold.active ? "true" : "false"}">
+      <div class="settings-tile-heading">
+        ${renderSettingsHeadingLabel("同步策略", "settings")}
+        <small>${escapeHtml(holdText)}</small>
+      </div>
+      ${
+        isHost
+          ? `<div class="sync-strategy-options" role="group" aria-label="同步策略">
+              <button type="button" class="sync-strategy-button${smoothSelected ? " is-active" : ""}" data-action="set-playback-sync-strategy" data-sync-strategy="smooth">流畅优先</button>
+              <button type="button" class="sync-strategy-button${waitSelected ? " is-active" : ""}" data-action="set-playback-sync-strategy" data-sync-strategy="wait">等人同步</button>
+            </div>`
+          : `<div class="sync-strategy-status">${escapeHtml(modeLabel)}</div>`
+      }
+    </section>
+  `;
+}
+
 function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const isHost = state.currentMemberId === state.hostMemberId;
   const picker = state.providerPicker ?? {
@@ -1089,7 +1258,10 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const messageHtml = picker.errorMessage
     ? `<small>${escapeHtml(picker.errorMessage)}</small>`
     : "";
-  const shareDisabled = picker.selectedItemId ? "" : " disabled";
+  const shareDisabled =
+    picker.selectedItemId && state.connectionState === "connected"
+      ? ""
+      : " disabled";
 
   if (!isHost) {
     return `
@@ -1521,6 +1693,7 @@ function renderJoined(state: WebRoomJoinedState): string {
             ${renderAuthorizationManagementHeaderAction(state)}
           </div>
           <div class="settings-grid">
+            ${renderPlaybackSyncPanel(state)}
             ${renderProviderPickerPanel(state)}
             ${renderPlaybackError(state)}
           </div>

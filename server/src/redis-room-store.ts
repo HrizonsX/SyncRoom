@@ -3,6 +3,7 @@ import type { RoomListQuery } from "./admin/types.js";
 import { getRedisRoomStoreKeys } from "./redis-namespace.js";
 import {
   cloneMemberPermissions,
+  clonePlaybackSyncState,
   createPersistedRoom,
   type ExpiredRoomsDeletionResult,
   type RoomStore,
@@ -58,6 +59,7 @@ function parseRoom(value: string | null): PersistedRoom | null {
     ...room,
     chatMessages: (room.chatMessages ?? []).slice(-ROOM_CHAT_HISTORY_LIMIT),
     memberPermissions: cloneMemberPermissions(room.memberPermissions),
+    playbackSync: clonePlaybackSyncState(room.playbackSync),
   };
 }
 

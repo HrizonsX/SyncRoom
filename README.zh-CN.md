@@ -4,7 +4,7 @@
 
 > 同频观影，好友同声。
 
-syncRoom 是一个用于多人同步观影的浏览器扩展、网页房间和 WebSocket 服务端。用户可以创建或加入房间，同步 Bilibili 页面、通用 HTML5 `<video>` 页面，或在网页房间中通过 Shaka Player 播放服务端解析出来的 Bilibili DASH/HLS 媒体流。
+syncRoom 是一个用于多人同步观影的浏览器扩展、网页房间和 WebSocket 服务端。用户可以创建或加入房间，同步 Bilibili 页面、通用 HTML5 `<video>` 页面，或在网页房间中播放服务端解析出来的 DASH/HLS、MP4、FLV/TS 等媒体流。
 
 ## 在线体验
 
@@ -92,7 +92,7 @@ npx serve apps/web-room/dist -l 4173
 
 随后访问 `http://localhost:4173`，服务器地址填写默认的 `ws://localhost:8787`，并确保 server 的 `ALLOWED_ORIGINS` 包含 `http://localhost:4173`。
 
-Web Room 的播放器、Bilibili 授权、代理播放、聊天室、弹幕和语音边界见 [网页房间功能](./docs/features/web-room.zh-CN.md)。
+Web Room 的播放器、平台授权、代理播放、聊天室、弹幕和语音边界见 [网页房间功能](./docs/features/web-room.zh-CN.md)。
 
 ## 文档地图
 

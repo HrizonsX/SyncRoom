@@ -16,6 +16,7 @@
     "@syncroom/protocol": "0.3.1",
     "livekit-client": "^2.19.1",
     "media-chrome": "^4.19.2",
+    "mpegts.js": "^1.8.0",
     "shaka-player": "^5.1.9"
   },
   "devDependencies": {

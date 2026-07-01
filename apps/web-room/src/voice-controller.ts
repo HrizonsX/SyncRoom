@@ -31,6 +31,7 @@ export function createWebRoomVoiceController(args: {
   getVoiceState: () => WebRoomVoiceState | null;
   setVoiceState: (voice: WebRoomVoiceState) => void;
   runtime: WebRoomVoiceRuntime;
+  canRequestAccess?: () => boolean;
   sendVoiceAccess: (memberToken: string) => void;
   sendVoiceState: (input: {
     memberToken: string;
@@ -110,6 +111,11 @@ export function createWebRoomVoiceController(args: {
         connected: message.payload.connected,
         muted: message.payload.muted,
         speaking: message.payload.speaking ?? false,
+      });
+      maybeRequestListenerAccess({
+        memberId,
+        connected: message.payload.connected,
+        muted: message.payload.muted,
       });
       args.log("voice:state received");
       return true;
@@ -334,6 +340,40 @@ export function createWebRoomVoiceController(args: {
       muted: input.muted,
       speaking: voice.speaking,
     });
+  }
+
+  function maybeRequestListenerAccess(state: {
+    memberId: string;
+    connected: boolean;
+    muted: boolean;
+  }): void {
+    const session = args.getSession();
+    const voice = args.getVoiceState();
+    if (!session?.connected || !voice) {
+      return;
+    }
+    if (args.canRequestAccess && !args.canRequestAccess()) {
+      return;
+    }
+    if (
+      state.memberId === session.memberId ||
+      !state.connected ||
+      state.muted
+    ) {
+      return;
+    }
+    if (
+      voice.status === "requesting" ||
+      voice.status === "connecting" ||
+      voice.status === "connected" ||
+      voice.status === "unavailable"
+    ) {
+      return;
+    }
+
+    // Join LiveKit as a listener when another member opens their microphone,
+    // so users do not need to click the local microphone button just to hear.
+    requestAccess();
   }
 
   function updateParticipantState(state: {

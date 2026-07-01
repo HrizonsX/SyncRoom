@@ -407,7 +407,7 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
 test("styles player loading indicator in the center chrome layer", () => {
   assert.match(
     styles,
-    /\.player-loading-indicator\s*{[^}]*width:\s*54px;[^}]*height:\s*54px;[^}]*opacity:\s*0;[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;[^}]*--media-loading-indicator-icon-width:\s*32px;[^}]*--media-loading-indicator-icon-height:\s*32px;[^}]*--media-loading-indicator-transition-delay:\s*200ms;[^}]*}/s,
+    /\.player-loading-indicator\s*{[^}]*width:\s*54px;[^}]*height:\s*54px;[^}]*padding:\s*0;[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*opacity:\s*0;[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;[^}]*backdrop-filter:\s*none;[^}]*--media-loading-indicator-icon-width:\s*32px;[^}]*--media-loading-indicator-icon-height:\s*32px;[^}]*--media-loading-indicator-transition-delay:\s*200ms;[^}]*}/s,
   );
   assert.match(
     styles,

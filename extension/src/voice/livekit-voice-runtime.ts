@@ -3,6 +3,7 @@ import {
   Room,
   RoomEvent,
   Track,
+  type AudioCaptureOptions,
   type Participant,
   type RemoteParticipant,
   type RemoteTrack,
@@ -17,6 +18,12 @@ import {
   VoiceRuntimeAdapterError,
   type VoiceRuntimeAdapter,
 } from "../background/voice-runtime-adapter";
+
+export const DEFAULT_VOICE_AUDIO_CAPTURE_OPTIONS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+} satisfies AudioCaptureOptions;
 
 export function createLiveKitVoiceRuntime(args: {
   onEvent: (event: VoiceRuntimeEvent) => void;
@@ -53,7 +60,10 @@ export function createLiveKitVoiceRuntime(args: {
       args.log(
         `Offscreen microphone permission state before toggle: ${await queryMicrophonePermissionState()}`,
       );
-      await room.localParticipant.setMicrophoneEnabled(enabled);
+      await room.localParticipant.setMicrophoneEnabled(
+        enabled,
+        enabled ? DEFAULT_VOICE_AUDIO_CAPTURE_OPTIONS : undefined,
+      );
     } catch (error) {
       throw new VoiceRuntimeAdapterError(formatError(error), {
         permissionDenied: isPermissionDenied(error),

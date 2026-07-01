@@ -4,6 +4,7 @@ import type {
   AdminConfig,
   AdminUiConfig,
   LogLevel,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -11,6 +12,7 @@ import type {
 import { loadAdminConfig, loadAdminUiConfig } from "./admin-config.js";
 import type { EnvSource } from "./env.js";
 import { parseIntegerEnv, readTrimmedEnv } from "./env.js";
+import { loadMediaExtractorConfig } from "./media-extractor-config.js";
 import { loadPersistenceConfig } from "./persistence-config.js";
 import {
   getConfigValue,
@@ -84,6 +86,10 @@ type VoiceConfigFile = {
   maxMembers?: number;
 };
 
+type MediaExtractorConfigFile = {
+  baseUrl?: string;
+};
+
 export type ServerConfigFile = {
   port?: number;
   globalAdminPort?: number;
@@ -93,6 +99,7 @@ export type ServerConfigFile = {
   persistence?: PersistenceConfigFile;
   adminUi?: AdminUiConfigFile;
   voice?: VoiceConfigFile;
+  mediaExtractor?: MediaExtractorConfigFile;
 };
 
 export type RuntimeConfig = {
@@ -105,6 +112,7 @@ export type RuntimeConfig = {
   adminConfig: AdminConfig;
   adminUiConfig: AdminUiConfig;
   voiceConfig: VoiceConfig;
+  mediaExtractorConfig: MediaExtractorConfig;
 };
 
 const DEFAULT_CONFIG_FILE = "server.config.json";
@@ -302,6 +310,7 @@ export async function loadRuntimeConfig(
     adminConfig: loadAdminConfig(env),
     adminUiConfig: loadAdminUiConfig(mergedEnv),
     voiceConfig: loadVoiceConfig(mergedEnv),
+    mediaExtractorConfig: loadMediaExtractorConfig(mergedEnv),
   };
 
   assertAllowedOriginsStartupPolicy(runtimeConfig.securityConfig);

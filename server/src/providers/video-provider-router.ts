@@ -298,13 +298,21 @@ async function proxyCandidate(args: {
     args.upstreamHeaders,
     args.candidate,
   );
-  if (args.candidate.sourceType === "mp4") {
+  if (
+    args.candidate.sourceType === "mp4" ||
+    args.candidate.sourceType === "flv" ||
+    args.candidate.sourceType === "ts"
+  ) {
+    const upstreamUrlAlternates = readCandidateUpstreamUrlAlternates(
+      args.candidate,
+    );
     const registered = args.playbackProxyService.registerSegment({
       roomCode: args.roomCode,
       providerId: args.providerId,
       upstreamUrl: args.candidate.url,
       publicBaseUrl: args.publicBaseUrl,
       upstreamHeaders,
+      fallbackUpstreamUrls: upstreamUrlAlternates?.[args.candidate.url],
     });
     return {
       ...args.candidate,
@@ -631,15 +639,25 @@ export function createVideoProviderRouter(
       );
       return;
     }
+    const parsePolicy =
+      providerId === "bilibili" ? policy : { ...policy, shared: false };
     const credentials =
-      policy.shared === false
-        ? null
-        : await options.authService.getCredentials({
-            roomCode: context.access.roomCode,
-            providerId,
-            ownerMemberId: context.access.ownerMemberId,
-          });
-    if (policy.shared && !credentials) {
+      providerId === "bilibili"
+        ? parsePolicy.shared
+          ? await options.authService.getCredentials({
+              roomCode: context.access.roomCode,
+              providerId,
+              ownerMemberId: context.access.ownerMemberId,
+            })
+          : null
+        : providerId === "generic"
+          ? null
+          : await options.authService.getCredentials({
+              roomCode: context.access.roomCode,
+              providerId,
+              ownerMemberId: context.access.ownerMemberId,
+            });
+    if (providerId === "bilibili" && parsePolicy.shared && !credentials) {
       sendError(
         response,
         401,
@@ -650,15 +668,19 @@ export function createVideoProviderRouter(
     }
     const result = await context.provider.parse({
       matchedUrl,
-      policy,
+      policy: parsePolicy,
       credentials,
     });
     const upstreamHeaders = createProviderHeaders(providerId, credentials);
+    const publicBaseUrl = getPublicBaseUrl(request);
+    // Delivery mode is an explicit front-end choice: direct mode returns CDN
+    // URLs untouched; proxy mode registers media resources under /proxy.
+    const deliveryPolicy = parsePolicy;
     const items = await createPickerItems({
       result,
-      policy,
+      policy: deliveryPolicy,
       roomCode: context.access.roomCode,
-      publicBaseUrl: getPublicBaseUrl(request),
+      publicBaseUrl,
       upstreamHeaders,
       playbackProxyService: options.playbackProxyService,
       fetchImpl,

@@ -2,7 +2,7 @@
 
 Effective date: 2026-06-07
 
-This Privacy Policy applies to the syncRoom browser extension and web room client (the "Project Clients"). It explains what information the Project Clients process, how that information is used, and what controls users have over related data when using synchronized playback, web rooms, optional room voice, temporary Bilibili authorization, and connection diagnostics.
+This Privacy Policy applies to the syncRoom browser extension and web room client (the "Project Clients"). It explains what information the Project Clients process, how that information is used, and what controls users have over related data when using synchronized playback, web rooms, optional room voice, temporary video-site authorization, and connection diagnostics.
 
 ## 1. Types of Information Processed
 
@@ -52,7 +52,7 @@ LiveKit is used only for room voice. It is not used to distribute the main share
 
 ### 1.6 Temporary Video Site Authorization
 
-When a web room host explicitly uses Bilibili QR authorization, the server may temporarily store credential material required for Bilibili API requests, such as cookies, CSRF values, or equivalent tokens. These credentials are kept only in temporary server-side authorization state for the host's room and provider playback flow.
+When a web room host explicitly uses a platform QR authorization flow, the server may temporarily store credential material required for provider requests, such as cookies, CSRF values, or equivalent tokens. These credentials are kept only in temporary server-side authorization state for the host's room and provider playback flow.
 
 Temporary provider credentials are not written to durable room storage, Admin pages, audit logs, error responses, or member-visible payloads. Room members do not receive the host's Bilibili credentials.
 
@@ -69,7 +69,7 @@ The Extension uses the information above only for the following purposes:
 - synchronizing play, pause, playback position, and playback speed between room participants
 - transmitting room voice when the user explicitly unmutes the microphone
 - broadcasting web room text chat messages in real time
-- parsing Bilibili videos, bangumi, or live sources after host authorization
+- parsing provider videos, series, or live sources after host authorization
 - displaying room state, shared video information, and member display names in the Extension UI
 - maintaining connection state, diagnosing connection issues, and improving feature reliability
 
@@ -96,11 +96,11 @@ The Project Clients connect to a sync server configured or used by the user in o
 - currently shared video information
 - current playback state
 - web room text chat messages
-- Bilibili authorization status, parse results, and provider playback descriptors
+- video-site authorization status, parse results, and provider playback descriptors
 
 If you configure a third-party sync server yourself, related data will be sent to that server, and data retention and access control will depend on how that server is deployed and operated.
 
-When the host selects `proxy=true` for Bilibili playback, media manifests or segments may be proxied through the sync server. In that case, the sync server processes the related media requests, Range requests, and traffic metrics. The proxy does not send host cookies or authorization headers to room members, but server operators may observe aggregated proxy request and byte counts.
+When the host selects `proxy=true` for provider playback, media manifests or segments may be proxied through the sync server. In that case, the sync server processes the related media requests, Range requests, and traffic metrics. The proxy does not send host cookies or authorization headers to room members, but server operators may observe aggregated proxy request and byte counts.
 
 ### 3.3 LiveKit Voice Service
 
@@ -117,7 +117,7 @@ To provide a continuous user experience, the Extension may store the following i
 - latest room state
 - server URL configuration
 
-This information is mainly stored in the browser extension storage area or the web room's browser local storage to preserve session state and restore client state. The web room does not store Bilibili temporary authorization credentials in browser local storage.
+This information is mainly stored in the browser extension storage area or the web room's browser local storage to preserve session state and restore client state. The web room does not store temporary video-site authorization credentials in browser local storage.
 
 ## 5. Data Sharing and Disclosure
 

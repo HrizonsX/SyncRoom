@@ -1,13 +1,20 @@
-import type { ClientMessage } from "@syncroom/protocol";
+import type { ClientMessage, PlaybackBufferReport } from "@syncroom/protocol";
 import {
+  loadMpegtsPlayer as defaultLoadMpegtsPlayer,
   loadShakaPlayer as defaultLoadShakaPlayer,
   type PlaybackSource,
 } from "./playback-adapter.js";
+import {
+  bindPlaybackBufferReporter,
+  type PlaybackBufferReporterBinding,
+} from "./playback-buffer-report.js";
 import {
   applyRemotePlaybackState,
   bindPlaybackSyncControls,
   type EventedMediaElementLike,
   type LocalPlaybackEvent,
+  type PlaybackPlayToggleControlLike,
+  type PlaybackTimeRangeControlLike,
 } from "./playback-sync.js";
 import type { WebRoomState } from "./render.js";
 
@@ -38,14 +45,48 @@ export type ShakaPlayerModule = {
   };
 };
 
+export type MpegtsMediaDataSource = {
+  type: "flv" | "mpegts";
+  url: string;
+  isLive?: boolean;
+};
+
+export type MpegtsPlayerConfig = Record<string, unknown>;
+
+export type MpegtsPlayerInstance = {
+  attachMediaElement: (video: PlaybackVideoElement) => void;
+  load: () => void;
+  unload?: () => void;
+  detachMediaElement?: () => void;
+  destroy?: () => void;
+};
+
+export type MpegtsPlayerModule = {
+  isSupported?: () => boolean;
+  createPlayer?: (
+    mediaDataSource: MpegtsMediaDataSource,
+    config?: MpegtsPlayerConfig,
+  ) => MpegtsPlayerInstance;
+  default?: {
+    isSupported?: () => boolean;
+    createPlayer?: (
+      mediaDataSource: MpegtsMediaDataSource,
+      config?: MpegtsPlayerConfig,
+    ) => MpegtsPlayerInstance;
+  };
+};
+
 export type PlaybackElementControllerOptions = {
   loadShakaPlayer?: () => Promise<unknown>;
+  loadMpegtsPlayer?: () => Promise<unknown>;
   now?: () => number;
 };
 
 export type WebRoomPlaybackControllerOptions =
   PlaybackElementControllerOptions & {
     onPlaybackError?: (error: unknown, source: PlaybackSource) => void;
+    onPlaybackLoaded?: (source: PlaybackSource) => void;
+    pageLifecycleTarget?: PlaybackPageLifecycleTarget | null;
     getSyncContext?: () => {
       memberToken: string;
       actorId: string;
@@ -55,7 +96,22 @@ export type WebRoomPlaybackControllerOptions =
     dispatchPlaybackUpdate?: (
       message: Extract<ClientMessage, { type: "playback:update" }>,
     ) => void;
+    dispatchPlaybackBufferReport?: (report: PlaybackBufferReport) => void;
+    bufferReportDelayMs?: number;
   };
+
+type PlaybackPageLifecycleEvent = "pagehide" | "beforeunload" | "pageshow";
+
+type PlaybackPageLifecycleTarget = {
+  addEventListener?: (
+    type: PlaybackPageLifecycleEvent,
+    listener: () => void,
+  ) => void;
+  removeEventListener?: (
+    type: PlaybackPageLifecycleEvent,
+    listener: () => void,
+  ) => void;
+};
 
 function getShakaPlayerConstructor(
   moduleValue: unknown,
@@ -68,6 +124,24 @@ function getShakaPlayerConstructor(
   return Player;
 }
 
+function getMpegtsApi(moduleValue: unknown): Required<MpegtsPlayerModule> {
+  const module = moduleValue as MpegtsPlayerModule;
+  const createPlayer = module.createPlayer ?? module.default?.createPlayer;
+  const isSupported =
+    module.isSupported ?? module.default?.isSupported ?? (() => true);
+  if (!createPlayer) {
+    throw new Error("mpegts.js module did not expose createPlayer.");
+  }
+  return {
+    isSupported,
+    createPlayer,
+    default: {
+      isSupported,
+      createPlayer,
+    },
+  };
+}
+
 function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}:${source.candidateId ?? ""}`;
 }
@@ -76,11 +150,24 @@ const LIVE_STREAMING_BUFFER_BEHIND_SECONDS = 10;
 const LIVE_STREAMING_BUFFERING_GOAL_SECONDS = 8;
 const LIVE_STREAMING_PRESENTATION_DELAY_SECONDS = 6;
 const LIVE_STREAMING_REBUFFERING_GOAL_SECONDS = 3;
+const VOD_STREAMING_BUFFER_BEHIND_SECONDS = 30;
+const VOD_STREAMING_BUFFERING_GOAL_SECONDS = 8;
+const VOD_STREAMING_REBUFFERING_GOAL_SECONDS = 3;
 const LIVE_RESUME_RELOAD_AFTER_PAUSE_MS = 1_500;
+const PLAYBACK_PLAY_RETRY_DELAY_MS = 500;
+const PLAYBACK_PLAY_RETRY_WINDOW_MS = 4_000;
+const MPEGTS_LIVE_STASH_INITIAL_SIZE = 1024 * 1024;
+const MPEGTS_LIVE_BACKWARD_BUFFER_SECONDS = 10;
+const MPEGTS_LIVE_MIN_BACKWARD_BUFFER_SECONDS = 5;
+const MPEGTS_LIVE_MAX_LATENCY_SECONDS = 6;
+const MPEGTS_LIVE_MIN_REMAIN_SECONDS = 2;
 const LIVE_PLAYBACK_SYNC_EVENTS: readonly LocalPlaybackEvent[] = [
   "play",
   "pause",
 ];
+const PLAYBACK_BUFFER_REPORT_DELAY_MS = 1_200;
+const PLAYBACK_BUFFER_HOLD_POLL_INTERVAL_MS = 500;
+const PLAYBACK_HOLD_SUPPRESS_LOCAL_EVENTS_MS = 500;
 
 function configureShakaPlayerForSource(
   player: ShakaPlayerInstance,
@@ -106,6 +193,12 @@ function configureShakaPlayerForSource(
     streamingConfig.bufferingGoal = LIVE_STREAMING_BUFFERING_GOAL_SECONDS;
     streamingConfig.lowLatencyMode = false;
     streamingConfig.rebufferingGoal = LIVE_STREAMING_REBUFFERING_GOAL_SECONDS;
+  } else {
+    // Wait-mode pauses VOD clients at the same target time. Keep Shaka fetching
+    // while paused so slower members can build enough buffer before release.
+    streamingConfig.bufferBehind = VOD_STREAMING_BUFFER_BEHIND_SECONDS;
+    streamingConfig.bufferingGoal = VOD_STREAMING_BUFFERING_GOAL_SECONDS;
+    streamingConfig.rebufferingGoal = VOD_STREAMING_REBUFFERING_GOAL_SECONDS;
   }
 
   player.configure({
@@ -119,6 +212,16 @@ type LiveResumeVideoElement = PlaybackVideoElement & {
   removeEventListener?: (type: "play" | "pause", listener: () => void) => void;
   readonly paused?: boolean;
   play?: () => Promise<void> | void;
+};
+
+type LiveHydrationRetryMediaElement = EventedMediaElementLike & {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
+type MutableAudioMediaElement = EventedMediaElementLike & {
+  muted: boolean;
+  defaultMuted?: boolean;
 };
 
 function bindLivePlaybackResume(args: {
@@ -197,6 +300,33 @@ function bindLivePlaybackResume(args: {
       video.removeEventListener?.("pause", handlePause);
       video.removeEventListener?.("play", handlePlay);
     },
+  };
+}
+
+function createMpegtsMediaDataSource(
+  source: PlaybackSource,
+): MpegtsMediaDataSource {
+  return {
+    type: source.sourceType === "ts" ? "mpegts" : "flv",
+    url: source.url,
+    ...(source.isLive ? { isLive: true } : {}),
+  };
+}
+
+function createMpegtsPlayerConfig(source: PlaybackSource): MpegtsPlayerConfig {
+  if (source.isLive !== true) {
+    return {};
+  }
+  return {
+    enableStashBuffer: true,
+    stashInitialSize: MPEGTS_LIVE_STASH_INITIAL_SIZE,
+    lazyLoad: false,
+    autoCleanupSourceBuffer: true,
+    autoCleanupMaxBackwardDuration: MPEGTS_LIVE_BACKWARD_BUFFER_SECONDS,
+    autoCleanupMinBackwardDuration: MPEGTS_LIVE_MIN_BACKWARD_BUFFER_SECONDS,
+    liveBufferLatencyChasing: true,
+    liveBufferLatencyMaxLatency: MPEGTS_LIVE_MAX_LATENCY_SECONDS,
+    liveBufferLatencyMinRemain: MPEGTS_LIVE_MIN_REMAIN_SECONDS,
   };
 }
 
@@ -289,10 +419,12 @@ export function createPlaybackElementController(
   options: PlaybackElementControllerOptions = {},
 ) {
   const loadShakaPlayer = options.loadShakaPlayer ?? defaultLoadShakaPlayer;
+  const loadMpegtsPlayer = options.loadMpegtsPlayer ?? defaultLoadMpegtsPlayer;
   const getNow = (): number => options.now?.() ?? Date.now();
   let currentSourceKey: string | undefined;
   let currentVideo: PlaybackVideoElement | undefined;
   let shakaPlayer: ShakaPlayerInstance | undefined;
+  let mpegtsPlayer: MpegtsPlayerInstance | undefined;
   let livePlaybackResumeBinding: { dispose: () => void } | undefined;
   let pendingLoad:
     | {
@@ -314,6 +446,17 @@ export function createPlaybackElementController(
     }
     await shakaPlayer.destroy?.();
     shakaPlayer = undefined;
+  }
+
+  function destroyMpegtsPlayer(): void {
+    if (!mpegtsPlayer) {
+      return;
+    }
+    const player = mpegtsPlayer;
+    mpegtsPlayer = undefined;
+    player.unload?.();
+    player.detachMediaElement?.();
+    player.destroy?.();
   }
 
   async function ensureShakaPlayer(
@@ -388,6 +531,7 @@ export function createPlaybackElementController(
         pendingLoad = nextPendingLoad;
         nextPendingLoad.promise = (async () => {
           await destroyShakaPlayer();
+          destroyMpegtsPlayer();
           disposeLivePlaybackResumeBinding();
           currentSourceKey = undefined;
           video.src = source.url;
@@ -405,7 +549,49 @@ export function createPlaybackElementController(
         return true;
       }
 
+      if (source.engine === "mpegts") {
+        const nextPendingLoad = {
+          sourceKey: nextSourceKey,
+          video,
+          promise: Promise.resolve(),
+        };
+        pendingLoad = nextPendingLoad;
+        nextPendingLoad.promise = (async () => {
+          await destroyShakaPlayer();
+          destroyMpegtsPlayer();
+          disposeLivePlaybackResumeBinding();
+          currentSourceKey = undefined;
+          const mpegts = getMpegtsApi(await loadMpegtsPlayer());
+          if (!mpegts.isSupported()) {
+            throw new Error("mpegts.js is not supported in this browser.");
+          }
+          video.removeAttribute("src");
+          const player = mpegts.createPlayer(
+            createMpegtsMediaDataSource(source),
+            createMpegtsPlayerConfig(source),
+          );
+          mpegtsPlayer = player;
+          try {
+            player.attachMediaElement(video);
+            player.load();
+          } catch (error) {
+            destroyMpegtsPlayer();
+            throw error;
+          }
+          if (pendingLoad === nextPendingLoad) {
+            currentSourceKey = nextSourceKey;
+          }
+        })().finally(() => {
+          if (pendingLoad === nextPendingLoad) {
+            pendingLoad = undefined;
+          }
+        });
+        await nextPendingLoad.promise;
+        return true;
+      }
+
       await recreateShakaPlayerIfSourceChanged(video, nextSourceKey);
+      destroyMpegtsPlayer();
       const player = await ensureShakaPlayer(video);
       configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
@@ -444,6 +630,7 @@ export function createPlaybackElementController(
       currentVideo = undefined;
       pendingLoad = undefined;
       await destroyShakaPlayer();
+      destroyMpegtsPlayer();
     },
 
     async dispose(): Promise<void> {
@@ -457,23 +644,247 @@ export function createWebRoomPlaybackController(
 ) {
   const elementController = createPlaybackElementController(options);
   let playbackBinding: { dispose: () => void } | undefined;
+  let playbackBufferBinding: PlaybackBufferReporterBinding | undefined;
   let boundMedia: EventedMediaElementLike | undefined;
+  let boundBufferMedia: EventedMediaElementLike | undefined;
+  let boundBufferUrl: string | undefined;
   let boundSyncUrl: string | undefined;
   let boundSyncEventsKey: string | undefined;
+  let boundPlayToggleControl: PlaybackPlayToggleControlLike | undefined;
+  let boundTimeRangeControl: PlaybackTimeRangeControlLike | undefined;
   let suppressLocalEventsUntil = 0;
   let syncGeneration = 0;
   let needsPlaybackHydration = true;
+  let resumeAfterPlaybackHold = false;
+  let playbackPlayRetry: { dispose: () => void } | undefined;
+  let pageLifecycleEnding = false;
+  const pageLifecycleTarget =
+    options.pageLifecycleTarget === undefined
+      ? ((globalThis as Partial<PlaybackPageLifecycleTarget>) ?? null)
+      : options.pageLifecycleTarget;
+
+  const handlePageLifecycleEnd = (): void => {
+    // Browser refresh/navigation can emit a media pause while tearing down the
+    // page. Treat that as lifecycle noise instead of a user pause command.
+    pageLifecycleEnding = true;
+    suppressLocalEventsUntil = Number.POSITIVE_INFINITY;
+  };
+  const handlePageLifecycleShow = (): void => {
+    pageLifecycleEnding = false;
+    suppressLocalEventsUntil = 0;
+  };
+  if (typeof pageLifecycleTarget?.addEventListener === "function") {
+    pageLifecycleTarget.addEventListener("pagehide", handlePageLifecycleEnd);
+    pageLifecycleTarget.addEventListener(
+      "beforeunload",
+      handlePageLifecycleEnd,
+    );
+    pageLifecycleTarget.addEventListener("pageshow", handlePageLifecycleShow);
+  }
 
   function getNow(): number {
     return options.now?.() ?? Date.now();
   }
 
-  function disposePlaybackBinding(): void {
+  function disposePlaybackBinding(
+    options: { preserveResumeIntent?: boolean } = {},
+  ): void {
     playbackBinding?.dispose();
+    playbackBufferBinding?.dispose();
     playbackBinding = undefined;
+    playbackBufferBinding = undefined;
     boundMedia = undefined;
+    boundBufferMedia = undefined;
+    boundBufferUrl = undefined;
     boundSyncUrl = undefined;
     boundSyncEventsKey = undefined;
+    boundPlayToggleControl = undefined;
+    boundTimeRangeControl = undefined;
+    if (options.preserveResumeIntent !== true) {
+      resumeAfterPlaybackHold = false;
+    }
+  }
+
+  function ensurePlaybackBufferBinding(
+    media: EventedMediaElementLike,
+    syncUrl: string | undefined,
+    isLivePlayback: boolean,
+  ): void {
+    if (
+      !syncUrl ||
+      isLivePlayback ||
+      !options.getSyncContext ||
+      !options.dispatchPlaybackBufferReport
+    ) {
+      playbackBufferBinding?.dispose();
+      playbackBufferBinding = undefined;
+      boundBufferMedia = undefined;
+      boundBufferUrl = undefined;
+      return;
+    }
+    if (
+      playbackBufferBinding &&
+      boundBufferMedia === media &&
+      boundBufferUrl === syncUrl
+    ) {
+      return;
+    }
+
+    playbackBufferBinding?.dispose();
+    boundBufferMedia = media;
+    boundBufferUrl = syncUrl;
+    const reportDelayMs =
+      options.bufferReportDelayMs ?? PLAYBACK_BUFFER_REPORT_DELAY_MS;
+    playbackBufferBinding = bindPlaybackBufferReporter({
+      media,
+      reportDelayMs,
+      pollIntervalMs: PLAYBACK_BUFFER_HOLD_POLL_INTERVAL_MS,
+      getContext: () => {
+        if (pageLifecycleEnding || getNow() < suppressLocalEventsUntil) {
+          return null;
+        }
+        const context = options.getSyncContext?.();
+        return context?.url === syncUrl ? context : null;
+      },
+      dispatch: (report) => options.dispatchPlaybackBufferReport?.(report),
+    });
+  }
+
+  function disposePlaybackPlayRetry(): void {
+    playbackPlayRetry?.dispose();
+    playbackPlayRetry = undefined;
+  }
+
+  function isAutoplayBlockedError(error: unknown): boolean {
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    return (
+      error.name === "NotAllowedError" ||
+      /autoplay|user.*interact|user.*gesture|not allowed/i.test(error.message)
+    );
+  }
+
+  function isMutableAudioMediaElement(
+    media: EventedMediaElementLike,
+  ): media is MutableAudioMediaElement {
+    return (
+      typeof (media as Partial<MutableAudioMediaElement>).muted === "boolean"
+    );
+  }
+
+  async function tryMutedLiveHydrationPlayback(
+    media: EventedMediaElementLike,
+  ): Promise<boolean> {
+    if (!media.paused || !isMutableAudioMediaElement(media)) {
+      return false;
+    }
+    media.muted = true;
+    media.defaultMuted = true;
+    suppressLocalEventsUntil = Math.max(
+      suppressLocalEventsUntil,
+      getNow() + PLAYBACK_PLAY_RETRY_DELAY_MS,
+    );
+    try {
+      await media.play();
+      return !media.paused;
+    } catch {
+      return false;
+    }
+  }
+
+  function schedulePlaybackPlayRetry(
+    media: EventedMediaElementLike,
+    generation: number,
+    options: { allowMutedFallback?: boolean } = {},
+  ): void {
+    disposePlaybackPlayRetry();
+    if (!media.paused) {
+      return;
+    }
+
+    const retryMedia = media as LiveHydrationRetryMediaElement;
+    const retryEvents = ["canplay", "loadeddata", "playing"] as const;
+    const deadline = getNow() + PLAYBACK_PLAY_RETRY_WINDOW_MS;
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const clearRetryTimer = (): void => {
+      if (retryTimer === undefined) {
+        return;
+      }
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+
+    const cleanup = (): void => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      clearRetryTimer();
+      for (const event of retryEvents) {
+        retryMedia.removeEventListener(event, retryNow);
+      }
+      if (playbackPlayRetry?.dispose === cleanup) {
+        playbackPlayRetry = undefined;
+      }
+    };
+
+    const scheduleNextRetry = (): void => {
+      if (disposed || generation !== syncGeneration || getNow() >= deadline) {
+        cleanup();
+        return;
+      }
+      clearRetryTimer();
+      retryTimer = setTimeout(retryNow, PLAYBACK_PLAY_RETRY_DELAY_MS);
+    };
+
+    function retryNow(): void {
+      if (disposed || generation !== syncGeneration) {
+        cleanup();
+        return;
+      }
+      if (!media.paused) {
+        cleanup();
+        return;
+      }
+      suppressLocalEventsUntil = Math.max(
+        suppressLocalEventsUntil,
+        getNow() + PLAYBACK_PLAY_RETRY_DELAY_MS,
+      );
+      clearRetryTimer();
+      void Promise.resolve(media.play())
+        .then(() => {
+          if (media.paused) {
+            scheduleNextRetry();
+          } else {
+            cleanup();
+          }
+        })
+        .catch((error) => {
+          if (
+            options.allowMutedFallback === true &&
+            isAutoplayBlockedError(error)
+          ) {
+            void tryMutedLiveHydrationPlayback(media).then((played) => {
+              if (played) {
+                cleanup();
+              } else {
+                scheduleNextRetry();
+              }
+            });
+            return;
+          }
+          scheduleNextRetry();
+        });
+    }
+
+    for (const event of retryEvents) {
+      retryMedia.addEventListener(event, retryNow);
+    }
+    playbackPlayRetry = { dispose: cleanup };
+    scheduleNextRetry();
   }
 
   function isEventedMediaElement(
@@ -495,6 +906,8 @@ export function createWebRoomPlaybackController(
     media: EventedMediaElementLike,
     syncUrl: string | undefined,
     events?: readonly LocalPlaybackEvent[],
+    playToggleControl?: PlaybackPlayToggleControlLike,
+    timeRangeControl?: PlaybackTimeRangeControlLike,
   ): void {
     if (
       !syncUrl ||
@@ -510,20 +923,28 @@ export function createWebRoomPlaybackController(
       playbackBinding &&
       boundMedia === media &&
       boundSyncUrl === syncUrl &&
-      boundSyncEventsKey === eventsKey
+      boundSyncEventsKey === eventsKey &&
+      boundPlayToggleControl === playToggleControl &&
+      boundTimeRangeControl === timeRangeControl
     ) {
       return;
     }
 
-    disposePlaybackBinding();
+    const preserveResumeIntent =
+      boundMedia === media && boundSyncUrl === syncUrl;
+    disposePlaybackBinding({ preserveResumeIntent });
     boundMedia = media;
     boundSyncUrl = syncUrl;
     boundSyncEventsKey = eventsKey;
+    boundPlayToggleControl = playToggleControl;
+    boundTimeRangeControl = timeRangeControl;
     playbackBinding = bindPlaybackSyncControls({
       media,
+      ...(playToggleControl ? { playToggleControl } : {}),
+      ...(timeRangeControl ? { timeRangeControl } : {}),
       ...(events ? { events } : {}),
       getContext: () => {
-        if (getNow() < suppressLocalEventsUntil) {
+        if (pageLifecycleEnding || getNow() < suppressLocalEventsUntil) {
           return null;
         }
         const context = options.getSyncContext?.();
@@ -535,9 +956,18 @@ export function createWebRoomPlaybackController(
     });
   }
 
+  function isRoomPlaybackHoldActive(state: WebRoomState): boolean {
+    if (state.view !== "joined" || state.playbackSync?.hold.active !== true) {
+      return false;
+    }
+    const deadlineAt = state.playbackSync.hold.deadlineAt;
+    return typeof deadlineAt !== "number" || deadlineAt > getNow();
+  }
+
   return {
     async sync(root: ParentNode, state: WebRoomState): Promise<void> {
       const generation = ++syncGeneration;
+      disposePlaybackPlayRetry();
       if (state.view !== "joined" || !state.playbackSource) {
         needsPlaybackHydration = true;
         disposePlaybackBinding();
@@ -572,6 +1002,7 @@ export function createWebRoomPlaybackController(
       }
       if (loadedSource) {
         needsPlaybackHydration = true;
+        options.onPlaybackLoaded?.(state.playbackSource);
       }
 
       if (!isEventedMediaElement(video)) {
@@ -581,15 +1012,55 @@ export function createWebRoomPlaybackController(
 
       const currentUrl = state.playbackUrl ?? state.playback?.url;
       const isLivePlayback = state.playbackSource.isLive === true;
+      const playToggleControl =
+        root.querySelector<HTMLElement>("media-play-button") ?? undefined;
+      const timeRangeControl =
+        root.querySelector<HTMLElement>("media-time-range") ?? undefined;
       ensurePlaybackBinding(
         video,
         currentUrl,
         isLivePlayback ? LIVE_PLAYBACK_SYNC_EVENTS : undefined,
+        playToggleControl,
+        timeRangeControl,
       );
+      ensurePlaybackBufferBinding(video, currentUrl, isLivePlayback);
+      const isVodPlaybackHoldActive =
+        !isLivePlayback &&
+        state.playback !== undefined &&
+        isRoomPlaybackHoldActive(state);
+      playbackBufferBinding?.setPollingEnabled(isVodPlaybackHoldActive);
       if (!state.playback || !currentUrl) {
+        resumeAfterPlaybackHold = false;
         return;
       }
-      if (isLivePlayback && state.playback.userInitiated !== true) {
+      if (isVodPlaybackHoldActive) {
+        // Wait-mode holds pause the local media without changing the room's
+        // intended play state. When the hold clears, the next room state must
+        // be allowed through even if this browser was the last playback actor.
+        resumeAfterPlaybackHold = state.playback.playState === "playing";
+        suppressLocalEventsUntil = Math.max(
+          suppressLocalEventsUntil,
+          getNow() + PLAYBACK_HOLD_SUPPRESS_LOCAL_EVENTS_MS,
+        );
+        if (!video.paused) {
+          video.pause();
+        }
+        return;
+      }
+      if (state.playback.playState !== "playing") {
+        resumeAfterPlaybackHold = false;
+      }
+      const shouldResumeLivePlayback =
+        isLivePlayback && state.playback.playState === "playing";
+      const shouldRetryVodHoldResume =
+        !isLivePlayback &&
+        resumeAfterPlaybackHold &&
+        state.playback.playState === "playing";
+      if (
+        isLivePlayback &&
+        state.playback.userInitiated !== true &&
+        state.playback.playState !== "playing"
+      ) {
         needsPlaybackHydration = false;
         return;
       }
@@ -601,16 +1072,54 @@ export function createWebRoomPlaybackController(
           localMemberId: state.currentMemberId,
           currentUrl,
           playback: state.playback,
-          allowLocalEcho: loadedSource || needsPlaybackHydration,
+          allowLocalEcho:
+            loadedSource || needsPlaybackHydration || resumeAfterPlaybackHold,
           ...(isLivePlayback
             ? { seekToleranceSeconds: Number.POSITIVE_INFINITY }
             : {}),
           now: options.now,
         });
+        if (shouldResumeLivePlayback && video.paused) {
+          schedulePlaybackPlayRetry(video, generation, {
+            allowMutedFallback: true,
+          });
+        }
         if (result.applied || result.reason !== "url_mismatch") {
           needsPlaybackHydration = false;
+          resumeAfterPlaybackHold = false;
         }
       } catch (error) {
+        if (
+          shouldResumeLivePlayback &&
+          generation === syncGeneration &&
+          video.paused
+        ) {
+          if (isAutoplayBlockedError(error)) {
+            const playedMuted = await tryMutedLiveHydrationPlayback(video);
+            if (playedMuted) {
+              needsPlaybackHydration = false;
+              return;
+            }
+          }
+          schedulePlaybackPlayRetry(video, generation, {
+            allowMutedFallback: true,
+          });
+          needsPlaybackHydration = false;
+          return;
+        }
+        if (
+          shouldRetryVodHoldResume &&
+          generation === syncGeneration &&
+          video.paused &&
+          !isAutoplayBlockedError(error)
+        ) {
+          // Remote members can still be finishing the seek/buffer cycle when
+          // wait mode releases. Retry on media readiness instead of leaving
+          // them paused after a transient interrupted play() call.
+          schedulePlaybackPlayRetry(video, generation);
+          needsPlaybackHydration = false;
+          return;
+        }
         if (generation === syncGeneration) {
           options.onPlaybackError?.(error, state.playbackSource);
         }
@@ -618,7 +1127,22 @@ export function createWebRoomPlaybackController(
     },
 
     async dispose(): Promise<void> {
+      if (typeof pageLifecycleTarget?.removeEventListener === "function") {
+        pageLifecycleTarget.removeEventListener(
+          "pagehide",
+          handlePageLifecycleEnd,
+        );
+        pageLifecycleTarget.removeEventListener(
+          "beforeunload",
+          handlePageLifecycleEnd,
+        );
+        pageLifecycleTarget.removeEventListener(
+          "pageshow",
+          handlePageLifecycleShow,
+        );
+      }
       disposePlaybackBinding();
+      disposePlaybackPlayRetry();
       await elementController.dispose();
     },
   };

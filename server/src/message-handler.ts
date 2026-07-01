@@ -15,7 +15,6 @@ import {
   WINDOW_10_SECONDS_MS,
   WINDOW_5_SECONDS_MS,
   WINDOW_MINUTE_MS,
-  WINDOW_SECOND_MS,
 } from "./rate-limit.js";
 import {
   CHAT_RATE_LIMITED_MESSAGE,
@@ -37,6 +36,8 @@ import { VoiceServiceError, type VoiceAccessDetails } from "./voice-service.js";
 type RoomEventBusPublishInput<T> = T extends unknown
   ? Omit<T, "sourceInstanceId" | "emittedAt">
   : never;
+
+const HOST_DISCONNECT_TRANSFER_GRACE_MS = 5_000;
 
 export function createMessageHandler(options: {
   config: {
@@ -103,6 +104,10 @@ export function createMessageHandler(options: {
       memberToken: string,
       targetMemberId: string,
     ) => Promise<{ room: { code: string } }>;
+    transferDisconnectedHostIfMissing?: (
+      roomCode: string,
+      ownerMemberId: string,
+    ) => Promise<{ room: { code: string } | null; hostTransferred: boolean }>;
     shareVideoForSession: (
       session: Session,
       memberToken: string,
@@ -124,6 +129,22 @@ export function createMessageHandler(options: {
         { type: "playback:update" }
       >["payload"]["playback"],
     ) => Promise<{ room: { code: string } | null; ignored: boolean }>;
+    updatePlaybackBufferForSession?: (
+      session: Session,
+      memberToken: string,
+      report: Omit<
+        Extract<ClientMessage, { type: "playback:buffer" }>["payload"],
+        "memberToken"
+      >,
+    ) => Promise<{ room: { code: string } }>;
+    setPlaybackSyncStrategyForSession?: (
+      session: Session,
+      memberToken: string,
+      strategy: Extract<
+        ClientMessage,
+        { type: "playback:sync-strategy:set" }
+      >["payload"]["strategy"],
+    ) => Promise<{ room: { code: string } }>;
     updateProfileForSession: (
       session: Session,
       memberToken: string,
@@ -180,6 +201,7 @@ export function createMessageHandler(options: {
   maxPendingPublishes?: number;
   backpressureWaitMs?: number;
   publishTimeoutMs?: number;
+  hostDisconnectTransferGraceMs?: number;
   onRoomJoined?: (
     session: Session,
     roomCode: string,
@@ -202,6 +224,8 @@ export function createMessageHandler(options: {
   const maxPendingPublishes = options.maxPendingPublishes ?? 256;
   const backpressureWaitMs = options.backpressureWaitMs ?? 5_000;
   const publishTimeoutMs = options.publishTimeoutMs ?? 5_000;
+  const hostDisconnectTransferGraceMs =
+    options.hostDisconnectTransferGraceMs ?? HOST_DISCONNECT_TRANSFER_GRACE_MS;
 
   const systemChatSuffix: Record<RoomSystemChatEventType, string> = {
     member_joined: "加入了房间",
@@ -571,6 +595,53 @@ export function createMessageHandler(options: {
         },
       );
     }
+    if (
+      reason === "disconnect" &&
+      memberRemoved &&
+      room &&
+      roomService.transferDisconnectedHostIfMissing
+    ) {
+      // Closing a tab and refreshing both surface as WebSocket disconnects.
+      // Wait briefly so a refreshed host can reclaim the same member token
+      // before we promote the next still-online member.
+      const transferTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            const transfer =
+              await roomService.transferDisconnectedHostIfMissing!(
+                roomCode,
+                memberId,
+              );
+            if (!transfer.hostTransferred || !transfer.room) {
+              return;
+            }
+            await firePublishRoomEvent(
+              {
+                type: "room_state_updated",
+                roomCode: transfer.room.code,
+              },
+              {
+                reason: "host_disconnect_transfer_broadcast_failed",
+                sessionId: session.id,
+                remoteAddress: session.remoteAddress,
+                origin: session.origin,
+              },
+            );
+          } catch (error) {
+            logEvent("host_disconnect_transfer_failed", {
+              sessionId: session.id,
+              roomCode,
+              memberId,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+              result: "error",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        })();
+      }, hostDisconnectTransferGraceMs);
+      transferTimer.unref?.();
+    }
   }
 
   function handleRateLimitedMessage(
@@ -871,12 +942,11 @@ export function createMessageHandler(options: {
             message.payload.targetMemberId,
           );
           if (hasAttachedSocket(result.targetSession)) {
-            sendError(
-              result.targetSession.socket,
-              "member_kicked",
-              MEMBER_KICKED_MESSAGE,
-              { messageType: message.type },
-            );
+            const targetSocket = result.targetSession.socket;
+            sendError(targetSocket, "member_kicked", MEMBER_KICKED_MESSAGE, {
+              messageType: message.type,
+            });
+            targetSocket.close(1000, MEMBER_KICKED_MESSAGE);
           }
           await firePublishRoomEvent(
             {
@@ -1006,6 +1076,79 @@ export function createMessageHandler(options: {
           });
           return;
         }
+        case "playback:buffer": {
+          await measureMessageHandling("playback:buffer", async () => {
+            const serviceResult =
+              await roomService.updatePlaybackBufferForSession?.(
+                session,
+                message.payload.memberToken,
+                {
+                  state: message.payload.state,
+                  currentTime: message.payload.currentTime,
+                  ...(message.payload.bufferAheadSeconds === undefined
+                    ? {}
+                    : {
+                        bufferAheadSeconds: message.payload.bufferAheadSeconds,
+                      }),
+                },
+              );
+            if (serviceResult) {
+              await firePublishRoomEvent(
+                {
+                  type: "room_state_updated",
+                  roomCode: serviceResult.room.code,
+                },
+                {
+                  reason: "playback_buffer_broadcast_failed",
+                  sessionId: session.id,
+                  remoteAddress: session.remoteAddress,
+                  origin: session.origin,
+                },
+              );
+            } else {
+              await roomService.getRoomStateForSession(
+                session,
+                message.payload.memberToken,
+                message.type,
+              );
+            }
+          });
+          return;
+        }
+        case "playback:sync-strategy:set": {
+          await measureMessageHandling(
+            "playback:sync-strategy:set",
+            async () => {
+              const serviceResult =
+                await roomService.setPlaybackSyncStrategyForSession?.(
+                  session,
+                  message.payload.memberToken,
+                  message.payload.strategy,
+                );
+              if (serviceResult) {
+                await firePublishRoomEvent(
+                  {
+                    type: "room_state_updated",
+                    roomCode: serviceResult.room.code,
+                  },
+                  {
+                    reason: "playback_sync_strategy_broadcast_failed",
+                    sessionId: session.id,
+                    remoteAddress: session.remoteAddress,
+                    origin: session.origin,
+                  },
+                );
+              } else {
+                await roomService.getRoomStateForSession(
+                  session,
+                  message.payload.memberToken,
+                  message.type,
+                );
+              }
+            },
+          );
+          return;
+        }
         case "sync:request": {
           if (
             !consumeFixedWindow(
@@ -1112,14 +1255,14 @@ export function createMessageHandler(options: {
           if (
             !consumeFixedWindow(
               session.rateLimitState.danmakuMessage,
-              1,
-              WINDOW_SECOND_MS,
+              config.rateLimits.danmakuMessagePer5Seconds,
+              WINDOW_5_SECONDS_MS,
               currentTime,
             )
           ) {
             const retryAfterMs = getFixedWindowRetryAfterMs({
               windowStart: session.rateLimitState.danmakuMessage.windowStart,
-              windowMs: WINDOW_SECOND_MS,
+              windowMs: WINDOW_5_SECONDS_MS,
               currentTime,
             });
             handleRateLimitedMessage(session, message.type);

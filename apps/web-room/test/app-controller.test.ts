@@ -9,7 +9,10 @@ import {
   WEB_ROOM_IDENTITY_STORAGE_KEY,
   WEB_ROOM_THEME_STORAGE_KEY,
 } from "../src/app-controller.js";
-import { ProviderApiError } from "../src/provider-api-client.js";
+import {
+  ProviderApiError,
+  type ProviderApiClient,
+} from "../src/provider-api-client.js";
 import type { StorageLike, WebSocketLike } from "../src/room-client.js";
 
 class MemoryStorage implements StorageLike {
@@ -32,14 +35,20 @@ type SocketEvent = "open" | "message" | "close" | "error";
 type SocketListener = (event: { data?: unknown }) => void;
 
 class FakeSocket implements WebSocketLike {
+  readonly OPEN = 1;
   readonly sent: unknown[] = [];
+  readyState = 0;
   private readonly listeners = new Map<SocketEvent, SocketListener[]>();
 
   send(data: string): void {
+    if (this.readyState !== this.OPEN) {
+      throw new Error("WebSocket is already in CLOSING or CLOSED state.");
+    }
     this.sent.push(JSON.parse(data));
   }
 
   close(): void {
+    this.readyState = 3;
     this.emit("close");
   }
 
@@ -48,6 +57,12 @@ class FakeSocket implements WebSocketLike {
   }
 
   emit(type: SocketEvent, data?: unknown): void {
+    if (type === "open") {
+      this.readyState = this.OPEN;
+    }
+    if (type === "close") {
+      this.readyState = 3;
+    }
     for (const listener of this.listeners.get(type) ?? []) {
       listener({ data });
     }
@@ -173,6 +188,33 @@ const multiQualityProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
     },
   ],
   defaultCandidateId: "dash-avc-1080p",
+};
+
+const genericDirectProviderPlaybackDescriptor: ProviderPlaybackDescriptor = {
+  providerId: "generic",
+  sourceId: "generic:source",
+  sourceUrl: "https://www.example.test/watch/1",
+  title: "Generic Video",
+  item: {
+    itemId: "default",
+    title: "Generic Video",
+    kind: "part",
+  },
+  policy: {
+    proxy: false,
+    shared: false,
+  },
+  candidates: [
+    {
+      id: "hls-720",
+      sourceType: "m3u8",
+      url: "https://cdn.example.test/generic/index.m3u8",
+      qualityLabel: "720P",
+      codecs: "avc1.64001f,mp4a.40.2",
+      default: true,
+    },
+  ],
+  defaultCandidateId: "hls-720",
 };
 
 test("starts on the entry screen with the default server URL", () => {
@@ -879,6 +921,266 @@ test("starts host Bilibili QR authorization through the provider API", async () 
   });
 });
 
+test("starts iQIYI authorization through the provider API and keeps the modal open", async () => {
+  const recorder = createSocketRecorder();
+  const calls: unknown[] = [];
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    providerApiClientFactory: (serverUrl) => ({
+      startAuth: async (input) => {
+        calls.push({ serverUrl, input });
+        throw new ProviderApiError(
+          "provider_auth_unavailable",
+          "Provider authorization is unavailable.",
+          501,
+          "auth_start_not_implemented",
+        );
+      },
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => ({
+        providerId: "generic",
+        sourceId: "unused",
+        sourceUrl: "https://example.com/watch",
+        title: "unused",
+        items: [],
+      }),
+    }),
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.startProviderAuth({ providerId: "iqiyi", method: "qr" });
+
+  assert.deepEqual(calls, [
+    {
+      serverUrl: "ws://syncroom.example.test",
+      input: {
+        providerId: "iqiyi",
+        roomCode: "ABC123",
+        memberToken: "valid-member-token-123",
+        method: "qr",
+      },
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.authStatus, "unauthorized");
+  assert.deepEqual(state.authPanel, {
+    open: true,
+    providerId: "iqiyi",
+    method: "qr",
+    phase: "failed",
+    errorMessage: "iQIYI authorization is not connected yet.",
+  });
+});
+
+test("starts Huya authorization through the provider API and keeps the modal open", async () => {
+  const recorder = createSocketRecorder();
+  const calls: unknown[] = [];
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    providerApiClientFactory: (serverUrl) => ({
+      startAuth: async (input) => {
+        calls.push({ serverUrl, input });
+        throw new ProviderApiError(
+          "provider_auth_unavailable",
+          "Provider authorization is unavailable.",
+          501,
+          "auth_start_not_implemented",
+        );
+      },
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => ({
+        providerId: "generic",
+        sourceId: "unused",
+        sourceUrl: "https://example.com/watch",
+        title: "unused",
+        items: [],
+      }),
+    }),
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.startProviderAuth({ providerId: "huya", method: "qr" });
+
+  assert.deepEqual(calls, [
+    {
+      serverUrl: "ws://syncroom.example.test",
+      input: {
+        providerId: "huya",
+        roomCode: "ABC123",
+        memberToken: "valid-member-token-123",
+        method: "qr",
+      },
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.authStatus, "unauthorized");
+  assert.deepEqual(state.authPanel, {
+    open: true,
+    providerId: "huya",
+    method: "qr",
+    phase: "failed",
+    errorMessage: "Huya authorization is not connected yet.",
+  });
+});
+
+test("polls iQIYI QR authorization until the host is authorized", async () => {
+  const recorder = createSocketRecorder();
+  const pollCalls: unknown[] = [];
+  const statusCalls: unknown[] = [];
+  const scheduledCallbacks: Array<() => void> = [];
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    authPollIntervalMs: 25,
+    setAuthPollTimeout: (callback: () => void) => {
+      scheduledCallbacks.push(callback);
+      return scheduledCallbacks.length;
+    },
+    clearAuthPollTimeout: () => {},
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "iqiyi",
+        method: "qr",
+        flowId: "iqiyi-flow-1",
+        status: "pending",
+        expiresAt: 61_000,
+        qrCodeUrl: "data:image/png;base64,iqiyi-qr",
+        message: "Scan the iQIYI QR code to authorize playback.",
+      }),
+      pollAuth: async (input) => {
+        pollCalls.push(input);
+        return {
+          status: "authorized",
+          profile: {
+            id: "iqiyi-user-1",
+            displayName: "爱奇艺用户",
+            avatarUrl: "https://www.iqiyipic.com/avatar.png",
+          },
+          expiresAt: 600_000,
+        };
+      },
+      getAuthStatus: async (input) => {
+        statusCalls.push(input);
+        return {
+          authorized: true,
+          profile: {
+            id: "iqiyi-user-1",
+            displayName: "爱奇艺用户",
+            avatarUrl: "https://www.iqiyipic.com/avatar.png",
+          },
+          expiresAt: 600_000,
+        };
+      },
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => ({
+        providerId: "generic",
+        sourceId: "unused",
+        sourceUrl: "https://example.com/watch",
+        title: "unused",
+        items: [],
+      }),
+    }),
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.startProviderAuth({ providerId: "iqiyi", method: "qr" });
+  assert.equal(scheduledCallbacks.length, 1);
+  scheduledCallbacks[0]?.();
+  await flushAsyncTasks();
+
+  assert.deepEqual(pollCalls, [
+    {
+      providerId: "iqiyi",
+      roomCode: "ABC123",
+      memberToken: "valid-member-token-123",
+      flowId: "iqiyi-flow-1",
+    },
+  ]);
+  assert.deepEqual(statusCalls, [
+    {
+      providerId: "iqiyi",
+      roomCode: "ABC123",
+      memberToken: "valid-member-token-123",
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.authStatus, "authorized");
+  assert.deepEqual(state.authPanel, {
+    open: true,
+    providerId: "iqiyi",
+    method: "qr",
+    phase: "authorized",
+    profileName: "爱奇艺用户",
+    expiresAt: 600_000,
+  });
+});
+
 test("polls Bilibili QR authorization until the host is authorized", async () => {
   const recorder = createSocketRecorder();
   const pollCalls: unknown[] = [];
@@ -1278,7 +1580,7 @@ test("loads Bilibili parse results from the provider API", async () => {
       pollAuth: async () => ({ status: "pending" }),
       getAuthStatus: async () => ({ authorized: false, profile: null }),
       logoutAuth: async () => ({ loggedOut: true }),
-      parse: async (input) => {
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
         calls.push({ serverUrl, input });
         return {
           providerId: "bilibili",
@@ -1328,6 +1630,7 @@ test("loads Bilibili parse results from the provider API", async () => {
     {
       serverUrl: "ws://syncroom.example.test",
       input: {
+        providerId: "bilibili",
         roomCode: "ABC123",
         memberToken: "valid-member-token-123",
         url: "https://www.bilibili.com/video/BV1xx411c7mD",
@@ -1452,8 +1755,11 @@ test("limits private room danmaku sends to one per second", () => {
     clearAuthPollTimeout: () => {},
   });
 
-  controller.sendDanmaku("first", { videoTime: 1 });
-  controller.sendDanmaku("second", { videoTime: 2 });
+  const firstAccepted = controller.sendDanmaku("first", { videoTime: 1 });
+  const secondAccepted = controller.sendDanmaku("second", { videoTime: 2 });
+
+  assert.equal(firstAccepted, true);
+  assert.equal(secondAccepted, false);
 
   assert.equal(
     recorder.sockets[0]?.sent.filter(
@@ -1478,7 +1784,9 @@ test("limits private room danmaku sends to one per second", () => {
 
   now = 11_000;
   timers[0]?.callback();
-  controller.sendDanmaku("third", { videoTime: 3 });
+  const thirdAccepted = controller.sendDanmaku("third", { videoTime: 3 });
+
+  assert.equal(thirdAccepted, true);
 
   assert.equal(
     recorder.sockets[0]?.sent.filter(
@@ -1722,6 +2030,104 @@ test("enables the microphone after the first voice button click connects", async
   }
   assert.equal(state.voice.status, "connected");
   assert.equal(state.voice.muted, false);
+});
+
+test("auto joins voice room as a listener when another member unmutes", async () => {
+  const recorder = createSocketRecorder();
+  const runtime = new FakeVoiceRuntime();
+  const controller = createWebRoomAppController({
+    socketFactory: recorder.factory,
+    voiceRuntime: runtime,
+  });
+
+  controller.createRoom({
+    displayName: "Alice",
+    serverUrl: "ws://syncroom.example.test",
+  });
+  recorder.sockets[0]?.emit("open");
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:created",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: null,
+        playback: null,
+        members: [
+          { id: "member-host", name: "Alice" },
+          { id: "member-2", name: "Bob" },
+        ],
+      },
+    }),
+  );
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:state",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-2",
+        connected: true,
+        muted: false,
+        speaking: false,
+      },
+    }),
+  );
+
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "voice:access",
+    payload: {
+      memberToken: "valid-member-token-123",
+    },
+  });
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "voice:access-granted",
+      payload: {
+        livekitUrl: "wss://livekit.example.test",
+        token: "voice-token",
+        roomName: "syncroom-ABC123",
+        participantIdentity: "member-host",
+        expiresAt: 11_000,
+      },
+    }),
+  );
+  await flushAsyncTasks();
+
+  assert.deepEqual(runtime.connectCalls, [
+    {
+      livekitUrl: "wss://livekit.example.test",
+      token: "voice-token",
+      roomName: "syncroom-ABC123",
+      participantIdentity: "member-host",
+    },
+  ]);
+  assert.deepEqual(runtime.microphoneCalls, []);
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "voice:state",
+    payload: {
+      memberToken: "valid-member-token-123",
+      connected: true,
+      muted: true,
+      speaking: false,
+    },
+  });
 });
 
 test("adds system chat messages from actual voice state websocket events", () => {
@@ -2026,6 +2432,302 @@ test("shows live room offline parse guidance without shared/proxy fallback noise
   assert.match(state.diagnostics.at(-1) ?? "", /live_room_offline/);
 });
 
+test("shows Huya live unavailable guidance without Bilibili shared auth noise", async () => {
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "huya",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        assert.equal(input.providerId, "huya");
+        assert.deepEqual(input.policy, { proxy: false, shared: false });
+        throw Object.assign(
+          new ProviderApiError(
+            "provider_parse_failed",
+            "Provider request failed.",
+            400,
+          ),
+          { reason: "huya_live_room_unavailable" },
+        );
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.huya.com/cxy0714",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "failed");
+  assert.equal(
+    state.providerPicker?.errorMessage,
+    "虎牙直播间当前未开播或暂时没有可播放直播流。",
+  );
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /Bilibili/);
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /shared/);
+  assert.match(state.diagnostics.at(-1) ?? "", /huya_live_room_unavailable/);
+});
+
+test("parses non-Bilibili URLs through the generic provider without shared auth", async () => {
+  const parseInputs: unknown[] = [];
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        parseInputs.push(input);
+        return {
+          providerId: "generic",
+          sourceId: "generic:source",
+          sourceUrl: "https://example.com/watch/123",
+          title: "Generic Video",
+          items: [],
+        };
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://example.com/watch/123",
+    proxy: false,
+    shared: true,
+  });
+
+  assert.deepEqual(parseInputs, [
+    {
+      providerId: "generic",
+      roomCode: "ABC123",
+      memberToken: "valid-member-token-123",
+      url: "https://example.com/watch/123",
+      policy: { proxy: false, shared: false },
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "ready");
+  assert.equal(state.providerPicker?.shared, false);
+});
+
+test("parses iQIYI URLs through the iQIYI provider without shared auth", async () => {
+  const parseInputs: unknown[] = [];
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        parseInputs.push(input);
+        return {
+          providerId: "iqiyi",
+          sourceId: "iqiyi:source",
+          sourceUrl: "https://www.iqiyi.com/v_abc123.html",
+          title: "爱奇艺视频",
+          items: [],
+        };
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.iqiyi.com/v_abc123.html",
+    proxy: false,
+    shared: true,
+  });
+
+  assert.deepEqual(parseInputs, [
+    {
+      providerId: "iqiyi",
+      roomCode: "ABC123",
+      memberToken: "valid-member-token-123",
+      url: "https://www.iqiyi.com/v_abc123.html",
+      policy: { proxy: false, shared: false },
+    },
+  ]);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "ready");
+  assert.equal(state.providerPicker?.shared, false);
+});
+
+test("keeps explicit direct generic policy when sharing parsed playback", async () => {
+  const { controller, recorder } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => ({
+        providerId: "generic",
+        sourceId: "generic:source",
+        sourceUrl: "https://www.example.test/watch/1",
+        title: "Generic Video",
+        items: [
+          {
+            itemId: "default",
+            title: "Generic Video",
+            kind: "part",
+            qualityLabel: "720P",
+            sourceType: "m3u8",
+            providerDescriptor: genericDirectProviderPlaybackDescriptor,
+          },
+        ],
+      }),
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.example.test/watch/1",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.proxy, false);
+  assert.equal(state.providerPicker?.shared, false);
+
+  controller.shareSelectedProviderItem();
+
+  const shared = recorder.sockets[0]?.sent.at(-1) as
+    | {
+        payload?: {
+          video?: {
+            provider?: ProviderPlaybackDescriptor;
+          };
+        };
+      }
+    | undefined;
+  assert.deepEqual(shared?.payload?.video?.provider?.policy, {
+    proxy: false,
+    shared: false,
+  });
+});
+
+test("shows generic unsupported URL guidance without Bilibili auth copy", async () => {
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => {
+        throw new ProviderApiError(
+          "provider_parse_failed",
+          "Extractor request failed.",
+          400,
+          "extractor_unsupported_url",
+        );
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://haokan.baidu.com/v?vid=1",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "failed");
+  assert.equal(state.providerPicker?.errorMessage, "暂不支持这个链接。");
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /Bilibili/);
+  assert.match(state.diagnostics.at(-1) ?? "", /extractor_unsupported_url/);
+});
+
+test("shows generic auth-required guidance without Bilibili auth copy", async () => {
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => {
+        throw new ProviderApiError(
+          "provider_parse_failed",
+          "Extractor request failed.",
+          400,
+          "extractor_auth_required",
+        );
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.youtube.com/watch?v=keOaQm6RpBg",
+    proxy: false,
+    shared: false,
+  });
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "failed");
+  assert.match(state.providerPicker?.errorMessage ?? "", /Cookie/);
+  assert.doesNotMatch(state.providerPicker?.errorMessage ?? "", /Bilibili/);
+  assert.match(state.diagnostics.at(-1) ?? "", /extractor_auth_required/);
+});
+
 test("shares the selected Bilibili item with the final proxy and shared policy", () => {
   const recorder = createSocketRecorder();
   const controller = createWebRoomAppController({
@@ -2228,6 +2930,206 @@ test("shares the selected provider quality as the default playback candidate", (
   );
 });
 
+test("does not share provider playback after disconnect when auto reconnect is disabled", () => {
+  const { controller, recorder } = createJoinedHostController({
+    autoReconnect: false,
+  });
+
+  controller.setProviderPickerResults({
+    items: [
+      {
+        itemId: "BV1xx411c7mD:cid-987654",
+        title: "Part 1",
+        kind: "part",
+        qualityLabel: "1080P",
+        sourceType: "mpd",
+        providerDescriptor: multiQualityProviderPlaybackDescriptor,
+      },
+    ],
+  });
+  const socket = recorder.sockets[0];
+  const sentCount = socket?.sent.length ?? 0;
+  socket?.emit("close");
+
+  assert.doesNotThrow(() => controller.shareSelectedProviderItem());
+  assert.equal(socket?.sent.length, sentCount);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view === "joined") {
+    assert.equal(state.connectionState, "disconnected");
+    assert.match(
+      state.diagnostics.at(-1) ?? "",
+      /provider share denied: room disconnected/,
+    );
+  }
+});
+
+test("reconnects an active room session after socket close before sharing parsed live playback", async () => {
+  const scheduledReconnects: Array<{
+    callback: () => void;
+    delayMs: number;
+  }> = [];
+  const { controller, recorder } = createJoinedHostController({
+    reconnectBaseDelayMs: 1_000,
+    setReconnectTimeout: (callback: () => void, delayMs: number) => {
+      scheduledReconnects.push({ callback, delayMs });
+      return scheduledReconnects.length;
+    },
+    clearReconnectTimeout: () => {},
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => ({
+        providerId: "bilibili",
+        sourceId: "35",
+        sourceUrl: "https://live.bilibili.com/35",
+        title: "Live room",
+        items: [
+          {
+            itemId: "live-35",
+            title: "Live room",
+            kind: "live",
+            qualityLabel: "720P",
+            sourceType: "m3u8",
+            providerDescriptor: {
+              providerId: "bilibili",
+              sourceId: "35",
+              sourceUrl: "https://live.bilibili.com/35",
+              title: "Live room",
+              item: {
+                itemId: "live-35",
+                title: "Live room",
+                kind: "live",
+                roomId: "35",
+              },
+              policy: input.policy,
+              candidates: [
+                {
+                  id: "hls-live",
+                  sourceType: "m3u8",
+                  url: "https://syncroom.example.test/proxy/live.m3u8",
+                  qualityLabel: "720P",
+                  codecs: "avc",
+                  default: true,
+                },
+              ],
+              defaultCandidateId: "hls-live",
+            },
+          },
+        ],
+      }),
+    }),
+  });
+
+  recorder.sockets[0]?.emit("close");
+
+  assert.equal(recorder.sockets.length, 1);
+  assert.equal(scheduledReconnects.length, 1);
+  assert.equal(scheduledReconnects[0]?.delayMs, 1_000);
+  scheduledReconnects[0]?.callback();
+
+  assert.equal(recorder.sockets.length, 2);
+  recorder.sockets[1]?.emit("open");
+  const rejoin = recorder.sockets[1]?.sent.at(-1) as
+    | { type?: string; payload?: Record<string, unknown> }
+    | undefined;
+  assert.equal(rejoin?.type, "room:join");
+  assert.deepEqual(rejoin?.payload, {
+    roomCode: "ABC123",
+    joinToken: "valid-join-token-123",
+    memberToken: "valid-member-token-123",
+    displayName: "Alice",
+    protocolVersion: rejoin?.payload?.protocolVersion,
+  });
+  assert.equal(typeof rejoin?.payload?.protocolVersion, "number");
+  recorder.sockets[1]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:joined",
+      payload: {
+        roomCode: "ABC123",
+        memberId: "member-host",
+        memberToken: "valid-member-token-123",
+      },
+    }),
+  );
+
+  await controller.parseBilibiliUrl({
+    url: "https://live.bilibili.com/35",
+    proxy: false,
+    shared: false,
+  });
+  controller.shareSelectedProviderItem();
+
+  const shared = recorder.sockets[1]?.sent.at(-1) as
+    | {
+        type?: string;
+        payload?: { video?: { provider?: ProviderPlaybackDescriptor } };
+      }
+    | undefined;
+  assert.equal(shared?.type, "video:share");
+  assert.equal(shared?.payload?.video?.provider?.item.kind, "live");
+});
+
+test("backs off active session auto reconnect after socket close", () => {
+  const scheduledReconnects: Array<{
+    callback: () => void;
+    delayMs: number;
+  }> = [];
+  const reconnectOptions = {
+    reconnectBaseDelayMs: 1_000,
+    setReconnectTimeout: (callback: () => void, delayMs: number) => {
+      scheduledReconnects.push({ callback, delayMs });
+      return scheduledReconnects.length;
+    },
+    clearReconnectTimeout: () => {},
+  };
+  const { controller, recorder } = createJoinedHostController(reconnectOptions);
+
+  recorder.sockets[0]?.emit("close");
+
+  assert.equal(recorder.sockets.length, 1);
+  assert.equal(scheduledReconnects.length, 1);
+  assert.equal(scheduledReconnects[0]?.delayMs, 1_000);
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.connectionState, "connecting");
+
+  scheduledReconnects[0]?.callback();
+
+  assert.equal(recorder.sockets.length, 2);
+  recorder.sockets[1]?.emit("open");
+  assert.deepEqual(recorder.sockets[1]?.sent, [
+    {
+      type: "room:join",
+      payload: {
+        roomCode: "ABC123",
+        joinToken: "valid-join-token-123",
+        memberToken: "valid-member-token-123",
+        displayName: "Alice",
+        protocolVersion: 3,
+      },
+    },
+  ]);
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.connectionState, "connected");
+});
+
 test("shares live provider playback with an initial playing state", () => {
   const recorder = createSocketRecorder();
   let now = 10_000;
@@ -2398,42 +3300,63 @@ test("exposes playback sync context and sends playback updates", () => {
   });
 });
 
-test("switches direct-link failures back to proxy playback for the selected item", () => {
-  const recorder = createSocketRecorder();
-  const controller = createWebRoomAppController({
-    socketFactory: recorder.factory,
-  });
-
-  controller.createRoom({
-    displayName: "Alice",
-    serverUrl: "ws://syncroom.example.test",
-  });
-  recorder.sockets[0]?.emit("open");
-  recorder.sockets[0]?.emit(
-    "message",
-    JSON.stringify({
-      type: "room:created",
-      payload: {
-        roomCode: "ABC123",
-        memberId: "member-host",
-        joinToken: "valid-join-token-123",
-        memberToken: "valid-member-token-123",
+test("switches direct-link failures back to freshly parsed proxy playback", async () => {
+  const parseInputs: Array<Parameters<ProviderApiClient["parse"]>[0]> = [];
+  const { controller, recorder } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        parseInputs.push(input);
+        const proxy = input.policy.proxy;
+        return {
+          providerId: "bilibili",
+          sourceId: "BV1xx411c7mD",
+          sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          items: [
+            {
+              itemId: "BV1xx411c7mD:cid-987654",
+              title: "Part 1",
+              kind: "part",
+              qualityLabel: proxy ? "1080P Proxy" : "1080P Direct",
+              sourceType: "mpd",
+              providerDescriptor: {
+                ...providerPlaybackDescriptor,
+                policy: input.policy,
+                candidates: [
+                  {
+                    id: proxy ? "proxy-1080p" : "direct-1080p",
+                    sourceType: "mpd",
+                    url: proxy
+                      ? "https://syncroom.example.test/proxy/manifest/proxy.mpd"
+                      : "https://upos.example.test/direct.mpd",
+                    qualityLabel: proxy ? "1080P Proxy" : "1080P Direct",
+                    default: true,
+                  },
+                ],
+                defaultCandidateId: proxy ? "proxy-1080p" : "direct-1080p",
+              },
+            },
+          ],
+        };
       },
     }),
-  );
-  controller.setProviderPickerResults({
-    items: [
-      {
-        itemId: "BV1xx411c7mD:cid-987654",
-        title: "Part 1",
-        kind: "part",
-        qualityLabel: "1080P",
-        sourceType: "mpd",
-        providerDescriptor: providerPlaybackDescriptor,
-      },
-    ],
   });
-  controller.setProviderPlaybackPolicy({ proxy: false, shared: true });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.bilibili.com/video/BV1xx411c7mD",
+    proxy: false,
+    shared: true,
+  });
   controller.showDirectPlaybackFailure({
     stage: "segment",
     message: "Direct link segment failed.",
@@ -2472,23 +3395,35 @@ test("switches direct-link failures back to proxy playback for the selected item
     },
   ]);
 
-  controller.retryProviderProxyFallback();
+  await controller.retryProviderProxyFallback();
   state = controller.getState();
   assert.equal(state.view, "joined");
   if (state.view !== "joined") {
     throw new Error("Expected joined state.");
   }
+  assert.deepEqual(
+    parseInputs.map((input) => input.policy),
+    [
+      { proxy: false, shared: true },
+      { proxy: true, shared: true },
+    ],
+  );
   assert.equal(state.providerPicker?.proxy, true);
   assert.equal(state.providerPicker?.shared, true);
   const shared = recorder.sockets[0]?.sent.at(-1);
   assert.equal((shared as { type?: string } | undefined)?.type, "video:share");
-  assert.deepEqual(
-    (shared as { payload?: { video?: { provider?: { policy?: unknown } } } })
-      .payload?.video?.provider?.policy,
-    {
-      proxy: true,
-      shared: true,
-    },
+  const sharedProvider = (
+    shared as {
+      payload?: { video?: { provider?: ProviderPlaybackDescriptor } };
+    }
+  ).payload?.video?.provider;
+  assert.deepEqual(sharedProvider?.policy, {
+    proxy: true,
+    shared: true,
+  });
+  assert.equal(
+    sharedProvider?.candidates[0]?.url,
+    "https://syncroom.example.test/proxy/manifest/proxy.mpd",
   );
   assert.deepEqual(
     recorder.sockets[0]?.sent.filter(
@@ -2522,6 +3457,40 @@ test("switches direct-link failures back to proxy playback for the selected item
       },
     ],
   );
+});
+
+test("reports direct shared playback success when a source loads", () => {
+  const { controller, recorder } = createJoinedHostController();
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: {
+          videoId: "BV1xx411c7mD",
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Part 1",
+          provider: providerPlaybackDescriptor,
+        },
+        playback: null,
+        members: [{ id: "member-host", name: "Alice" }],
+      },
+    }),
+  );
+
+  controller.reportPlaybackLoaded();
+
+  assert.deepEqual(recorder.sockets[0]?.sent.at(-1), {
+    type: "playback:report",
+    payload: {
+      memberToken: "valid-member-token-123",
+      event: "direct_link_success",
+      providerId: "bilibili",
+    },
+  });
 });
 
 test("clears direct playback failure after ten seconds", (t) => {

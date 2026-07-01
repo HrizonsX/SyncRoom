@@ -23,8 +23,16 @@ import { createPlaybackProxyController } from "./playback-proxy/controller.js";
 import { createPlaybackProxyRouter } from "./playback-proxy/router.js";
 import { createPlaybackProxyService } from "./playback-proxy/service.js";
 import { createBilibiliProvider } from "./providers/bilibili-provider.js";
+import { createGenericProvider } from "./providers/generic-provider.js";
+import { createHuyaProvider } from "./providers/huya-provider.js";
+import { createIqiyiProvider } from "./providers/iqiyi-provider.js";
+import {
+  createMediaExtractorClient,
+  type MediaExtractorClient,
+} from "./providers/media-extractor-client.js";
 import { createVideoProviderRegistry } from "./providers/video-provider.js";
 import { createVideoProviderRouter } from "./providers/video-provider-router.js";
+import { getDefaultMediaExtractorConfig } from "./config/media-extractor-config.js";
 import { getDefaultVoiceConfig } from "./config/voice-config.js";
 import { createLiveKitTokenSigner } from "./livekit-token.js";
 import { applyVoiceRoomCapacity } from "./voice-capacity.js";
@@ -53,6 +61,7 @@ import type {
   AdminUiConfig,
   LogEvent,
   LogLevel,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -60,6 +69,7 @@ import type {
 export type {
   AdminConfig,
   AdminUiConfig,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -100,6 +110,9 @@ export type SyncServerDependencies = {
   videoAuthSessionStore?: VideoAuthSessionStore;
   voiceConfig?: VoiceConfig;
   voiceTokenSigner?: LiveKitTokenSigner;
+  mediaExtractorConfig?: MediaExtractorConfig;
+  mediaExtractorClient?: MediaExtractorClient;
+  fetch?: typeof fetch;
 };
 
 export async function createSyncServer(
@@ -109,6 +122,8 @@ export async function createSyncServer(
 ): Promise<SyncServer> {
   const { now, generateToken } = resolveServerRuntimeDependencies(dependencies);
   const voiceConfig = dependencies.voiceConfig ?? getDefaultVoiceConfig();
+  const mediaExtractorConfig =
+    dependencies.mediaExtractorConfig ?? getDefaultMediaExtractorConfig();
   const roomSecurityConfig = applyVoiceRoomCapacity(
     securityConfig,
     voiceConfig,
@@ -223,6 +238,12 @@ export async function createSyncServer(
       service: playbackProxyService,
     }),
   });
+  const mediaExtractorClient =
+    dependencies.mediaExtractorClient ??
+    createMediaExtractorClient({
+      baseUrl: mediaExtractorConfig.baseUrl,
+      fetch: dependencies.fetch,
+    });
   const videoProviderRouter = createVideoProviderRouter({
     roomStore,
     runtimeStore,
@@ -232,9 +253,24 @@ export async function createSyncServer(
         logEvent,
         now,
       }),
+      createIqiyiProvider({
+        authSessions: videoAuthService,
+        extractorClient: mediaExtractorClient,
+        fetch: dependencies.fetch,
+        now,
+      }),
+      createHuyaProvider({
+        authSessions: videoAuthService,
+        fetch: dependencies.fetch,
+        now,
+      }),
+      createGenericProvider({
+        extractorClient: mediaExtractorClient,
+      }),
     ]),
     authService: videoAuthService,
     playbackProxyService,
+    fetch: dependencies.fetch,
   });
 
   async function publishRoomEvent(message: RoomEventBusMessage): Promise<void> {

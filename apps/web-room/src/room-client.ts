@@ -1,6 +1,8 @@
 import type {
   ClientMessage,
   DanmakuMode,
+  PlaybackBufferReport,
+  PlaybackSyncStrategy,
   PlaybackState,
   RoomMemberPermissionName,
   SharedVideo,
@@ -26,6 +28,8 @@ export type StorageLike = {
 };
 
 export type WebSocketLike = {
+  OPEN?: number;
+  readyState?: number;
   send: (data: string) => void;
   close?: () => void;
   addEventListener?: (
@@ -33,6 +37,8 @@ export type WebSocketLike = {
     listener: (event: { data?: unknown }) => void,
   ) => void;
 };
+
+const DEFAULT_OPEN_READY_STATE = 1;
 
 export type WebRoomSocketClientOptions = {
   serverUrl: string;
@@ -89,6 +95,15 @@ type PlaybackReportInput = {
   stage?: WebPlayerErrorStage;
   browser?: WebPlaybackBrowserLabel;
   system?: WebPlaybackSystemLabel;
+};
+
+type PlaybackBufferReportInput = {
+  memberToken: string;
+} & PlaybackBufferReport;
+
+type PlaybackSyncStrategyInput = {
+  memberToken: string;
+  strategy: PlaybackSyncStrategy;
 };
 
 type MemberPermissionInput = {
@@ -152,7 +167,19 @@ export function normalizeServerUrlToWebSocket(serverUrl: string): string {
   return serialized;
 }
 
+function isSocketOpen(socket: WebSocketLike): boolean {
+  if (typeof socket.readyState !== "number") {
+    return true;
+  }
+  const openReadyState =
+    typeof socket.OPEN === "number" ? socket.OPEN : DEFAULT_OPEN_READY_STATE;
+  return socket.readyState === openReadyState;
+}
+
 function sendJson(socket: WebSocketLike, message: unknown): void {
+  if (!isSocketOpen(socket)) {
+    return;
+  }
   socket.send(JSON.stringify(message));
 }
 
@@ -300,6 +327,30 @@ export function createWebRoomSocketClient(options: WebRoomSocketClientOptions) {
           ...(input.stage ? { stage: input.stage } : {}),
           ...(input.browser ? { browser: input.browser } : {}),
           ...(input.system ? { system: input.system } : {}),
+        },
+      });
+    },
+
+    reportPlaybackBuffer(input: PlaybackBufferReportInput): void {
+      sendJson(socket, {
+        type: "playback:buffer",
+        payload: {
+          memberToken: input.memberToken,
+          state: input.state,
+          currentTime: input.currentTime,
+          ...(input.bufferAheadSeconds === undefined
+            ? {}
+            : { bufferAheadSeconds: input.bufferAheadSeconds }),
+        },
+      });
+    },
+
+    setPlaybackSyncStrategy(input: PlaybackSyncStrategyInput): void {
+      sendJson(socket, {
+        type: "playback:sync-strategy:set",
+        payload: {
+          memberToken: input.memberToken,
+          strategy: input.strategy,
         },
       });
     },

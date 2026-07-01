@@ -49,6 +49,8 @@ const MEMBER_PLAYER_SYSTEM_LABELS = [
 export type MonitoredMessageType =
   | "video:share"
   | "playback:update"
+  | "playback:buffer"
+  | "playback:sync-strategy:set"
   | "room:join"
   | "room:leave";
 

@@ -4,7 +4,7 @@
 
 > Watch together, speak in sync.
 
-syncRoom is a browser extension, web room client, and WebSocket server for synchronized viewing. Users can create or join rooms, sync Bilibili pages, generic HTML5 `<video>` pages, or play server-resolved Bilibili DASH/HLS media in the web room through Shaka Player.
+syncRoom is a browser extension, web room client, and WebSocket server for synchronized viewing. Users can create or join rooms, sync Bilibili pages, generic HTML5 `<video>` pages, or play server-resolved DASH/HLS, MP4, and FLV/TS media streams in the web room.
 
 ## Online Demo
 
@@ -92,7 +92,7 @@ npx serve apps/web-room/dist -l 4173
 
 Then open `http://localhost:4173`, use the default `ws://localhost:8787` server URL, and make sure the server `ALLOWED_ORIGINS` includes `http://localhost:4173`.
 
-See [web room features](./docs/features/web-room.md) for the player, Bilibili authorization, proxy playback, chat, danmaku, and voice boundaries.
+See [web room features](./docs/features/web-room.md) for the player, platform authorization, proxy playback, chat, danmaku, and voice boundaries.
 
 ## Documentation Map
 

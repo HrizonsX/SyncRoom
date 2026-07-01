@@ -6,15 +6,17 @@ import {
   selectPlaybackAdapter,
 } from "../src/playback-adapter.js";
 
-test("selects Shaka for DASH and HLS and native video for MP4", () => {
+test("selects playback engines by source type", () => {
   assert.equal(selectPlaybackAdapter({ sourceType: "mpd" }).engine, "shaka");
   assert.equal(selectPlaybackAdapter({ sourceType: "m3u8" }).engine, "shaka");
   assert.equal(selectPlaybackAdapter({ sourceType: "mp4" }).engine, "native");
+  assert.equal(selectPlaybackAdapter({ sourceType: "flv" }).engine, "mpegts");
+  assert.equal(selectPlaybackAdapter({ sourceType: "ts" }).engine, "mpegts");
 });
 
-test("rejects FLV sources in the first release", () => {
+test("rejects unknown source types", () => {
   assert.throws(
-    () => selectPlaybackAdapter({ sourceType: "flv" }),
+    () => selectPlaybackAdapter({ sourceType: "avi" }),
     /unsupported_source/,
   );
 });
@@ -97,6 +99,20 @@ test("honors explicit AV1 defaults selected by the host", () => {
   ]);
 
   assert.equal(selected?.id, "av1-default");
+});
+
+test("keeps FLV live candidates eligible for playback", () => {
+  const selected = choosePreferredPlaybackCandidate([
+    {
+      id: "flv-live",
+      sourceType: "flv",
+      url: "https://syncroom.example.test/live.flv",
+      qualityLabel: "720P FLV",
+      default: true,
+    },
+  ]);
+
+  assert.equal(selected?.id, "flv-live");
 });
 
 test("creates coarse playback startup errors for reporting", () => {

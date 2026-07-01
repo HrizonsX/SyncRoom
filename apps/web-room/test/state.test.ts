@@ -60,6 +60,45 @@ test("applies room state messages to renderable web-room state", () => {
   );
 });
 
+test("does not append duplicate room state diagnostics for unchanged summaries", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+  const roomStateMessage = {
+    type: "room:state" as const,
+    payload: {
+      roomCode: "ABC123",
+      playback: {
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        currentTime: 12,
+        playState: "playing" as const,
+        playbackRate: 1,
+        updatedAt: 1,
+        serverTime: 1,
+        actorId: "member-1",
+        seq: 1,
+      },
+      members: [
+        { id: "member-1", name: "Alice" },
+        { id: "member-2", name: "Bob" },
+      ],
+    },
+  };
+
+  const firstState = applyServerMessage(state, roomStateMessage);
+  const secondState = applyServerMessage(firstState, roomStateMessage);
+
+  assert.equal(secondState.diagnostics.length, firstState.diagnostics.length);
+  assert.equal(
+    secondState.diagnostics.filter((item) =>
+      item.includes("room:state applied"),
+    ).length,
+    1,
+  );
+});
+
 test("restores room chat history from room state after refresh rejoin", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",
@@ -890,6 +929,39 @@ test("applies private room danmaku broadcasts as ephemeral joined-state messages
     "<script>alert(1)</script>",
   );
   assert.equal(withRoomState.danmakuMessages.length, 1);
+});
+
+test("applies playback sync state from room:state", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const next = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: null,
+      playback: null,
+      playbackSync: {
+        strategy: "wait",
+        hold: {
+          active: true,
+          reasonMemberId: "member-2",
+          startedAt: 1_000,
+          deadlineAt: 11_000,
+        },
+        bufferingMemberIds: ["member-2"],
+      },
+      members: [{ id: "member-1", name: "Alice" }],
+    },
+  });
+
+  assert.equal(next.playbackSync?.strategy, "wait");
+  assert.equal(next.playbackSync?.hold.active, true);
+  assert.equal(next.playbackSync?.hold.reasonMemberId, "member-2");
+  assert.deepEqual(next.playbackSync?.bufferingMemberIds, ["member-2"]);
 });
 
 test("assigns unique render keys to rapid duplicate danmaku messages", () => {

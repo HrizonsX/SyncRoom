@@ -1,4 +1,5 @@
 import type {
+  PlaybackSyncState,
   PlaybackState,
   ProviderPlaybackDescriptor,
 } from "@syncroom/protocol";
@@ -35,6 +36,16 @@ const ROOM_CHAT_HISTORY_LIMIT = 200;
 const CLOCK_SAMPLE_SMOOTHING_PREVIOUS_WEIGHT = 0.7;
 const CLOCK_SAMPLE_SMOOTHING_CURRENT_WEIGHT = 0.3;
 
+function createDefaultPlaybackSyncState(): PlaybackSyncState {
+  return {
+    strategy: "smooth",
+    hold: {
+      active: false,
+    },
+    bufferingMemberIds: [],
+  };
+}
+
 function isRecord(value: unknown): value is RecordLike {
   return typeof value === "object" && value !== null;
 }
@@ -49,8 +60,49 @@ function getFiniteNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function readPlaybackSyncState(value: unknown): PlaybackSyncState {
+  if (!isRecord(value)) {
+    return createDefaultPlaybackSyncState();
+  }
+  const hold = isRecord(value.hold) ? value.hold : {};
+  const strategy = value.strategy === "wait" ? "wait" : "smooth";
+  const bufferingMemberIds = Array.isArray(value.bufferingMemberIds)
+    ? value.bufferingMemberIds.filter(
+        (memberId): memberId is string => typeof memberId === "string",
+      )
+    : [];
+  return {
+    strategy,
+    hold: {
+      active: hold.active === true,
+      ...(typeof hold.reasonMemberId === "string"
+        ? { reasonMemberId: hold.reasonMemberId }
+        : {}),
+      ...(typeof hold.startedAt === "number" && Number.isFinite(hold.startedAt)
+        ? { startedAt: hold.startedAt }
+        : {}),
+      ...(typeof hold.deadlineAt === "number" &&
+      Number.isFinite(hold.deadlineAt)
+        ? { deadlineAt: hold.deadlineAt }
+        : {}),
+    },
+    bufferingMemberIds,
+  };
+}
+
 function appendDiagnostic(state: WebRoomJoinedState, item: string): string[] {
   return [...state.diagnostics, item].slice(-80);
+}
+
+function appendRoomStateDiagnostic(
+  state: WebRoomJoinedState,
+  item: string,
+): string[] {
+  // room:state can be pushed repeatedly while playback is running; keep the
+  // diagnostic useful by recording only actual summary changes.
+  return state.diagnostics.at(-1) === item
+    ? state.diagnostics
+    : appendDiagnostic(state, item);
 }
 
 function smoothClockMetric(
@@ -265,6 +317,7 @@ export function createInitialJoinedState(
     clockOffsetMs: null,
     rttMs: null,
     voice: createInitialWebRoomVoiceState(),
+    playbackSync: createDefaultPlaybackSyncState(),
     members: [{ id: input.currentMemberId, name: input.displayName }],
     chatMessages: [],
     danmakuMessages: [],
@@ -581,6 +634,7 @@ function applyRoomState(
         .filter((member) => member.id.length > 0)
     : state.members;
   const playback = readPlaybackState(payload.playback);
+  const playbackSync = readPlaybackSyncState(payload.playbackSync);
   const playbackSource = getProviderPlaybackSource(sharedVideo);
   const providerPicker = createProviderPickerFromSharedVideo(
     state,
@@ -605,9 +659,10 @@ function applyRoomState(
       ? getString(sharedVideo.url) || undefined
       : undefined,
     playback,
+    playbackSync,
     members,
     chatMessages,
-    diagnostics: appendDiagnostic(
+    diagnostics: appendRoomStateDiagnostic(
       state,
       [
         "room:state applied",

@@ -1,5 +1,5 @@
-export type PlaybackSourceType = "mpd" | "m3u8" | "mp4";
-export type PlaybackEngine = "shaka" | "native";
+export type PlaybackSourceType = "mpd" | "m3u8" | "mp4" | "flv" | "ts";
+export type PlaybackEngine = "shaka" | "native" | "mpegts";
 export type PlaybackStartupStage =
   | "manifest"
   | "segment"
@@ -33,8 +33,16 @@ export type PlaybackStartupError = {
   message: string;
 };
 
+const PLAYBACK_ENGINE_BY_SOURCE_TYPE = {
+  mpd: "shaka",
+  m3u8: "shaka",
+  mp4: "native",
+  flv: "mpegts",
+  ts: "mpegts",
+} as const satisfies Record<PlaybackSourceType, PlaybackEngine>;
+
 function isSupportedSourceType(value: string): value is PlaybackSourceType {
-  return value === "mpd" || value === "m3u8" || value === "mp4";
+  return value in PLAYBACK_ENGINE_BY_SOURCE_TYPE;
 }
 
 function isLikelyHevc(candidate: PlaybackCandidate): boolean {
@@ -62,7 +70,7 @@ export function selectPlaybackAdapter(input: {
 
   return {
     sourceType: input.sourceType,
-    engine: input.sourceType === "mp4" ? "native" : "shaka",
+    engine: PLAYBACK_ENGINE_BY_SOURCE_TYPE[input.sourceType],
   };
 }
 
@@ -106,4 +114,8 @@ export function createPlaybackStartupError(
 
 export async function loadShakaPlayer(): Promise<unknown> {
   return import("shaka-player");
+}
+
+export async function loadMpegtsPlayer(): Promise<unknown> {
+  return import("mpegts.js");
 }

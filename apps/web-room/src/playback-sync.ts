@@ -24,6 +24,11 @@ export type PlaybackPlayToggleControlLike = {
   hasAttribute?: (name: string) => boolean;
 };
 
+export type PlaybackTimeRangeControlLike = {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
 export type LocalPlaybackEvent =
   | "play"
   | "pause"
@@ -43,6 +48,8 @@ const PLAYBACK_EVENT_TYPES: readonly LocalPlaybackEvent[] = [
 ];
 const LOCAL_PAUSE_TEARDOWN_GUARD_MS = 150;
 const EXPLICIT_PLAY_TOGGLE_ECHO_GUARD_MS = 300;
+const RANGE_SEEK_ECHO_GUARD_MS = 300;
+const RANGE_SEEK_ECHO_TOLERANCE_SECONDS = 0.5;
 
 export type ApplyRemotePlaybackResult =
   | {
@@ -113,6 +120,7 @@ export function createPlaybackUpdateMessage(args: {
 export function bindPlaybackSyncControls(args: {
   media: EventedMediaElementLike;
   playToggleControl?: PlaybackPlayToggleControlLike;
+  timeRangeControl?: PlaybackTimeRangeControlLike;
   events?: readonly LocalPlaybackEvent[];
   getContext: () => {
     memberToken: string;
@@ -132,6 +140,10 @@ export function bindPlaybackSyncControls(args: {
   let optimisticPlayState: "playing" | "paused" | null = null;
   let explicitEchoState: "playing" | "paused" | null = null;
   let explicitEchoUntil = 0;
+  let rangeScrubbing = false;
+  let rangeSeekDirty = false;
+  let suppressRangeSeekedUntil = 0;
+  let lastRangeSeekCommitTime: number | null = null;
 
   const clearPendingPause = (): void => {
     if (pendingPauseTimer === null) {
@@ -181,6 +193,79 @@ export function bindPlaybackSyncControls(args: {
     return explicitEchoState === state;
   };
 
+  const removeWindowRangeEndListeners = (): void => {
+    globalThis.window?.removeEventListener?.(
+      "pointerup",
+      handleTimeRangePointerEnd,
+    );
+    globalThis.window?.removeEventListener?.(
+      "pointercancel",
+      handleTimeRangePointerEnd,
+    );
+  };
+
+  const addWindowRangeEndListeners = (): void => {
+    removeWindowRangeEndListeners();
+    globalThis.window?.addEventListener?.(
+      "pointerup",
+      handleTimeRangePointerEnd,
+      { once: true },
+    );
+    globalThis.window?.addEventListener?.(
+      "pointercancel",
+      handleTimeRangePointerEnd,
+      { once: true },
+    );
+  };
+
+  const shouldSuppressRangeSeekedEcho = (): boolean => {
+    if (lastRangeSeekCommitTime === null) {
+      return false;
+    }
+    if (getGuardNow() > suppressRangeSeekedUntil) {
+      lastRangeSeekCommitTime = null;
+      return false;
+    }
+    return (
+      Math.abs(args.media.currentTime - lastRangeSeekCommitTime) <=
+      RANGE_SEEK_ECHO_TOLERANCE_SECONDS
+    );
+  };
+
+  const commitRangeSeek = (): void => {
+    if (!rangeSeekDirty) {
+      return;
+    }
+    rangeSeekDirty = false;
+    lastRangeSeekCommitTime = args.media.currentTime;
+    suppressRangeSeekedUntil = getGuardNow() + RANGE_SEEK_ECHO_GUARD_MS;
+    dispatchLocalEvent("seeked");
+  };
+
+  const handleTimeRangePointerDown = (): void => {
+    rangeScrubbing = true;
+    rangeSeekDirty = false;
+    addWindowRangeEndListeners();
+  };
+
+  const handleTimeRangeInput = (): void => {
+    if (rangeScrubbing) {
+      rangeSeekDirty = true;
+    }
+  };
+
+  function handleTimeRangePointerEnd(): void {
+    if (!rangeScrubbing) {
+      return;
+    }
+    rangeScrubbing = false;
+    removeWindowRangeEndListeners();
+    // media-chrome seeks on every range input while the pointer is still down.
+    // Treat those native seeked events as draft positions and publish only the
+    // release-time commit so remote members do not chase stale drag positions.
+    commitRangeSeek();
+  }
+
   const handlePlayToggleClick = (): void => {
     if (isPlayToggleDisabled()) {
       return;
@@ -211,11 +296,33 @@ export function bindPlaybackSyncControls(args: {
   };
 
   args.playToggleControl?.addEventListener("click", handlePlayToggleClick);
+  args.timeRangeControl?.addEventListener(
+    "pointerdown",
+    handleTimeRangePointerDown,
+  );
+  args.timeRangeControl?.addEventListener(
+    "pointerup",
+    handleTimeRangePointerEnd,
+  );
+  args.timeRangeControl?.addEventListener(
+    "pointercancel",
+    handleTimeRangePointerEnd,
+  );
+  args.timeRangeControl?.addEventListener("input", handleTimeRangeInput);
 
   for (const event of eventTypes) {
     const listener = () => {
       if (event === "seeking" && shouldUseSeekedAsSeekCommit) {
         return;
+      }
+      if (event === "seeked" && shouldUseSeekedAsSeekCommit) {
+        if (rangeScrubbing) {
+          rangeSeekDirty = true;
+          return;
+        }
+        if (shouldSuppressRangeSeekedEcho()) {
+          return;
+        }
       }
       if (event === "pause") {
         clearPendingPause();
@@ -255,10 +362,24 @@ export function bindPlaybackSyncControls(args: {
   return {
     dispose() {
       clearPendingPause();
+      removeWindowRangeEndListeners();
       args.playToggleControl?.removeEventListener(
         "click",
         handlePlayToggleClick,
       );
+      args.timeRangeControl?.removeEventListener(
+        "pointerdown",
+        handleTimeRangePointerDown,
+      );
+      args.timeRangeControl?.removeEventListener(
+        "pointerup",
+        handleTimeRangePointerEnd,
+      );
+      args.timeRangeControl?.removeEventListener(
+        "pointercancel",
+        handleTimeRangePointerEnd,
+      );
+      args.timeRangeControl?.removeEventListener("input", handleTimeRangeInput);
       for (const [event, listener] of listeners.entries()) {
         args.media.removeEventListener(event, listener);
       }

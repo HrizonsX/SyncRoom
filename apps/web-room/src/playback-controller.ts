@@ -14,6 +14,7 @@ import {
   type EventedMediaElementLike,
   type LocalPlaybackEvent,
   type PlaybackPlayToggleControlLike,
+  type PlaybackTimeRangeControlLike,
 } from "./playback-sync.js";
 import type { WebRoomState } from "./render.js";
 
@@ -650,6 +651,7 @@ export function createWebRoomPlaybackController(
   let boundSyncUrl: string | undefined;
   let boundSyncEventsKey: string | undefined;
   let boundPlayToggleControl: PlaybackPlayToggleControlLike | undefined;
+  let boundTimeRangeControl: PlaybackTimeRangeControlLike | undefined;
   let suppressLocalEventsUntil = 0;
   let syncGeneration = 0;
   let needsPlaybackHydration = true;
@@ -697,6 +699,7 @@ export function createWebRoomPlaybackController(
     boundSyncUrl = undefined;
     boundSyncEventsKey = undefined;
     boundPlayToggleControl = undefined;
+    boundTimeRangeControl = undefined;
     if (options.preserveResumeIntent !== true) {
       resumeAfterPlaybackHold = false;
     }
@@ -904,6 +907,7 @@ export function createWebRoomPlaybackController(
     syncUrl: string | undefined,
     events?: readonly LocalPlaybackEvent[],
     playToggleControl?: PlaybackPlayToggleControlLike,
+    timeRangeControl?: PlaybackTimeRangeControlLike,
   ): void {
     if (
       !syncUrl ||
@@ -920,7 +924,8 @@ export function createWebRoomPlaybackController(
       boundMedia === media &&
       boundSyncUrl === syncUrl &&
       boundSyncEventsKey === eventsKey &&
-      boundPlayToggleControl === playToggleControl
+      boundPlayToggleControl === playToggleControl &&
+      boundTimeRangeControl === timeRangeControl
     ) {
       return;
     }
@@ -932,9 +937,11 @@ export function createWebRoomPlaybackController(
     boundSyncUrl = syncUrl;
     boundSyncEventsKey = eventsKey;
     boundPlayToggleControl = playToggleControl;
+    boundTimeRangeControl = timeRangeControl;
     playbackBinding = bindPlaybackSyncControls({
       media,
       ...(playToggleControl ? { playToggleControl } : {}),
+      ...(timeRangeControl ? { timeRangeControl } : {}),
       ...(events ? { events } : {}),
       getContext: () => {
         if (pageLifecycleEnding || getNow() < suppressLocalEventsUntil) {
@@ -1007,11 +1014,14 @@ export function createWebRoomPlaybackController(
       const isLivePlayback = state.playbackSource.isLive === true;
       const playToggleControl =
         root.querySelector<HTMLElement>("media-play-button") ?? undefined;
+      const timeRangeControl =
+        root.querySelector<HTMLElement>("media-time-range") ?? undefined;
       ensurePlaybackBinding(
         video,
         currentUrl,
         isLivePlayback ? LIVE_PLAYBACK_SYNC_EVENTS : undefined,
         playToggleControl,
+        timeRangeControl,
       );
       ensurePlaybackBufferBinding(video, currentUrl, isLivePlayback);
       const isVodPlaybackHoldActive =

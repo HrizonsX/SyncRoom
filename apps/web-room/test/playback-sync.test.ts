@@ -255,6 +255,90 @@ test("dispatches final seeked position instead of intermediate drag position", (
   ]);
 });
 
+test("defers range-drag seek updates until pointer release", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const rangeListeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ currentTime: 24, paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const timeRangeControl = {
+    addEventListener(type: string, listener: () => void) {
+      const items = rangeListeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      rangeListeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      rangeListeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  let now = 4_000;
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    timeRangeControl,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    now: () => now,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  rangeListeners.get("pointerdown")?.forEach((listener) => listener());
+  media.currentTime = 36;
+  rangeListeners.get("input")?.forEach((listener) => listener());
+  listeners.get("seeked")?.forEach((listener) => listener());
+  now = 7_000;
+  media.currentTime = 96;
+  rangeListeners.get("input")?.forEach((listener) => listener());
+  listeners.get("seeked")?.forEach((listener) => listener());
+
+  assert.deepEqual(dispatched, []);
+
+  now = 8_000;
+  rangeListeners.get("pointerup")?.forEach((listener) => listener());
+  now = 8_050;
+  listeners.get("seeked")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.deepEqual(dispatched, [
+    {
+      type: "playback:update",
+      payload: {
+        memberToken: "valid-member-token-123",
+        playback: {
+          url: "https://syncroom.example.test/video.mpd",
+          currentTime: 96,
+          playState: "playing",
+          syncIntent: "explicit-seek",
+          userInitiated: true,
+          playbackRate: 1,
+          updatedAt: 8_000,
+          serverTime: 8_000,
+          actorId: "member-1",
+          seq: 1,
+        },
+      },
+    },
+  ]);
+});
+
 test("defers local pause briefly so page teardown can suppress it", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const listeners = new Map<string, Set<() => void>>();

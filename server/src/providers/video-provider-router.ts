@@ -119,6 +119,23 @@ function readOptionalRecord(value: unknown): JsonObject | undefined {
     : undefined;
 }
 
+function matchProviderUrlSafely(
+  provider: HostProviderContext["provider"],
+  url: string,
+): ReturnType<HostProviderContext["provider"]["matchUrl"]> {
+  try {
+    return provider.matchUrl(url);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      // Provider adapters should return null for unsupported URLs, but URL
+      // constructors can throw before that branch. Keep malformed user input
+      // on the 400 path instead of surfacing it as a server fault.
+      return null;
+    }
+    throw error;
+  }
+}
+
 function getHeaderValue(value: string | string[] | undefined): string | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -629,7 +646,7 @@ export function createVideoProviderRouter(
       sendError(response, 400, "invalid_request", "Invalid provider request.");
       return;
     }
-    const matchedUrl = context.provider.matchUrl(url);
+    const matchedUrl = matchProviderUrlSafely(context.provider, url);
     if (!matchedUrl) {
       sendError(
         response,

@@ -175,10 +175,61 @@ function readExtractorErrorReason(payload: unknown, status: number): string {
   if (isRecord(payload) && payload.error === "unsupported_url") {
     return "extractor_unsupported_url";
   }
+  if (isRecord(payload) && payload.error === "no_playable_candidates") {
+    return "extractor_no_playable_candidates";
+  }
   if (isRecord(payload) && payload.error === "auth_required") {
     return "extractor_auth_required";
   }
   return `extractor_http_${status}`;
+}
+
+async function requestExtractor(
+  fetchImpl: typeof fetch,
+  extractUrl: string,
+  input: Parameters<MediaExtractorClient["extract"]>[0],
+): Promise<Response> {
+  try {
+    return await fetchImpl(extractUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        url: input.url,
+        platform: input.platform,
+        ...(input.headers ? { headers: input.headers } : {}),
+      }),
+    });
+  } catch {
+    throw new VideoProviderError(
+      "provider_parse_failed",
+      "Extractor request failed.",
+      "extractor_unavailable",
+    );
+  }
+}
+
+async function readExtractorPayload(response: Response): Promise<unknown> {
+  const body = await response.text();
+  if (body.trim().length === 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    if (!response.ok) {
+      // External extractor deployments may return plain-text error bodies.
+      // Preserve the HTTP failure as a safe provider error instead of letting a
+      // JSON parse exception escape as a 500 from the provider router.
+      return null;
+    }
+    throw new VideoProviderError(
+      "provider_parse_failed",
+      "Extractor response was invalid.",
+      "extractor_invalid_response",
+    );
+  }
 }
 
 export function createMediaExtractorClient(
@@ -188,18 +239,8 @@ export function createMediaExtractorClient(
   const extractUrl = resolveExtractUrl(options.baseUrl);
   return {
     async extract(input) {
-      const response = await fetchImpl(extractUrl, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          url: input.url,
-          platform: input.platform,
-          ...(input.headers ? { headers: input.headers } : {}),
-        }),
-      });
-      const payload = (await response.json()) as unknown;
+      const response = await requestExtractor(fetchImpl, extractUrl, input);
+      const payload = await readExtractorPayload(response);
       if (!response.ok) {
         throw new VideoProviderError(
           "provider_parse_failed",

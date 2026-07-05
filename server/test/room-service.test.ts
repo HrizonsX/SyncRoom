@@ -2014,7 +2014,70 @@ test("room service ignores refreshed movie startup updates that would reset natu
   assert.equal(finalState.playback?.serverTime, 1_000);
 });
 
-test("room service still accepts live pause controls at zero after live playback has elapsed", async () => {
+test("room service ignores non-explicit live pauses while playback is running", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM05D",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const ownerId = owner.memberId ?? owner.id;
+  const liveVideo = createLiveProviderSharedVideo();
+
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    liveVideo,
+    createPlayback(ownerId, {
+      url: liveVideo.url,
+      playState: "playing",
+      currentTime: 0,
+    }),
+  );
+
+  currentTime = 26_000;
+  const paused = await service.updatePlaybackForSession(
+    guest,
+    joined.memberToken,
+    createPlayback(guest.memberId ?? guest.id, {
+      url: liveVideo.url,
+      playState: "paused",
+      currentTime: 0,
+      seq: 2,
+    }),
+  );
+
+  assert.equal(paused.ignored, true);
+  const finalState = await service.getRoomStateForSession(
+    owner,
+    created.memberToken,
+    "sync:request",
+  );
+  assert.equal(finalState.playback?.playState, "playing");
+  assert.equal(finalState.playback?.actorId, ownerId);
+  assert.equal(finalState.playback?.currentTime, 0);
+});
+
+test("room service still accepts explicit live pause controls at zero after live playback has elapsed", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -2061,6 +2124,7 @@ test("room service still accepts live pause controls at zero after live playback
       url: liveVideo.url,
       playState: "paused",
       currentTime: 0,
+      syncIntent: "explicit-pause",
       seq: 2,
     }),
   );

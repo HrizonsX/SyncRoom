@@ -8,7 +8,7 @@ export type PlaybackAcceptanceDecision =
   | { decision: "accept"; reason: "same-actor" | "no-current" | "default" }
   | {
       decision: "ignore-as-follow";
-      reason: "authority-window-follow";
+      reason: "authority-window-follow" | "live-non-explicit-stop";
     }
   | {
       decision: "ignore-stale-like";
@@ -63,6 +63,21 @@ export function decidePlaybackAcceptance(args: {
     args.incomingPlayback.currentTime + 1 < effectiveCurrentTime;
   const materiallyBackBehindCurrent =
     args.incomingPlayback.currentTime + 2.5 < effectiveCurrentTime;
+
+  if (
+    args.isLivePlayback === true &&
+    !incomingIsExplicitControl &&
+    args.currentPlayback.playState === "playing" &&
+    incomingIsStopLike
+  ) {
+    // Live players can emit pause/buffering while they reload manifests or
+    // recover from a local stall. Only explicit controls may turn the shared
+    // live room from playing into stopped.
+    return {
+      decision: "ignore-as-follow",
+      reason: "live-non-explicit-stop",
+    };
+  }
 
   if (
     !incomingIsExplicitControl &&

@@ -98,6 +98,7 @@ async function createRoomFixture() {
 
 function createProviderFixture(
   options: {
+    matchUrl?: VideoProviderAdapter["matchUrl"];
     parse?: VideoProviderAdapter["parse"];
   } = {},
 ) {
@@ -159,7 +160,10 @@ function createProviderFixture(
         });
       },
     },
-    matchUrl() {
+    matchUrl(input) {
+      if (options.matchUrl) {
+        return options.matchUrl(input);
+      }
       return {
         providerId: "bilibili",
         kind: "ugc",
@@ -973,6 +977,52 @@ test("video provider router requires owner authorization for shared playback par
       error: {
         code: "provider_auth_required",
         message: "Bilibili authorization is required.",
+      },
+    });
+    assert.equal(parseInputs.length, 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router treats malformed parse urls as unsupported source", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture({
+    matchUrl() {
+      throw new TypeError("Invalid URL");
+    },
+  });
+  const proxyService = createPlaybackProxyService();
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "http://[::1",
+      policy: { proxy: false, shared: false },
+    });
+
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.body, {
+      ok: false,
+      error: {
+        code: "unsupported_source",
+        message: "Provider source is unsupported.",
       },
     });
     assert.equal(parseInputs.length, 0);

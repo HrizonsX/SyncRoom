@@ -1,4 +1,8 @@
-import type { ClientMessage, PlaybackBufferReport } from "@syncroom/protocol";
+import {
+  createPlaybackRevision,
+  type ClientMessage,
+  type PlaybackBufferReport,
+} from "@syncroom/protocol";
 import type { PlaybackSource } from "./playback-adapter.js";
 import {
   bindPlaybackBufferReporter,
@@ -11,6 +15,7 @@ import {
   type LocalPlaybackEvent,
   type PlaybackPlayToggleControlLike,
   type PlaybackRequestTargetLike,
+  type PlaybackSyncControlsBinding,
   type PlaybackTimeRangeControlLike,
 } from "./playback-sync.js";
 import {
@@ -84,8 +89,15 @@ const PLAYBACK_HOLD_SUPPRESS_LOCAL_EVENTS_MS = 500;
 export function createWebRoomPlaybackController(
   options: WebRoomPlaybackControllerOptions = {},
 ) {
-  const elementController = createPlaybackElementController(options);
-  let playbackBinding: { dispose: () => void } | undefined;
+  const elementController = createPlaybackElementController({
+    ...options,
+    // 底层播放器运行时分片/网络错误不一定会让 sync() 抛错，这里统一转成上层播放错误。
+    onRuntimeError: (error, source) => {
+      options.onRuntimeError?.(error, source);
+      options.onPlaybackError?.(error, source);
+    },
+  });
+  let playbackBinding: PlaybackSyncControlsBinding | undefined;
   let playbackBufferBinding: PlaybackBufferReporterBinding | undefined;
   let boundMedia: EventedMediaElementLike | undefined;
   let boundBufferMedia: EventedMediaElementLike | undefined;
@@ -100,6 +112,10 @@ export function createWebRoomPlaybackController(
   let needsPlaybackHydration = true;
   let resumeAfterPlaybackHold = false;
   let pageLifecycleEnding = false;
+  let lastAppliedPlaybackMedia: EventedMediaElementLike | undefined;
+  let lastAppliedPlaybackRevision: string | undefined;
+  let activeBufferPlaybackRevision: string | undefined;
+  let lastReportedBarrierRevision: string | undefined;
   // play() 重试会处理刷新恢复、等待同步释放、浏览器自动播放限制等场景；
   // 控制器只提供代际和本地事件压制边界，避免重试过程误广播成用户操作。
   const playbackPlayRetryController = createPlaybackPlayRetryController({
@@ -137,16 +153,17 @@ export function createWebRoomPlaybackController(
     return options.now?.() ?? Date.now();
   }
 
-  function disposePlaybackBinding(
+  function resetAppliedPlaybackRevision(): void {
+    lastAppliedPlaybackMedia = undefined;
+    lastAppliedPlaybackRevision = undefined;
+  }
+
+  function disposePlaybackSyncBinding(
     options: { preserveResumeIntent?: boolean } = {},
   ): void {
     playbackBinding?.dispose();
-    playbackBufferBinding?.dispose();
     playbackBinding = undefined;
-    playbackBufferBinding = undefined;
     boundMedia = undefined;
-    boundBufferMedia = undefined;
-    boundBufferUrl = undefined;
     boundSyncUrl = undefined;
     boundSyncEventsKey = undefined;
     boundPlayToggleControl = undefined;
@@ -155,6 +172,20 @@ export function createWebRoomPlaybackController(
     if (options.preserveResumeIntent !== true) {
       resumeAfterPlaybackHold = false;
     }
+  }
+
+  function disposePlaybackBufferBinding(): void {
+    playbackBufferBinding?.dispose();
+    playbackBufferBinding = undefined;
+    boundBufferMedia = undefined;
+    boundBufferUrl = undefined;
+    activeBufferPlaybackRevision = undefined;
+    lastReportedBarrierRevision = undefined;
+  }
+
+  function disposePlaybackBindings(): void {
+    disposePlaybackSyncBinding();
+    disposePlaybackBufferBinding();
   }
 
   function ensurePlaybackBufferBinding(
@@ -168,10 +199,7 @@ export function createWebRoomPlaybackController(
       !options.getSyncContext ||
       !options.dispatchPlaybackBufferReport
     ) {
-      playbackBufferBinding?.dispose();
-      playbackBufferBinding = undefined;
-      boundBufferMedia = undefined;
-      boundBufferUrl = undefined;
+      disposePlaybackBufferBinding();
       return;
     }
     if (
@@ -182,7 +210,7 @@ export function createWebRoomPlaybackController(
       return;
     }
 
-    playbackBufferBinding?.dispose();
+    disposePlaybackBufferBinding();
     boundBufferMedia = media;
     boundBufferUrl = syncUrl;
     const reportDelayMs =
@@ -196,9 +224,17 @@ export function createWebRoomPlaybackController(
           return null;
         }
         const context = options.getSyncContext?.();
-        return context?.url === syncUrl ? context : null;
+        return context?.url === syncUrl
+          ? {
+              ...context,
+              ...(activeBufferPlaybackRevision
+                ? { playbackRevision: activeBufferPlaybackRevision }
+                : {}),
+            }
+          : null;
       },
       dispatch: (report) => options.dispatchPlaybackBufferReport?.(report),
+      now: getNow,
     });
   }
 
@@ -231,7 +267,7 @@ export function createWebRoomPlaybackController(
       !options.dispatchPlaybackUpdate ||
       !options.nextSeq
     ) {
-      disposePlaybackBinding();
+      disposePlaybackSyncBinding();
       return;
     }
     const eventsKey = events?.join(",") ?? "*";
@@ -249,7 +285,10 @@ export function createWebRoomPlaybackController(
 
     const preserveResumeIntent =
       boundMedia === media && boundSyncUrl === syncUrl;
-    disposePlaybackBinding({ preserveResumeIntent });
+    // Player chrome is recreated by normal room renders, but the video element
+    // and its buffer reporter stay valid. Rebind only semantic controls so a
+    // ready poll cannot reset into a report-render-report feedback loop.
+    disposePlaybackSyncBinding({ preserveResumeIntent });
     boundMedia = media;
     boundSyncUrl = syncUrl;
     boundSyncEventsKey = eventsKey;
@@ -279,8 +318,7 @@ export function createWebRoomPlaybackController(
     if (state.view !== "joined" || state.playbackSync?.hold.active !== true) {
       return false;
     }
-    const deadlineAt = state.playbackSync.hold.deadlineAt;
-    return typeof deadlineAt !== "number" || deadlineAt > getNow();
+    return true;
   }
 
   return {
@@ -289,7 +327,8 @@ export function createWebRoomPlaybackController(
       playbackPlayRetryController.dispose();
       if (state.view !== "joined" || !state.playbackSource) {
         needsPlaybackHydration = true;
-        disposePlaybackBinding();
+        resetAppliedPlaybackRevision();
+        disposePlaybackBindings();
         await elementController.clear();
         return;
       }
@@ -299,7 +338,8 @@ export function createWebRoomPlaybackController(
       );
       if (!video) {
         needsPlaybackHydration = true;
-        disposePlaybackBinding();
+        resetAppliedPlaybackRevision();
+        disposePlaybackBindings();
         await elementController.clear();
         return;
       }
@@ -325,11 +365,14 @@ export function createWebRoomPlaybackController(
       }
 
       if (!isEventedMediaElement(video)) {
-        disposePlaybackBinding();
+        disposePlaybackBindings();
         return;
       }
 
       const currentUrl = state.playbackUrl ?? state.playback?.url;
+      activeBufferPlaybackRevision = state.playback
+        ? createPlaybackRevision(state.playback)
+        : undefined;
       const isLivePlayback = state.playbackSource.isLive === true;
       const playToggleControl =
         root.querySelector<HTMLElement>("media-play-button") ?? undefined;
@@ -351,9 +394,26 @@ export function createWebRoomPlaybackController(
         !isLivePlayback &&
         state.playback !== undefined &&
         isRoomPlaybackHoldActive(state);
-      playbackBufferBinding?.setPollingEnabled(isVodPlaybackHoldActive);
+      const isCurrentMemberPendingReadiness =
+        isVodPlaybackHoldActive &&
+        state.playbackSync?.bufferingMemberIds.includes(
+          state.currentMemberId,
+        ) === true;
+      playbackBufferBinding?.setPollingEnabled(isCurrentMemberPendingReadiness);
+      const barrierRevision = state.playbackSync?.hold.playbackRevision;
+      if (
+        isCurrentMemberPendingReadiness &&
+        barrierRevision &&
+        barrierRevision !== lastReportedBarrierRevision
+      ) {
+        lastReportedBarrierRevision = barrierRevision;
+        playbackBufferBinding?.reportNow();
+      } else if (!isCurrentMemberPendingReadiness) {
+        lastReportedBarrierRevision = undefined;
+      }
       if (!state.playback || !currentUrl) {
         resumeAfterPlaybackHold = false;
+        resetAppliedPlaybackRevision();
         return;
       }
       if (isVodPlaybackHoldActive) {
@@ -387,6 +447,21 @@ export function createWebRoomPlaybackController(
         return;
       }
 
+      const playbackRevision = createPlaybackRevision(state.playback);
+      const shouldApplyPlaybackRevision =
+        isLivePlayback ||
+        loadedSource ||
+        needsPlaybackHydration ||
+        resumeAfterPlaybackHold ||
+        lastAppliedPlaybackMedia !== video ||
+        lastAppliedPlaybackRevision !== playbackRevision;
+      if (!shouldApplyPlaybackRevision) {
+        // room:state also carries member, chat, and buffer coordination
+        // changes. Re-projecting the same VOD command on every such render
+        // makes a stalled member abandon its in-flight range and chase time.
+        return;
+      }
+
       suppressLocalEventsUntil = getNow() + 500;
       try {
         const result = await applyRemotePlaybackState({
@@ -399,6 +474,8 @@ export function createWebRoomPlaybackController(
           ...(isLivePlayback
             ? { seekToleranceSeconds: Number.POSITIVE_INFINITY }
             : {}),
+          onBeforeSeek: (targetTime) =>
+            playbackBinding?.suppressNativeSeekEcho(targetTime),
           now: options.now,
         });
         if (shouldResumeLivePlayback && video.paused) {
@@ -407,6 +484,8 @@ export function createWebRoomPlaybackController(
           });
         }
         if (result.applied || result.reason !== "url_mismatch") {
+          lastAppliedPlaybackMedia = video;
+          lastAppliedPlaybackRevision = playbackRevision;
           needsPlaybackHydration = false;
           resumeAfterPlaybackHold = false;
         }
@@ -463,7 +542,8 @@ export function createWebRoomPlaybackController(
           handlePageLifecycleShow,
         );
       }
-      disposePlaybackBinding();
+      disposePlaybackBindings();
+      resetAppliedPlaybackRevision();
       playbackPlayRetryController.dispose();
       await elementController.dispose();
     },

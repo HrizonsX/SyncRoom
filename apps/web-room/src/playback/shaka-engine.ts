@@ -3,11 +3,19 @@ import type { PlaybackVideoElement } from "./playback-types.js";
 
 export type ShakaPlayerInstance = {
   attach?: (video: PlaybackVideoElement) => Promise<unknown> | unknown;
+  addEventListener?: (
+    type: "error",
+    listener: (event: unknown) => void,
+  ) => void;
   configure?: (
     config: Record<string, unknown> | string,
     value?: unknown,
   ) => void;
   load: (url: string) => Promise<unknown>;
+  removeEventListener?: (
+    type: "error",
+    listener: (event: unknown) => void,
+  ) => void;
   destroy?: () => Promise<unknown> | unknown;
 };
 
@@ -100,6 +108,7 @@ export function bindLivePlaybackResume(args: {
   video: PlaybackVideoElement;
   source: PlaybackSource;
   now: () => number;
+  onError?: (error: unknown) => void;
 }): { dispose: () => void } | undefined {
   if (args.source.isLive !== true) {
     return undefined;
@@ -157,6 +166,9 @@ export function bindLivePlaybackResume(args: {
         ) {
           await video.play();
         }
+      })
+      .catch((error: unknown) => {
+        args.onError?.(error);
       })
       .finally(() => {
         resumeLoadInFlight = undefined;

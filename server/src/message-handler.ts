@@ -136,7 +136,7 @@ export function createMessageHandler(options: {
         Extract<ClientMessage, { type: "playback:buffer" }>["payload"],
         "memberToken"
       >,
-    ) => Promise<{ room: { code: string } }>;
+    ) => Promise<{ room: { code: string }; changed?: boolean }>;
     setPlaybackSyncStrategyForSession?: (
       session: Session,
       memberToken: string,
@@ -1090,8 +1090,16 @@ export function createMessageHandler(options: {
                     : {
                         bufferAheadSeconds: message.payload.bufferAheadSeconds,
                       }),
+                  ...(message.payload.playbackRevision === undefined
+                    ? {}
+                    : {
+                        playbackRevision: message.payload.playbackRevision,
+                      }),
                 },
               );
+            if (serviceResult?.changed === false) {
+              return;
+            }
             if (serviceResult) {
               await firePublishRoomEvent(
                 {

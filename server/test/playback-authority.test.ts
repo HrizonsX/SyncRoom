@@ -273,6 +273,35 @@ test("playback authority accepts explicit control even inside another actor's au
   });
 });
 
+test("playback authority ignores an explicit rate request that keeps the current rate", () => {
+  const decision = decidePlaybackAcceptance({
+    currentPlayback: {
+      currentTime: 120,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "owner",
+    },
+    authority: null,
+    incomingPlayback: {
+      currentTime: 125,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 6_000,
+      serverTime: 6_000,
+      actorId: "guest",
+      syncIntent: "explicit-ratechange",
+    },
+    currentTime: 6_000,
+  });
+
+  assert.deepEqual(decision, {
+    decision: "ignore-as-follow",
+    reason: "unchanged-ratechange",
+  });
+});
+
 test("playback authority accepts explicit play or pause controls inside another actor's authority window", () => {
   for (const [playState, syncIntent] of [
     ["playing", "explicit-play"],

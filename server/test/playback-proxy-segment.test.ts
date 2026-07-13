@@ -207,6 +207,535 @@ test("segment proxy streams un-ranged media before the upstream body completes",
   }
 });
 
+test("segment proxy coalesces concurrent ranged requests for the same segment", async () => {
+  let fetchCount = 0;
+  let releaseFetch: (() => void) | undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () => {
+      fetchCount += 1;
+      await fetchGate;
+      return new Response("0123456789", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-9/100",
+          "content-length": "10",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const first = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-9" },
+  });
+  const second = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-9" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCount, 1);
+
+  releaseFetch?.();
+  const [firstSegment, secondSegment] = await Promise.all([first, second]);
+
+  assert.equal(firstSegment?.statusCode, 206);
+  assert.equal(secondSegment?.statusCode, 206);
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(firstSegment?.body)),
+    "0123456789",
+  );
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(secondSegment?.body)),
+    "0123456789",
+  );
+  assert.equal(fetchCount, 1);
+});
+
+test("segment proxy records cache and upstream metrics separately from response bytes", async () => {
+  let fetchCount = 0;
+  const metricRecords: Array<{ name: string; input: Record<string, unknown> }> =
+    [];
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    metricsCollector: {
+      recordProxyTraffic(input) {
+        metricRecords.push({ name: "traffic", input });
+      },
+      recordProxyRequest(input) {
+        metricRecords.push({ name: "request", input });
+      },
+      recordProxyUpstreamTraffic(input) {
+        metricRecords.push({ name: "upstream_traffic", input });
+      },
+      recordProxyUpstreamRequest(input) {
+        metricRecords.push({ name: "upstream_request", input });
+      },
+      recordProxyCacheEvent(input) {
+        metricRecords.push({ name: "cache", input });
+      },
+    },
+    fetch: async () => {
+      fetchCount += 1;
+      return new Response("range-body", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-9/100",
+          "content-length": "10",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const first = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-9" },
+  });
+  const second = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-9" },
+  });
+
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(first?.body)),
+    "range-body",
+  );
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(second?.body)),
+    "range-body",
+  );
+  assert.equal(fetchCount, 1);
+  assert.deepEqual(
+    metricRecords.map((record) => record.name),
+    [
+      "request",
+      "cache",
+      "upstream_request",
+      "upstream_traffic",
+      "cache",
+      "traffic",
+      "request",
+      "cache",
+      "traffic",
+    ],
+  );
+  assert.deepEqual(
+    metricRecords
+      .filter((record) => record.name === "cache")
+      .map((record) => record.input),
+    [
+      { roomCode: "ABC123", providerId: "bilibili", event: "miss" },
+      { roomCode: "ABC123", providerId: "bilibili", event: "store" },
+      { roomCode: "ABC123", providerId: "bilibili", event: "hit" },
+    ],
+  );
+  assert.deepEqual(
+    metricRecords
+      .filter((record) => record.name === "upstream_request")
+      .map((record) => record.input),
+    [
+      {
+        roomCode: "ABC123",
+        providerId: "bilibili",
+        outcome: "success",
+      },
+    ],
+  );
+  assert.deepEqual(
+    metricRecords
+      .filter((record) => record.name === "upstream_traffic")
+      .map((record) => record.input),
+    [{ roomCode: "ABC123", providerId: "bilibili", bytes: 10 }],
+  );
+  assert.deepEqual(
+    metricRecords
+      .filter((record) => record.name === "traffic")
+      .map((record) => record.input),
+    [
+      { roomCode: "ABC123", providerId: "bilibili", bytes: 10 },
+      { roomCode: "ABC123", providerId: "bilibili", bytes: 10 },
+    ],
+  );
+});
+
+test("segment proxy does not coalesce open-ended ranged requests", async () => {
+  let fetchCount = 0;
+  let releaseFetch: (() => void) | undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  const cacheEvents: unknown[] = [];
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    metricsCollector: {
+      recordProxyCacheEvent(input) {
+        cacheEvents.push(input);
+      },
+    },
+    fetch: async () => {
+      fetchCount += 1;
+      await fetchGate;
+      return new Response("large-mp4", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-99999999/100000000",
+          "content-length": "100000000",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const first = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(fetchCount, 2);
+  releaseFetch?.();
+  const [firstSegment, secondSegment] = await Promise.all([first, second]);
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(firstSegment?.body)),
+    "large-mp4",
+  );
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(secondSegment?.body)),
+    "large-mp4",
+  );
+  assert.deepEqual(cacheEvents, [
+    { roomCode: "ABC123", providerId: "bilibili", event: "bypass" },
+    { roomCode: "ABC123", providerId: "bilibili", event: "bypass" },
+  ]);
+});
+
+test("segment proxy expires ranged response cache entries by TTL", async () => {
+  let now = 1_000;
+  let fetchCount = 0;
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => now,
+    resolveHostname: async () => ["93.184.216.34"],
+    segmentCacheTtlMs: 50,
+    fetch: async () => {
+      fetchCount += 1;
+      return new Response(`range-${fetchCount}`, {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-5/100",
+          "content-length": "7",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const first = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(first?.body)),
+    "range-1",
+  );
+  assert.equal(fetchCount, 1);
+
+  now = 1_049;
+  const cached = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(cached?.body)),
+    "range-1",
+  );
+  assert.equal(fetchCount, 1);
+
+  now = 1_051;
+  const refreshed = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(refreshed?.body)),
+    "range-2",
+  );
+  assert.equal(fetchCount, 2);
+});
+
+test("segment proxy evicts ranged response cache entries when the byte cap is reached", async () => {
+  let fetchCount = 0;
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    segmentCacheMaxBytes: 10,
+    segmentCacheMaxEntryBytes: 10,
+    fetch: async (_url, init) => {
+      fetchCount += 1;
+      const headers = init?.headers as Record<string, string> | undefined;
+      const range = headers?.Range ?? "";
+      const body = range === "bytes=0-5" ? "AAAAAA" : "BBBBBB";
+      return new Response(body, {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": `${range.replace("=", " ")}/100`,
+          "content-length": String(body.length),
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const firstA = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(firstA?.body)),
+    "AAAAAA",
+  );
+  assert.equal(fetchCount, 1);
+
+  const cachedA = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(cachedA?.body)),
+    "AAAAAA",
+  );
+  assert.equal(fetchCount, 1);
+
+  const firstB = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=6-11" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(firstB?.body)),
+    "BBBBBB",
+  );
+  assert.equal(fetchCount, 2);
+
+  const refetchedA = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-5" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(refetchedA?.body)),
+    "AAAAAA",
+  );
+  assert.equal(fetchCount, 3);
+});
+
+test("segment proxy stops buffering when a ranged response exceeds the entry cap", async () => {
+  let fetchCount = 0;
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    segmentCacheMaxEntryBytes: 4,
+    fetch: async () => {
+      fetchCount += 1;
+      return new Response("too-large", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-8/100",
+          "content-length": "1",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4",
+  });
+
+  const segment = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-8" },
+  });
+
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(segment?.body)),
+    "too-large",
+  );
+  assert.equal(fetchCount, 2);
+});
+
+test("segment proxy drops cached ranged responses when room auth is cleared", async () => {
+  let fetchCount = 0;
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () => {
+      fetchCount += 1;
+      return new Response(fetchCount === 1 ? "old-auth" : "new-auth", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-7/100",
+          "content-length": "8",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4?auth=old",
+  });
+
+  const oldSegment = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-7" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(oldSegment?.body)),
+    "old-auth",
+  );
+  assert.equal(fetchCount, 1);
+
+  assert.equal(service.clearProviderAuth("ABC123", "bilibili"), 1);
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4?auth=new",
+  });
+
+  const newSegment = await service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-7" },
+  });
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(newSegment?.body)),
+    "new-auth",
+  );
+  assert.equal(fetchCount, 2);
+});
+
+test("segment proxy does not refetch cleared auth for pending ranged request waiters", async () => {
+  let fetchCount = 0;
+  let releaseFetch: (() => void) | undefined;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  const service = createPlaybackProxyService({
+    publicBaseUrl: "http://syncroom.example.test",
+    createResourceId: () => "movie-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async () => {
+      fetchCount += 1;
+      await fetchGate;
+      return new Response("old-auth", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-7/100",
+          "content-length": "8",
+        },
+      });
+    },
+  });
+  service.registerSegment({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    upstreamUrl: "https://upos.example.test/video.mp4?auth=old",
+  });
+
+  const owner = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-7" },
+  });
+  const waiter = service.resolveResource({
+    kind: "segment",
+    resourceId: "movie-mp4",
+    headers: { range: "bytes=0-7" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchCount, 1);
+
+  assert.equal(service.clearProviderAuth("ABC123", "bilibili"), 1);
+  releaseFetch?.();
+
+  const [ownerSegment, waiterSegment] = await Promise.all([owner, waiter]);
+  assert.equal(
+    new TextDecoder().decode(await readResourceBody(ownerSegment?.body)),
+    "old-auth",
+  );
+  assert.equal(waiterSegment, null);
+  assert.equal(fetchCount, 1);
+});
+
 test("segment proxy falls back to alternate upstream URLs on CDN errors", async () => {
   const upstreamRequests: string[] = [];
   const ids = ["dash.mpd", "dash-video"];

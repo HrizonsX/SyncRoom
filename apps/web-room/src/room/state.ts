@@ -1,4 +1,5 @@
 import {
+  describeSharedVideoCapabilities,
   isPlaybackSyncIntent,
   type PlaybackSyncState,
   type PlaybackState,
@@ -92,6 +93,9 @@ function readPlaybackSyncState(value: unknown): PlaybackSyncState {
       ...(typeof hold.deadlineAt === "number" &&
       Number.isFinite(hold.deadlineAt)
         ? { deadlineAt: hold.deadlineAt }
+        : {}),
+      ...(typeof hold.playbackRevision === "string"
+        ? { playbackRevision: hold.playbackRevision }
         : {}),
     },
     bufferingMemberIds,
@@ -330,6 +334,9 @@ function getSharedVideoTitle(
 function getProviderPlaybackSource(
   sharedVideo: RecordLike | null,
 ): PlaybackSource | undefined {
+  if (!describeSharedVideoCapabilities(sharedVideo).provider.canPlayInWebRoom) {
+    return undefined;
+  }
   const provider = isRecord(sharedVideo?.provider)
     ? sharedVideo.provider
     : null;
@@ -511,6 +518,7 @@ function applyRoomState(
     : state.members;
   const playback = readPlaybackState(payload.playback);
   const playbackSync = readPlaybackSyncState(payload.playbackSync);
+  const sharedVideoCapabilities = describeSharedVideoCapabilities(sharedVideo);
   const playbackSource = getProviderPlaybackSource(sharedVideo);
   const providerPicker = createProviderPickerFromSharedVideo(
     state,
@@ -530,6 +538,7 @@ function applyRoomState(
       : state.videoTitle,
     providerPicker,
     providerPlaybackStatus: getProviderPlaybackStatus(sharedVideo),
+    sharedVideoCapabilities,
     playbackSource,
     playbackUrl: sharedVideo
       ? getString(sharedVideo.url) || undefined

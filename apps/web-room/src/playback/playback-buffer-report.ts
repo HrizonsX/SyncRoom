@@ -1,4 +1,7 @@
-import type { PlaybackBufferReport } from "@syncroom/protocol";
+import {
+  PLAYBACK_READY_BUFFER_AHEAD_SECONDS,
+  type PlaybackBufferReport,
+} from "@syncroom/protocol";
 
 export type BufferReportMediaElementLike = {
   currentTime: number;
@@ -11,16 +14,19 @@ export type PlaybackBufferReportContext = {
   memberToken: string;
   actorId: string;
   url: string;
+  playbackRevision?: string;
 };
 
 export type PlaybackBufferReporterBinding = {
   dispose: () => void;
+  reportNow: () => void;
   setPollingEnabled: (enabled: boolean) => void;
 };
 
 const DEFAULT_READY_BUFFER_REPORT_MIN_DELTA_SECONDS = 0.5;
 const DEFAULT_BUFFERED_RANGE_START_TOLERANCE_SECONDS = 0.25;
 const DEFAULT_READY_POLL_INTERVAL_MS = 500;
+const DEFAULT_MAX_SILENT_REPORT_INTERVAL_MS = 2_000;
 
 /**
  * 计算当前播放时间点之后的可用缓冲秒数，用于“等人同步”判断成员是否已准备好。
@@ -62,16 +68,22 @@ export function bindPlaybackBufferReporter(args: {
   readyBufferReportMinDeltaSeconds?: number;
   rangeStartToleranceSeconds?: number;
   pollIntervalMs?: number;
+  maxSilentReportIntervalMs?: number;
+  now?: () => number;
 }): PlaybackBufferReporterBinding {
   let waitingTimer: ReturnType<typeof setTimeout> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let pollingEnabled = false;
   let lastReportedState: PlaybackBufferReport["state"] | null = null;
   let lastReadyBufferAheadSeconds: number | null = null;
+  let lastReportedPlaybackRevision: string | undefined;
+  let lastReportedAt: number | null = null;
   const readyBufferReportMinDeltaSeconds =
     args.readyBufferReportMinDeltaSeconds ??
     DEFAULT_READY_BUFFER_REPORT_MIN_DELTA_SECONDS;
   const pollIntervalMs = args.pollIntervalMs ?? DEFAULT_READY_POLL_INTERVAL_MS;
+  const maxSilentReportIntervalMs =
+    args.maxSilentReportIntervalMs ?? DEFAULT_MAX_SILENT_REPORT_INTERVAL_MS;
 
   const clearWaitingTimer = (): void => {
     if (waitingTimer === null) {
@@ -93,6 +105,13 @@ export function bindPlaybackBufferReporter(args: {
     if (!context) {
       return;
     }
+    if (context.playbackRevision !== lastReportedPlaybackRevision) {
+      lastReportedState = null;
+      lastReadyBufferAheadSeconds = null;
+      lastReportedAt = null;
+      lastReportedPlaybackRevision = context.playbackRevision;
+    }
+    const currentTime = args.now?.() ?? Date.now();
     const bufferAheadSeconds = getBufferAheadSeconds(args.media, {
       rangeStartToleranceSeconds: args.rangeStartToleranceSeconds,
     });
@@ -101,24 +120,50 @@ export function bindPlaybackBufferReporter(args: {
       (state !== "ready" ||
         (lastReadyBufferAheadSeconds !== null &&
           bufferAheadSeconds <
-            lastReadyBufferAheadSeconds + readyBufferReportMinDeltaSeconds))
+            lastReadyBufferAheadSeconds + readyBufferReportMinDeltaSeconds)) &&
+      lastReportedAt !== null &&
+      currentTime - lastReportedAt < maxSilentReportIntervalMs
     ) {
       return;
     }
     lastReportedState = state;
     lastReadyBufferAheadSeconds = state === "ready" ? bufferAheadSeconds : null;
+    lastReportedAt = currentTime;
     args.dispatch({
       state,
       currentTime: args.media.currentTime,
       bufferAheadSeconds,
+      ...(context.playbackRevision
+        ? { playbackRevision: context.playbackRevision }
+        : {}),
     });
+  };
+  const reportMeasuredState = (): void => {
+    const bufferAheadSeconds = getBufferAheadSeconds(args.media, {
+      rangeStartToleranceSeconds: args.rangeStartToleranceSeconds,
+    });
+    dispatchReport(
+      bufferAheadSeconds >= PLAYBACK_READY_BUFFER_AHEAD_SECONDS
+        ? "ready"
+        : "buffering",
+    );
   };
 
   const handleWaiting = (): void => {
     clearWaitingTimer();
     waitingTimer = setTimeout(() => {
       waitingTimer = null;
-      dispatchReport("buffering");
+      const bufferAheadSeconds = getBufferAheadSeconds(args.media, {
+        rangeStartToleranceSeconds: args.rangeStartToleranceSeconds,
+      });
+      // MSE players can emit waiting while switching append windows even when
+      // many seconds are already buffered. Treat only a shallow buffer as a
+      // network stall, otherwise wait mode will flap between hold and resume.
+      dispatchReport(
+        bufferAheadSeconds >= PLAYBACK_READY_BUFFER_AHEAD_SECONDS
+          ? "ready"
+          : "buffering",
+      );
     }, args.reportDelayMs);
   };
   const handleReady = (): void => {
@@ -127,7 +172,7 @@ export function bindPlaybackBufferReporter(args: {
   };
   const handleProgress = (): void => {
     if (lastReportedState === "ready") {
-      dispatchReport("ready");
+      reportMeasuredState();
     }
   };
   const schedulePoll = (): void => {
@@ -139,7 +184,7 @@ export function bindPlaybackBufferReporter(args: {
       if (!pollingEnabled) {
         return;
       }
-      dispatchReport("ready");
+      reportMeasuredState();
       schedulePoll();
     }, pollIntervalMs);
   };
@@ -161,6 +206,7 @@ export function bindPlaybackBufferReporter(args: {
   args.media.addEventListener("canplaythrough", handleReady);
 
   return {
+    reportNow: reportMeasuredState,
     setPollingEnabled,
     dispose() {
       clearWaitingTimer();

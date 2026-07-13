@@ -74,11 +74,35 @@ Bilibili 凭据只保存在服务端临时授权状态中：
 
 首发稳定路径是 `proxy=true`。当直链播放失败时，网页房间会在房间设置区域展示失败阶段，并允许房主切回 proxy 播放。
 
+Bilibili preview 播放是一个兼容性例外。当匿名解析或非会员解析返回了可播放的 preview 地址，但该地址仍要求浏览器无法安全附加的媒体请求头时，即使解析请求选择了 `proxy=false`，server 也会自动把该 preview 注册为 `/proxy/*` 资源。返回给网页房间的播放描述会使用实际生效的 `proxy=true`，因此界面展示与真实传输方式一致。`shared=false` 时只使用匿名 preview 所需的临时设备 cookie，不会使用或分发房主授权。
+
 ## Proxy 安全边界
 
 Proxy 只服务 provider 解析阶段生成的 opaque resource id，不接受客户端传入的任意 URL。代理请求会校验协议、主机、DNS/IP 和私有保留网段，避免 SSRF。Bilibili 需要的 Referer/User-Agent 由 server 注入，Range 请求会透传给上游。
 
 代理资源有 TTL。房间清理或授权清理后，对应 proxy 映射会被移除或失效。
+
+## 高码率分片缓存
+
+双客户端同步优先的 Nginx 配置使用 256 KiB slice 和 cache lock：
+
+```nginx
+location ^~ /proxy/segment/ {
+  slice 256k;
+  proxy_cache syncroom_proxy_segment;
+  proxy_cache_key "$scheme$request_method$host$request_uri$slice_range";
+  proxy_cache_valid 200 206 60s;
+  proxy_cache_lock on;
+  proxy_cache_lock_timeout 10s;
+  proxy_cache_lock_age 10s;
+  proxy_set_header Range $slice_range;
+  proxy_pass http://127.0.0.1:8787;
+}
+```
+
+该配置让一个请求填充冷 slice，另一客户端读取同一缓存内容，优先降低双端完成时间差。
+相比 `512k + cache lock off`，它会增加 Node 分片请求数，并可能略微增加首字节耗时。
+它不会减少 Nginx 最终发给每个浏览器的字节数；公网出口受限时仍需增加带宽或接入 CDN。
 
 ## 观测指标
 
@@ -89,6 +113,29 @@ Proxy 只服务 provider 解析阶段生成的 opaque resource id，不接受客
 - `syncroom_member_player_errors_total`
 - `syncroom_proxy_traffic_bytes_total`
 - `syncroom_proxy_requests_total`
+- `syncroom_proxy_upstream_traffic_bytes_total`
+- `syncroom_proxy_upstream_requests_total`
+- `syncroom_proxy_cache_events_total`
+- `syncroom_nginx_proxy_cache_requests_total`
+- `syncroom_nginx_proxy_cache_bytes_total`
+- `syncroom_nginx_proxy_cache_request_duration_seconds`
+
+设置 `NGINX_CACHE_METRICS_PORT=5514` 后，server 会在 localhost 接收 Nginx
+发送的低开销 UDP 聚合记录。Nginx `http` 配置中加入：
+
+```nginx
+log_format syncroom_cache
+  'syncroom_cache status=$upstream_cache_status bytes=$body_bytes_sent request_time=$request_time';
+```
+
+并在 `/proxy/segment/` 的 `location` 中加入：
+
+```nginx
+access_log syslog:server=127.0.0.1:5514,facility=local7,tag=syncroom_cache,nohostname syncroom_cache;
+```
+
+记录只包含缓存状态、响应字节数和请求耗时，不包含房间号、资源 id、Range
+或 provider URL。UDP 指标发送失败不会阻塞视频分片响应。
 
 Admin 审计会记录房主选择视频、切换 source、切换 `proxy/shared` 策略等安全操作。它不会记录每个 segment 明细，也不会记录 Cookie、header 或原始上游签名 URL。
 

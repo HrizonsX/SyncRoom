@@ -75,12 +75,25 @@ export type PlaybackProxyService = {
 export type PlaybackProxyServiceOptions = {
   publicBaseUrl?: string;
   fetch?: typeof fetch;
-  metricsCollector?: Pick<MetricsCollector, "recordProxyTraffic">;
+  metricsCollector?: Partial<
+    Pick<
+      MetricsCollector,
+      | "recordProxyTraffic"
+      | "recordProxyRequest"
+      | "recordProxyUpstreamTraffic"
+      | "recordProxyUpstreamRequest"
+      | "recordProxyCacheEvent"
+    >
+  >;
   logEvent?: LogEvent;
   resolveHostname?: (hostname: string) => Promise<string[]>;
   createResourceId?: () => string;
   now?: () => number;
   defaultTtlMs?: number;
+  segmentCacheTtlMs?: number;
+  segmentCacheMaxBytes?: number;
+  segmentCacheMaxEntryBytes?: number;
+  segmentCacheMaxEntries?: number;
 };
 
 type StoredProxyResource =
@@ -107,6 +120,32 @@ type StoredProxyResource =
     };
 
 const DEFAULT_PROXY_RESOURCE_TTL_MS = 10 * 60_000;
+const DEFAULT_SEGMENT_CACHE_TTL_MS = 60_000;
+const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 256 * 1024 * 1024;
+const DEFAULT_SEGMENT_CACHE_MAX_ENTRY_BYTES = 16 * 1024 * 1024;
+const DEFAULT_SEGMENT_CACHE_MAX_ENTRIES = 2_048;
+
+type CachedSegmentResponse = {
+  statusCode: number;
+  contentType: string;
+  body: Uint8Array;
+  headers: Record<string, string>;
+  expiresAt: number;
+  sizeBytes: number;
+  roomCode: string;
+  providerId: string;
+  resourceKey: string;
+};
+
+type PendingSegmentFetchResult =
+  | {
+      reusable: true;
+      entry: CachedSegmentResponse;
+    }
+  | {
+      reusable: false;
+      resource: PlaybackProxyResource | null;
+    };
 
 function createStableSegmentMappingKey(
   upstreamUrls: readonly string[],
@@ -308,12 +347,26 @@ export function createPlaybackProxyService(
   options: PlaybackProxyServiceOptions = {},
 ): PlaybackProxyService {
   const resources = new Map<string, StoredProxyResource>();
+  const segmentResponseCache = new Map<string, CachedSegmentResponse>();
+  const pendingSegmentFetches = new Map<
+    string,
+    Promise<PendingSegmentFetchResult>
+  >();
   const publicBaseUrl = normalizePublicBaseUrl(options.publicBaseUrl);
   const fetchUpstream = options.fetch ?? fetch;
   const resolveHostname = options.resolveHostname ?? defaultResolveHostname;
   const createResourceId = options.createResourceId ?? (() => randomUUID());
   const now = options.now ?? Date.now;
   const defaultTtlMs = options.defaultTtlMs ?? DEFAULT_PROXY_RESOURCE_TTL_MS;
+  const segmentCacheTtlMs =
+    options.segmentCacheTtlMs ?? DEFAULT_SEGMENT_CACHE_TTL_MS;
+  const segmentCacheMaxBytes =
+    options.segmentCacheMaxBytes ?? DEFAULT_SEGMENT_CACHE_MAX_BYTES;
+  const segmentCacheMaxEntryBytes =
+    options.segmentCacheMaxEntryBytes ?? DEFAULT_SEGMENT_CACHE_MAX_ENTRY_BYTES;
+  const segmentCacheMaxEntries =
+    options.segmentCacheMaxEntries ?? DEFAULT_SEGMENT_CACHE_MAX_ENTRIES;
+  let segmentCacheBytes = 0;
 
   function getEffectivePublicBaseUrl(override: string | undefined): string {
     return override !== undefined
@@ -339,6 +392,23 @@ export function createPlaybackProxyService(
     if (existingSegmentId) {
       const existing = resources.get(resourceKey("segment", existingSegmentId));
       if (existing?.kind === "segment") {
+        const existingResourceKey = resourceKey("segment", existingSegmentId);
+        const existingMappingKey = createStableSegmentMappingKey(
+          existing.upstreamUrls,
+          existing.upstreamHeaders,
+        );
+        const nextMappingKey = createStableSegmentMappingKey(
+          upstreamUrls,
+          upstreamHeaders,
+        );
+        if (existingMappingKey !== nextMappingKey) {
+          deleteSegmentCacheWhere(
+            (entry) => entry.resourceKey === existingResourceKey,
+          );
+          deletePendingSegmentFetchesWhere((cacheKey) =>
+            cacheKey.startsWith(`${existingResourceKey}\n`),
+          );
+        }
         existing.expiresAt = expiresAt;
         existing.ttlMs = ttlMs;
         existing.upstreamUrls = upstreamUrls;
@@ -739,6 +809,477 @@ export function createPlaybackProxyService(
     });
   }
 
+  function isSegmentCacheEnabled(): boolean {
+    return (
+      segmentCacheTtlMs > 0 &&
+      segmentCacheMaxBytes > 0 &&
+      segmentCacheMaxEntryBytes > 0 &&
+      segmentCacheMaxEntries > 0
+    );
+  }
+
+  function readRangeHeader(headers: IncomingHttpHeaders): string | undefined {
+    const rangeHeader = headers.range;
+    return typeof rangeHeader === "string" && rangeHeader.trim()
+      ? rangeHeader.trim()
+      : undefined;
+  }
+
+  function isOpenEndedRangeHeader(rangeHeader: string): boolean {
+    const match = rangeHeader.match(/^\s*bytes\s*=\s*(.+)$/i);
+    if (!match?.[1]) {
+      return false;
+    }
+    return match[1].split(",").some((part) => /^\s*\d+\s*-\s*$/.test(part));
+  }
+
+  function createSegmentCacheKey(
+    segmentResourceKey: string,
+    rangeHeader: string,
+  ): string {
+    return `${segmentResourceKey}\nrange:${rangeHeader}`;
+  }
+
+  function parseContentLength(headers: Headers): number | null {
+    const value = headers.get("content-length");
+    if (!value) {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  function isCacheableSegmentStatus(statusCode: number): boolean {
+    return statusCode === 200 || statusCode === 206;
+  }
+
+  async function readResponseBody(
+    body: ReadableStream<Uint8Array> | null,
+    maxBytes: number,
+  ): Promise<Uint8Array | null> {
+    if (!body) {
+      return new Uint8Array();
+    }
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    const reader = body.getReader();
+    while (true) {
+      const result = await reader.read();
+      if (result.done) {
+        break;
+      }
+      if (totalBytes + result.value.byteLength > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(result.value);
+      totalBytes += result.value.byteLength;
+    }
+
+    const merged = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return merged;
+  }
+
+  function recordProxyResponseBytes(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    bytes: number,
+  ): void {
+    if (bytes <= 0) {
+      return;
+    }
+    options.metricsCollector?.recordProxyTraffic?.({
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      bytes,
+    });
+  }
+
+  function recordProxyRequest(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+  ): void {
+    options.metricsCollector?.recordProxyRequest?.({
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+    });
+  }
+
+  function recordProxyUpstreamBytes(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    bytes: number,
+  ): void {
+    if (bytes <= 0) {
+      return;
+    }
+    options.metricsCollector?.recordProxyUpstreamTraffic?.({
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      bytes,
+    });
+  }
+
+  function recordProxyUpstreamRequest(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    outcome: "success" | "error",
+  ): void {
+    options.metricsCollector?.recordProxyUpstreamRequest?.({
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      outcome,
+    });
+  }
+
+  function recordProxyCacheEvent(
+    resource:
+      | Extract<StoredProxyResource, { kind: "segment" }>
+      | CachedSegmentResponse,
+    event: "hit" | "miss" | "store" | "coalesced" | "bypass" | "expired",
+  ): void {
+    options.metricsCollector?.recordProxyCacheEvent?.({
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      event,
+    });
+  }
+
+  function deleteSegmentCacheEntry(cacheKey: string): void {
+    const existing = segmentResponseCache.get(cacheKey);
+    if (!existing) {
+      return;
+    }
+    segmentCacheBytes -= existing.sizeBytes;
+    segmentResponseCache.delete(cacheKey);
+  }
+
+  function deleteSegmentCacheWhere(
+    shouldDelete: (entry: CachedSegmentResponse) => boolean,
+  ): number {
+    let deleted = 0;
+    for (const [cacheKey, entry] of segmentResponseCache.entries()) {
+      if (!shouldDelete(entry)) {
+        continue;
+      }
+      deleteSegmentCacheEntry(cacheKey);
+      deleted += 1;
+    }
+    return deleted;
+  }
+
+  function deletePendingSegmentFetchesWhere(
+    shouldDelete: (cacheKey: string) => boolean,
+  ): void {
+    for (const cacheKey of pendingSegmentFetches.keys()) {
+      if (shouldDelete(cacheKey)) {
+        pendingSegmentFetches.delete(cacheKey);
+      }
+    }
+  }
+
+  function purgeExpiredSegmentCache(currentTime: number): number {
+    return deleteSegmentCacheWhere((entry) => entry.expiresAt <= currentTime);
+  }
+
+  function enforceSegmentCacheLimits(): void {
+    while (
+      segmentResponseCache.size > segmentCacheMaxEntries ||
+      segmentCacheBytes > segmentCacheMaxBytes
+    ) {
+      const oldestKey = segmentResponseCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      deleteSegmentCacheEntry(oldestKey);
+    }
+  }
+
+  function getCachedSegmentResponse(
+    cacheKey: string,
+    currentTime: number,
+  ): CachedSegmentResponse | null {
+    const entry = segmentResponseCache.get(cacheKey);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= currentTime) {
+      recordProxyCacheEvent(entry, "expired");
+      deleteSegmentCacheEntry(cacheKey);
+      return null;
+    }
+
+    // Refresh insertion order for simple LRU eviction while keeping TTL fixed.
+    segmentResponseCache.delete(cacheKey);
+    segmentResponseCache.set(cacheKey, entry);
+    return entry;
+  }
+
+  function createCachedSegmentResource(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    entry: CachedSegmentResponse,
+  ): PlaybackProxyResource {
+    recordProxyResponseBytes(resource, entry.body.byteLength);
+    return {
+      statusCode: entry.statusCode,
+      contentType: entry.contentType,
+      body: entry.body.slice(),
+      headers: { ...entry.headers },
+    };
+  }
+
+  function storeCachedSegmentResponse(
+    cacheKey: string,
+    resourceKeyValue: string,
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    response: Response,
+    body: Uint8Array,
+    currentTime: number,
+  ): CachedSegmentResponse | null {
+    if (
+      !isSegmentCacheEnabled() ||
+      !isCacheableSegmentStatus(response.status) ||
+      body.byteLength > segmentCacheMaxEntryBytes ||
+      body.byteLength > segmentCacheMaxBytes ||
+      resources.get(resourceKeyValue) !== resource
+    ) {
+      return null;
+    }
+
+    deleteSegmentCacheEntry(cacheKey);
+    const entry: CachedSegmentResponse = {
+      statusCode: response.status,
+      contentType:
+        response.headers.get("content-type") ?? "application/octet-stream",
+      body,
+      headers: copyUpstreamResponseHeaders(response.headers),
+      expiresAt: Math.min(currentTime + segmentCacheTtlMs, resource.expiresAt),
+      sizeBytes: body.byteLength,
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      resourceKey: resourceKeyValue,
+    };
+    segmentResponseCache.set(cacheKey, entry);
+    segmentCacheBytes += entry.sizeBytes;
+    enforceSegmentCacheLimits();
+    if (segmentResponseCache.get(cacheKey) !== entry) {
+      return null;
+    }
+    recordProxyCacheEvent(entry, "store");
+    return entry;
+  }
+
+  async function fetchSegmentUpstream(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    request: PlaybackProxyResourceRequest,
+  ): Promise<{ response: Response; upstreamUrl: string } | null> {
+    let upstreamResponse: Response | null = null;
+    let upstreamUrl = resource.upstreamUrls[0] ?? "";
+    for (const candidateUrl of resource.upstreamUrls) {
+      await assertSafeUpstreamUrl(candidateUrl);
+      upstreamUrl = candidateUrl;
+      upstreamResponse = await fetchUpstream(candidateUrl, {
+        method: request.method === "HEAD" ? "HEAD" : "GET",
+        headers: buildUpstreamHeaders(
+          request.headers,
+          resource.upstreamHeaders,
+        ),
+      });
+      recordProxyUpstreamRequest(
+        resource,
+        upstreamResponse.status < 400 ? "success" : "error",
+      );
+      if (upstreamResponse.status < 400) {
+        break;
+      }
+    }
+    return upstreamResponse
+      ? { response: upstreamResponse, upstreamUrl }
+      : null;
+  }
+
+  function logSegmentUpstreamFailure(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    upstreamUrl: string,
+    response: Response,
+  ): void {
+    if (response.status < 400) {
+      return;
+    }
+    options.logEvent?.("playback_proxy_upstream_http_error", {
+      roomCode: resource.roomCode,
+      providerId: resource.providerId,
+      resourceKind: resource.kind,
+      statusCode: response.status,
+      upstreamHost: readUpstreamHost(upstreamUrl),
+      contentType: response.headers.get("content-type") ?? null,
+      result: "upstream_error",
+    });
+  }
+
+  function createStreamingSegmentResource(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    request: PlaybackProxyResourceRequest,
+    response: Response,
+  ): PlaybackProxyResource {
+    const body =
+      request.method === "HEAD"
+        ? new Uint8Array()
+        : response.body
+          ? createMeteredStream(response.body, (bytes) => {
+              recordProxyResponseBytes(resource, bytes);
+              recordProxyUpstreamBytes(resource, bytes);
+            })
+          : new Uint8Array();
+    return {
+      statusCode: response.status,
+      contentType:
+        response.headers.get("content-type") ?? "application/octet-stream",
+      body,
+      headers: copyUpstreamResponseHeaders(response.headers),
+    };
+  }
+
+  async function resolveUncachedSegmentResource(
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    request: PlaybackProxyResourceRequest,
+  ): Promise<PlaybackProxyResource | null> {
+    const fetched = await fetchSegmentUpstream(resource, request);
+    if (!fetched) {
+      return null;
+    }
+    logSegmentUpstreamFailure(resource, fetched.upstreamUrl, fetched.response);
+    return createStreamingSegmentResource(resource, request, fetched.response);
+  }
+
+  async function fetchRangedSegmentForCache(
+    resourceKeyValue: string,
+    cacheKey: string,
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    request: PlaybackProxyResourceRequest,
+    currentTime: number,
+  ): Promise<PendingSegmentFetchResult> {
+    const fetched = await fetchSegmentUpstream(resource, request);
+    if (!fetched) {
+      return { reusable: false, resource: null };
+    }
+
+    logSegmentUpstreamFailure(resource, fetched.upstreamUrl, fetched.response);
+    const contentLength = parseContentLength(fetched.response.headers);
+    if (
+      !isSegmentCacheEnabled() ||
+      !isCacheableSegmentStatus(fetched.response.status) ||
+      contentLength === null ||
+      contentLength > segmentCacheMaxEntryBytes ||
+      contentLength > segmentCacheMaxBytes
+    ) {
+      return {
+        reusable: false,
+        resource: createStreamingSegmentResource(
+          resource,
+          request,
+          fetched.response,
+        ),
+      };
+    }
+
+    const body = await readResponseBody(
+      fetched.response.body,
+      Math.min(segmentCacheMaxEntryBytes, segmentCacheMaxBytes),
+    );
+    if (!body) {
+      return {
+        reusable: false,
+        resource: await resolveUncachedSegmentResource(resource, request),
+      };
+    }
+    recordProxyUpstreamBytes(resource, body.byteLength);
+    const entry = storeCachedSegmentResponse(
+      cacheKey,
+      resourceKeyValue,
+      resource,
+      fetched.response,
+      body,
+      currentTime,
+    );
+    if (!entry) {
+      return {
+        reusable: false,
+        resource: {
+          statusCode: fetched.response.status,
+          contentType:
+            fetched.response.headers.get("content-type") ??
+            "application/octet-stream",
+          body,
+          headers: copyUpstreamResponseHeaders(fetched.response.headers),
+        },
+      };
+    }
+
+    return { reusable: true, entry };
+  }
+
+  async function resolveCachedRangedSegmentResource(
+    resourceKeyValue: string,
+    resource: Extract<StoredProxyResource, { kind: "segment" }>,
+    request: PlaybackProxyResourceRequest,
+    currentTime: number,
+  ): Promise<PlaybackProxyResource | null> {
+    const rangeHeader = readRangeHeader(request.headers);
+    if (
+      request.method === "HEAD" ||
+      !rangeHeader ||
+      isOpenEndedRangeHeader(rangeHeader) ||
+      !isSegmentCacheEnabled()
+    ) {
+      recordProxyCacheEvent(resource, "bypass");
+      return await resolveUncachedSegmentResource(resource, request);
+    }
+
+    const cacheKey = createSegmentCacheKey(resourceKeyValue, rangeHeader);
+    const cached = getCachedSegmentResponse(cacheKey, currentTime);
+    if (cached) {
+      recordProxyCacheEvent(resource, "hit");
+      return createCachedSegmentResource(resource, cached);
+    }
+
+    const pending = pendingSegmentFetches.get(cacheKey);
+    if (pending) {
+      const result = await pending;
+      if (result.reusable) {
+        recordProxyCacheEvent(resource, "coalesced");
+        return createCachedSegmentResource(resource, result.entry);
+      }
+      if (resources.get(resourceKeyValue) !== resource) {
+        return null;
+      }
+      recordProxyCacheEvent(resource, "bypass");
+      return await resolveUncachedSegmentResource(resource, request);
+    }
+
+    recordProxyCacheEvent(resource, "miss");
+    const fetchPromise = fetchRangedSegmentForCache(
+      resourceKeyValue,
+      cacheKey,
+      resource,
+      request,
+      currentTime,
+    );
+    pendingSegmentFetches.set(cacheKey, fetchPromise);
+    try {
+      const result = await fetchPromise;
+      if (result.reusable) {
+        return createCachedSegmentResource(resource, result.entry);
+      }
+      return result.resource;
+    } finally {
+      if (pendingSegmentFetches.get(cacheKey) === fetchPromise) {
+        pendingSegmentFetches.delete(cacheKey);
+      }
+    }
+  }
+
   async function resolveStoredM3u8Manifest(
     resource: Extract<StoredProxyResource, { kind: "manifest" }> & {
       refreshM3u8Url: string;
@@ -797,6 +1338,10 @@ export function createPlaybackProxyService(
         continue;
       }
       resources.delete(key);
+      deleteSegmentCacheWhere((entry) => entry.resourceKey === key);
+      deletePendingSegmentFetchesWhere((cacheKey) =>
+        cacheKey.startsWith(`${key}\n`),
+      );
       deleted += 1;
     }
     return deleted;
@@ -825,56 +1370,13 @@ export function createPlaybackProxyService(
         );
       }
       if (resource.kind === "segment") {
-        let upstreamResponse: Response | null = null;
-        let upstreamUrl = resource.upstreamUrls[0] ?? "";
-        for (const candidateUrl of resource.upstreamUrls) {
-          await assertSafeUpstreamUrl(candidateUrl);
-          upstreamUrl = candidateUrl;
-          upstreamResponse = await fetchUpstream(candidateUrl, {
-            method: request.method === "HEAD" ? "HEAD" : "GET",
-            headers: buildUpstreamHeaders(
-              request.headers,
-              resource.upstreamHeaders,
-            ),
-          });
-          if (upstreamResponse.status < 400) {
-            break;
-          }
-        }
-        if (!upstreamResponse) {
-          return null;
-        }
-        if (upstreamResponse.status >= 400) {
-          options.logEvent?.("playback_proxy_upstream_http_error", {
-            roomCode: resource.roomCode,
-            providerId: resource.providerId,
-            resourceKind: resource.kind,
-            statusCode: upstreamResponse.status,
-            upstreamHost: readUpstreamHost(upstreamUrl),
-            contentType: upstreamResponse.headers.get("content-type") ?? null,
-            result: "upstream_error",
-          });
-        }
-        const body =
-          request.method === "HEAD"
-            ? new Uint8Array()
-            : upstreamResponse.body
-              ? createMeteredStream(upstreamResponse.body, (bytes) => {
-                  options.metricsCollector?.recordProxyTraffic({
-                    roomCode: resource.roomCode,
-                    providerId: resource.providerId,
-                    bytes,
-                  });
-                })
-              : new Uint8Array();
-        return {
-          statusCode: upstreamResponse.status,
-          contentType:
-            upstreamResponse.headers.get("content-type") ??
-            "application/octet-stream",
-          body,
-          headers: copyUpstreamResponseHeaders(upstreamResponse.headers),
-        };
+        recordProxyRequest(resource);
+        return await resolveCachedRangedSegmentResource(
+          resourceKey(request.kind, request.resourceId),
+          resource,
+          request,
+          currentTime,
+        );
       }
       return {
         statusCode: resource.statusCode,
@@ -1015,6 +1517,7 @@ export function createPlaybackProxyService(
 
     cleanupExpired() {
       const currentTime = now();
+      purgeExpiredSegmentCache(currentTime);
       return deleteResourcesWhere(
         (resource) => resource.expiresAt <= currentTime,
       );

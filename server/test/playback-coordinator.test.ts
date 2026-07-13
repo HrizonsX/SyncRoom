@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 import {
+  coordinatePlaybackCommand,
+  coordinatePlaybackBufferReport,
+  coordinatePlaybackMemberJoin,
+  coordinatePlaybackMemberDeparture,
+  coordinatePlaybackSyncStrategyChange,
   preservePlayingIntentForSeek,
   shouldIgnorePlaybackUpdateDuringHold,
   updatePlaybackSyncForBufferReport,
@@ -105,6 +110,141 @@ test("coordinator keeps explicit seek as playing intent while wait mode buffers"
   assert.deepEqual(held.bufferingMemberIds, ["member-guest"]);
 });
 
+test("wait mode starts a readiness barrier for every active member on play", () => {
+  const room = createRoom({
+    playback: createPlayback({ playState: "paused" }),
+  });
+  const nextPlayback = createPlayback({
+    playState: "playing",
+    actorId: "member-host",
+    seq: 2,
+    serverTime: 2_000,
+  });
+
+  const coordinated = coordinatePlaybackCommand({
+    room,
+    nextPlayback,
+    activeMemberIds: ["member-host", "member-guest"],
+    command: "play",
+    currentTime: 2_000,
+  });
+
+  assert.equal(coordinated.playbackSync.hold.active, true);
+  assert.deepEqual(coordinated.playbackSync.bufferingMemberIds, [
+    "member-host",
+    "member-guest",
+  ]);
+  assert.equal(
+    coordinated.playbackSync.hold.playbackRevision,
+    coordinated.playbackRevision,
+  );
+  assert.equal(coordinated.playback, nextPlayback);
+});
+
+test("wait readiness barrier ignores stale and shallow ready reports", () => {
+  const nextPlayback = createPlayback({
+    currentTime: 120,
+    actorId: "member-host",
+    seq: 2,
+    serverTime: 2_000,
+  });
+  const barrier = coordinatePlaybackCommand({
+    room: createRoom(),
+    nextPlayback,
+    activeMemberIds: ["member-host", "member-guest"],
+    command: "seek",
+    currentTime: 2_000,
+  });
+  const barrierRoom = createRoom({
+    playback: barrier.playback,
+    playbackSync: barrier.playbackSync,
+  });
+
+  const stale = coordinatePlaybackBufferReport({
+    room: barrierRoom,
+    memberId: "member-guest",
+    report: {
+      state: "ready",
+      currentTime: 120,
+      bufferAheadSeconds: 8,
+      playbackRevision: "stale-revision",
+    },
+    currentTime: 3_000,
+  });
+  assert.deepEqual(stale.playbackSync.bufferingMemberIds, [
+    "member-host",
+    "member-guest",
+  ]);
+
+  const shallow = coordinatePlaybackBufferReport({
+    room: barrierRoom,
+    memberId: "member-guest",
+    report: {
+      state: "ready",
+      currentTime: 120,
+      bufferAheadSeconds: 4,
+      playbackRevision: barrier.playbackRevision,
+    },
+    currentTime: 4_000,
+  });
+  assert.deepEqual(shallow.playbackSync.bufferingMemberIds, [
+    "member-host",
+    "member-guest",
+  ]);
+
+  const ready = coordinatePlaybackBufferReport({
+    room: barrierRoom,
+    memberId: "member-guest",
+    report: {
+      state: "ready",
+      currentTime: 120,
+      bufferAheadSeconds: 6,
+      playbackRevision: barrier.playbackRevision,
+    },
+    currentTime: 5_000,
+  });
+  assert.deepEqual(ready.playbackSync.bufferingMemberIds, ["member-host"]);
+  assert.equal(ready.playbackSync.hold.active, true);
+});
+
+test("new member joining a playing wait room holds only for that member", () => {
+  const joined = coordinatePlaybackMemberJoin({
+    room: createRoom(),
+    memberId: "member-new",
+    currentTime: 3_000,
+  });
+
+  assert.equal(joined.playbackSync.hold.active, true);
+  assert.deepEqual(joined.playbackSync.bufferingMemberIds, ["member-new"]);
+  assert.equal(joined.playback?.currentTime, 42);
+  assert.equal(joined.playback?.serverTime, 3_000);
+});
+
+test("explicit pause clears an active readiness barrier", () => {
+  const room = createRoom({
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 2_000,
+        playbackRevision: "revision-1",
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+  const paused = coordinatePlaybackCommand({
+    room,
+    nextPlayback: createPlayback({ playState: "paused", seq: 2 }),
+    activeMemberIds: ["member-host", "member-guest"],
+    command: "pause",
+    currentTime: 3_000,
+  });
+
+  assert.equal(paused.playbackSync.hold.active, false);
+  assert.deepEqual(paused.playbackSync.bufferingMemberIds, []);
+});
+
 test("coordinator releases wait hold only after enough ready buffer", () => {
   const heldRoom = createRoom({
     playbackSync: {
@@ -146,6 +286,156 @@ test("coordinator releases wait hold only after enough ready buffer", () => {
 
   assert.equal(enoughReady.hold.active, false);
   assert.deepEqual(enoughReady.bufferingMemberIds, []);
+});
+
+test("coordinator ignores waiting reports that already have enough buffered media", () => {
+  const playbackSync = updatePlaybackSyncForBufferReport({
+    room: createRoom(),
+    memberId: "member-guest",
+    report: {
+      state: "buffering",
+      currentTime: 40,
+      bufferAheadSeconds: 8,
+    },
+    currentTime: 2_000,
+  });
+
+  assert.equal(playbackSync.hold.active, false);
+  assert.deepEqual(playbackSync.bufferingMemberIds, []);
+});
+
+test("coordinator releases an active hold when waiting already has enough buffered media", () => {
+  const heldRoom = createRoom({
+    playback: createPlayback({ currentTime: 42, serverTime: 3_000 }),
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 3_000,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  const released = coordinatePlaybackBufferReport({
+    room: heldRoom,
+    memberId: "member-guest",
+    report: {
+      state: "buffering",
+      currentTime: 42,
+      bufferAheadSeconds: 8,
+    },
+    currentTime: 5_000,
+  });
+
+  assert.equal(released.playbackSync.hold.active, false);
+  assert.deepEqual(released.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.playback?.currentTime, 42);
+  assert.equal(released.playback?.serverTime, 5_000);
+});
+
+test("coordinator freezes and rebases the playback timeline across a wait hold", () => {
+  const room = createRoom({
+    playback: createPlayback({
+      currentTime: 40,
+      serverTime: 1_000,
+      playState: "playing",
+    }),
+  });
+  const held = coordinatePlaybackBufferReport({
+    room,
+    memberId: "member-guest",
+    report: {
+      state: "buffering",
+      currentTime: 41,
+      bufferAheadSeconds: 0,
+    },
+    currentTime: 3_000,
+  });
+
+  assert.equal(held.playbackSync.hold.active, true);
+  assert.equal(held.playback?.currentTime, 42);
+  assert.equal(held.playback?.serverTime, 3_000);
+
+  const released = coordinatePlaybackBufferReport({
+    room: {
+      ...room,
+      playback: held.playback,
+      playbackSync: held.playbackSync,
+    },
+    memberId: "member-guest",
+    report: {
+      state: "ready",
+      currentTime: 41,
+      bufferAheadSeconds: 6,
+    },
+    currentTime: 8_000,
+  });
+
+  assert.equal(released.playbackSync.hold.active, false);
+  assert.equal(released.playback?.currentTime, 42);
+  assert.equal(released.playback?.serverTime, 8_000);
+});
+
+test("coordinator releases a hold when the last buffering member leaves", () => {
+  const room = createRoom({
+    playback: createPlayback({
+      currentTime: 42,
+      serverTime: 3_000,
+      playState: "playing",
+    }),
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 3_000,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  const released = coordinatePlaybackMemberDeparture({
+    room,
+    memberId: "member-guest",
+    currentTime: 8_000,
+  });
+
+  assert.equal(released.playbackSync.hold.active, false);
+  assert.deepEqual(released.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.playback?.currentTime, 42);
+  assert.equal(released.playback?.serverTime, 8_000);
+});
+
+test("coordinator rebases a held timeline when switching to smooth mode", () => {
+  const room = createRoom({
+    playback: createPlayback({
+      currentTime: 42,
+      serverTime: 3_000,
+      playState: "playing",
+    }),
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 3_000,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  const released = coordinatePlaybackSyncStrategyChange({
+    room,
+    strategy: "smooth",
+    currentTime: 8_000,
+  });
+
+  assert.equal(released.playbackSync.strategy, "smooth");
+  assert.equal(released.playbackSync.hold.active, false);
+  assert.equal(released.playback?.currentTime, 42);
+  assert.equal(released.playback?.serverTime, 8_000);
 });
 
 test("coordinator ignores non-explicit hold pauses without mutating playback intent", () => {

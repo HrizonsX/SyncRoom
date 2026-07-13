@@ -21,11 +21,91 @@ import {
 export type PlaybackElementControllerOptions = {
   loadShakaPlayer?: () => Promise<unknown>;
   loadMpegtsPlayer?: () => Promise<unknown>;
+  onRuntimeError?: (error: unknown, source: PlaybackSource) => void;
   now?: () => number;
 };
 
 function getSourceKey(source: PlaybackSource): string {
   return `${source.engine}:${source.sourceType}:${source.url}:${source.candidateId ?? ""}`;
+}
+
+function stringifyRuntimeErrorValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function describeRuntimeErrorPayload(payload: unknown): string {
+  if (payload instanceof Error) {
+    return payload.message;
+  }
+  if (typeof payload === "string") {
+    return payload;
+  }
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const parts = [
+      record.message,
+      record.code,
+      record.category,
+      record.severity,
+      record.reason,
+      record.url,
+      record.detail,
+      record.details,
+      record.data,
+    ]
+      .filter((value) => value !== undefined)
+      .map(stringifyRuntimeErrorValue);
+    if (parts.length > 0) {
+      return parts.join(" ");
+    }
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return String(payload);
+    }
+  }
+  return String(payload);
+}
+
+function readShakaRuntimeError(event: unknown): Error {
+  const record =
+    event && typeof event === "object"
+      ? (event as Record<string, unknown>)
+      : undefined;
+  const payload = record?.detail ?? record?.error ?? event;
+  return new Error(
+    `Shaka runtime error: ${describeRuntimeErrorPayload(payload)}`,
+  );
+}
+
+function readMpegtsRuntimeError(args: readonly unknown[]): Error {
+  return new Error(
+    `mpegts runtime error: ${args.map(describeRuntimeErrorPayload).join(" ")}`,
+  );
+}
+
+function readNativeRuntimeError(video: PlaybackVideoElement): Error {
+  const mediaError = (
+    video as PlaybackVideoElement & {
+      error?: { code?: number; message?: string } | null;
+    }
+  ).error;
+  const suffix = [
+    mediaError?.code === undefined ? undefined : `code ${mediaError.code}`,
+    mediaError?.message,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return new Error(
+    `Native playback runtime network error${suffix ? ` ${suffix}` : ""}`,
+  );
 }
 
 /**
@@ -42,6 +122,9 @@ export function createPlaybackElementController(
   let shakaPlayer: ShakaPlayerInstance | undefined;
   let mpegtsPlayer: MpegtsPlayerInstance | undefined;
   let livePlaybackResumeBinding: { dispose: () => void } | undefined;
+  let nativeRuntimeErrorBinding: { dispose: () => void } | undefined;
+  let shakaRuntimeErrorBinding: { dispose: () => void } | undefined;
+  let mpegtsRuntimeErrorBinding: { dispose: () => void } | undefined;
   let pendingLoad:
     | {
         sourceKey: string;
@@ -55,8 +138,130 @@ export function createPlaybackElementController(
     livePlaybackResumeBinding = undefined;
   }
 
+  function disposeNativeRuntimeErrorBinding(): void {
+    nativeRuntimeErrorBinding?.dispose();
+    nativeRuntimeErrorBinding = undefined;
+  }
+
+  function disposeShakaRuntimeErrorBinding(): void {
+    shakaRuntimeErrorBinding?.dispose();
+    shakaRuntimeErrorBinding = undefined;
+  }
+
+  function disposeMpegtsRuntimeErrorBinding(): void {
+    mpegtsRuntimeErrorBinding?.dispose();
+    mpegtsRuntimeErrorBinding = undefined;
+  }
+
+  function shouldReportRuntimeError(
+    sourceKey: string,
+    video: PlaybackVideoElement,
+  ): boolean {
+    return (
+      (currentSourceKey === sourceKey && currentVideo === video) ||
+      (pendingLoad?.sourceKey === sourceKey && pendingLoad.video === video)
+    );
+  }
+
+  function reportRuntimeError(
+    error: unknown,
+    source: PlaybackSource,
+    sourceKey: string,
+    video: PlaybackVideoElement,
+  ): void {
+    if (!shouldReportRuntimeError(sourceKey, video)) {
+      return;
+    }
+    options.onRuntimeError?.(error, source);
+  }
+
+  function bindNativeRuntimeError(
+    video: PlaybackVideoElement,
+    source: PlaybackSource,
+    sourceKey: string,
+  ): void {
+    const eventedVideo = video as PlaybackVideoElement & {
+      addEventListener?: (type: "error", listener: () => void) => void;
+      removeEventListener?: (type: "error", listener: () => void) => void;
+    };
+    if (
+      typeof eventedVideo.addEventListener !== "function" ||
+      typeof eventedVideo.removeEventListener !== "function"
+    ) {
+      return;
+    }
+    const handleError = (): void => {
+      reportRuntimeError(
+        readNativeRuntimeError(video),
+        source,
+        sourceKey,
+        video,
+      );
+    };
+    eventedVideo.addEventListener("error", handleError);
+    nativeRuntimeErrorBinding = {
+      dispose() {
+        eventedVideo.removeEventListener?.("error", handleError);
+      },
+    };
+  }
+
+  function bindShakaRuntimeError(
+    player: ShakaPlayerInstance,
+    video: PlaybackVideoElement,
+    source: PlaybackSource,
+    sourceKey: string,
+  ): void {
+    if (
+      typeof player.addEventListener !== "function" ||
+      typeof player.removeEventListener !== "function"
+    ) {
+      return;
+    }
+    const handleError = (event: unknown): void => {
+      reportRuntimeError(
+        readShakaRuntimeError(event),
+        source,
+        sourceKey,
+        video,
+      );
+    };
+    player.addEventListener("error", handleError);
+    shakaRuntimeErrorBinding = {
+      dispose() {
+        player.removeEventListener?.("error", handleError);
+      },
+    };
+  }
+
+  function bindMpegtsRuntimeError(
+    player: MpegtsPlayerInstance,
+    video: PlaybackVideoElement,
+    source: PlaybackSource,
+    sourceKey: string,
+  ): void {
+    if (typeof player.on !== "function" || typeof player.off !== "function") {
+      return;
+    }
+    const handleError = (...args: unknown[]): void => {
+      reportRuntimeError(
+        readMpegtsRuntimeError(args),
+        source,
+        sourceKey,
+        video,
+      );
+    };
+    player.on("error", handleError);
+    mpegtsRuntimeErrorBinding = {
+      dispose() {
+        player.off?.("error", handleError);
+      },
+    };
+  }
+
   async function destroyShakaPlayer(): Promise<void> {
     disposeLivePlaybackResumeBinding();
+    disposeShakaRuntimeErrorBinding();
     if (!shakaPlayer) {
       return;
     }
@@ -65,6 +270,7 @@ export function createPlaybackElementController(
   }
 
   function destroyMpegtsPlayer(): void {
+    disposeMpegtsRuntimeErrorBinding();
     if (!mpegtsPlayer) {
       return;
     }
@@ -148,6 +354,7 @@ export function createPlaybackElementController(
         nextPendingLoad.promise = (async () => {
           await destroyShakaPlayer();
           destroyMpegtsPlayer();
+          disposeNativeRuntimeErrorBinding();
           disposeLivePlaybackResumeBinding();
           currentSourceKey = undefined;
           video.src = source.url;
@@ -155,6 +362,7 @@ export function createPlaybackElementController(
           await waitForNativeMetadata(video);
           if (pendingLoad === nextPendingLoad) {
             currentSourceKey = nextSourceKey;
+            bindNativeRuntimeError(video, source, nextSourceKey);
           }
         })().finally(() => {
           if (pendingLoad === nextPendingLoad) {
@@ -175,6 +383,7 @@ export function createPlaybackElementController(
         nextPendingLoad.promise = (async () => {
           await destroyShakaPlayer();
           destroyMpegtsPlayer();
+          disposeNativeRuntimeErrorBinding();
           disposeLivePlaybackResumeBinding();
           currentSourceKey = undefined;
           const mpegts = getMpegtsApi(await loadMpegtsPlayer());
@@ -187,6 +396,7 @@ export function createPlaybackElementController(
             createMpegtsPlayerConfig(source),
           );
           mpegtsPlayer = player;
+          bindMpegtsRuntimeError(player, video, source, nextSourceKey);
           try {
             player.attachMediaElement(video);
             player.load();
@@ -208,11 +418,13 @@ export function createPlaybackElementController(
 
       await recreateShakaPlayerIfSourceChanged(video, nextSourceKey);
       destroyMpegtsPlayer();
+      disposeNativeRuntimeErrorBinding();
       const player = await ensureShakaPlayer(video);
       configureShakaPlayerForSource(player, source);
       video.removeAttribute("src");
       currentSourceKey = undefined;
       disposeLivePlaybackResumeBinding();
+      disposeShakaRuntimeErrorBinding();
       const nextPendingLoad = {
         sourceKey: nextSourceKey,
         video,
@@ -224,11 +436,14 @@ export function createPlaybackElementController(
         .then(() => {
           if (pendingLoad === nextPendingLoad) {
             currentSourceKey = nextSourceKey;
+            bindShakaRuntimeError(player, video, source, nextSourceKey);
             livePlaybackResumeBinding = bindLivePlaybackResume({
               player,
               video,
               source,
               now: getNow,
+              onError: (error) =>
+                reportRuntimeError(error, source, nextSourceKey, video),
             });
           }
         })
@@ -246,6 +461,7 @@ export function createPlaybackElementController(
       currentSourceKey = undefined;
       currentVideo = undefined;
       pendingLoad = undefined;
+      disposeNativeRuntimeErrorBinding();
       await destroyShakaPlayer();
       destroyMpegtsPlayer();
     },

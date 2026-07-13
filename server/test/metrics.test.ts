@@ -214,6 +214,44 @@ test("metrics collector aggregates web playback and proxy observability with saf
     providerId: "bilibili",
     bytes: 1024,
   });
+  metrics.recordProxyRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+  });
+  metrics.recordProxyRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+  });
+  metrics.recordProxyUpstreamTraffic({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    bytes: 2048,
+  });
+  metrics.recordProxyUpstreamRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    outcome: "success",
+  });
+  metrics.recordProxyCacheEvent({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    event: "miss",
+  });
+  metrics.recordProxyCacheEvent({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    event: "hit",
+  });
+  metrics.recordNginxProxyCacheRequest({
+    status: "hit",
+    bytes: 262144,
+    durationMs: 12,
+  });
+  metrics.recordNginxProxyCacheRequest({
+    status: "miss",
+    bytes: 262144,
+    durationMs: 180,
+  });
 
   const rendered = await metrics.render();
 
@@ -268,6 +306,54 @@ test("metrics collector aggregates web playback and proxy observability with saf
   assert.equal(
     rendered.includes(
       'syncroom_proxy_requests_total{provider="bilibili",room_code="ROOM01"} 2',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_upstream_traffic_bytes_total{provider="bilibili",room_code="ROOM01"} 2048',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_upstream_requests_total{outcome="success",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_cache_events_total{event="miss",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_cache_events_total{event="hit",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_requests_total{status="hit"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_requests_total{status="miss"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_bytes_total{status="hit"} 262144',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_request_duration_seconds_count{status="miss"} 1',
     ),
     true,
   );

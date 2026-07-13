@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ClientMessage } from "@syncroom/protocol";
 import {
   createPlaybackElementController,
   createWebRoomPlaybackController,
@@ -31,6 +32,9 @@ class FakeEventedVideoElement extends FakeVideoElement {
   readyState = 1;
   buffered?: TimeRanges;
   error: { code?: number; message?: string } | null = null;
+  webkitDisplayingFullscreen = false;
+  webkitPresentationMode: "inline" | "fullscreen" | "picture-in-picture" =
+    "inline";
   private readonly listeners = new Map<string, Set<() => void>>();
 
   addEventListener(type: string, listener: () => void): void {
@@ -112,21 +116,22 @@ class FakePlayToggleControl {
 }
 
 class FakeMediaRequestTarget {
-  private readonly listeners = new Map<string, Set<() => void>>();
+  private readonly listeners = new Map<string, Set<(event?: Event) => void>>();
 
-  addEventListener(type: string, listener: () => void): void {
-    const listeners = this.listeners.get(type) ?? new Set<() => void>();
+  addEventListener(type: string, listener: (event?: Event) => void): void {
+    const listeners =
+      this.listeners.get(type) ?? new Set<(event?: Event) => void>();
     listeners.add(listener);
     this.listeners.set(type, listeners);
   }
 
-  removeEventListener(type: string, listener: () => void): void {
+  removeEventListener(type: string, listener: (event?: Event) => void): void {
     this.listeners.get(type)?.delete(listener);
   }
 
-  emit(type: string): void {
+  emit(type: string, event?: Event): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener();
+      listener(event);
     }
   }
 }
@@ -439,6 +444,59 @@ test("reloads live playback on the first play after pausing", async () => {
   });
 });
 
+test("reports live reload failures after a long pause", async () => {
+  const runtimeErrors: unknown[] = [];
+  const loadedUrls: string[] = [];
+  let now = 10_000;
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    configure(): void {
+      return undefined;
+    }
+
+    async load(url: string): Promise<void> {
+      loadedUrls.push(url);
+      if (loadedUrls.length > 1) {
+        throw new Error("HTTP 404 expired live manifest");
+      }
+    }
+  }
+  const controller = createPlaybackElementController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    now: () => now,
+    onRuntimeError: (error) => runtimeErrors.push(error),
+  });
+  const video = new FakeEventedVideoElement();
+  const source = {
+    url: "https://syncroom.example.test/proxy/live/playlist.m3u8",
+    sourceType: "m3u8" as const,
+    engine: "shaka" as const,
+    isLive: true,
+  };
+
+  await controller.load(video, source);
+  video.paused = true;
+  video.emit("pause");
+  now += 2_000;
+  video.paused = false;
+  video.emit("play");
+  await waitForCondition(
+    () => runtimeErrors.length === 1,
+    "live reload failure was not reported",
+  );
+
+  assert.deepEqual(loadedUrls, [source.url, source.url]);
+  assert.match(
+    runtimeErrors[0] instanceof Error
+      ? runtimeErrors[0].message
+      : String(runtimeErrors[0]),
+    /404 expired live manifest/,
+  );
+});
+
 test("does not reload live playback for transient pause play events", async () => {
   const configs: Array<Record<string, unknown>> = [];
   const loadedUrls: string[] = [];
@@ -628,6 +686,84 @@ test("ignores stale Shaka load errors after a newer sync starts", async () => {
   assert.deepEqual(playbackErrors, []);
 });
 
+test("reports Shaka runtime errors after a source has loaded", async () => {
+  const playbackErrors: unknown[] = [];
+  const players: FakeShakaPlayer[] = [];
+  class FakeShakaPlayer {
+    private readonly listeners = new Set<(event: unknown) => void>();
+
+    constructor() {
+      players.push(this);
+    }
+
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    addEventListener(type: "error", listener: (event: unknown) => void): void {
+      if (type === "error") {
+        this.listeners.add(listener);
+      }
+    }
+
+    removeEventListener(
+      type: "error",
+      listener: (event: unknown) => void,
+    ): void {
+      if (type === "error") {
+        this.listeners.delete(listener);
+      }
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+
+    async destroy(): Promise<void> {
+      this.listeners.clear();
+    }
+
+    emitRuntimeError(event: unknown): void {
+      for (const listener of this.listeners) {
+        listener(event);
+      }
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    onPlaybackError: (error) => playbackErrors.push(error),
+  });
+  const video = new FakeEventedVideoElement();
+
+  await controller.sync(
+    createPlaybackRoot(video),
+    createJoinedPlaybackState("https://syncroom.example.test/manifest-a.mpd"),
+  );
+  players[0]?.emitRuntimeError({
+    detail: {
+      category: "NETWORK",
+      code: 404,
+      data: ["segment-a.m4s"],
+    },
+  });
+
+  assert.equal(playbackErrors.length, 1);
+  assert.match(
+    playbackErrors[0] instanceof Error
+      ? playbackErrors[0].message
+      : String(playbackErrors[0]),
+    /404.*segment-a\.m4s/,
+  );
+
+  await controller.sync(
+    createPlaybackRoot(video),
+    createJoinedPlaybackState("https://syncroom.example.test/manifest-b.mpd"),
+  );
+  players[0]?.emitRuntimeError({ detail: "stale segment 404" });
+
+  assert.equal(playbackErrors.length, 1);
+});
+
 test("loads MP4 sources with the native video element", async () => {
   const controller = createPlaybackElementController({
     loadShakaPlayer: async () => {
@@ -644,6 +780,38 @@ test("loads MP4 sources with the native video element", async () => {
 
   assert.equal(video.src, "https://syncroom.example.test/video.mp4");
   assert.equal(video.loadCount, 1);
+});
+
+test("reports native runtime errors after MP4 playback has loaded", async () => {
+  const playbackErrors: unknown[] = [];
+  const video = new FakeEventedVideoElement();
+  video.readyState = 1;
+  const playbackSource = {
+    url: "https://cdn.example.test/video.mp4",
+    sourceType: "mp4" as const,
+    engine: "native" as const,
+  };
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for native MP4 playback");
+    },
+    onPlaybackError: (error) => playbackErrors.push(error),
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+  video.error = { code: 2, message: "HTTP 404 expired mp4 url" };
+  video.emit("error");
+
+  assert.equal(playbackErrors.length, 1);
+  assert.match(
+    playbackErrors[0] instanceof Error
+      ? playbackErrors[0].message
+      : String(playbackErrors[0]),
+    /404 expired mp4 url/,
+  );
 });
 
 test("loads FLV and TS live sources through mpegts.js", async () => {
@@ -748,6 +916,76 @@ test("loads FLV and TS live sources through mpegts.js", async () => {
   assert.deepEqual(attachedVideos, [video, video]);
   assert.equal(video.src, "");
   assert.deepEqual(video.removedAttributes, ["src", "src"]);
+});
+
+test("reports mpegts runtime errors after FLV playback has loaded", async () => {
+  const playbackErrors: unknown[] = [];
+  let createdPlayer:
+    | {
+        emitRuntimeError: (...args: unknown[]) => void;
+      }
+    | undefined;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => {
+      throw new Error("Shaka should not be loaded for FLV playback");
+    },
+    loadMpegtsPlayer: async () => ({
+      isSupported: () => true,
+      createPlayer() {
+        const listeners = new Set<(...args: unknown[]) => void>();
+        const player = {
+          attachMediaElement() {
+            return undefined;
+          },
+          load() {
+            return undefined;
+          },
+          on(event: "error", listener: (...args: unknown[]) => void) {
+            if (event === "error") {
+              listeners.add(listener);
+            }
+          },
+          off(event: "error", listener: (...args: unknown[]) => void) {
+            if (event === "error") {
+              listeners.delete(listener);
+            }
+          },
+          emitRuntimeError(...args: unknown[]) {
+            for (const listener of listeners) {
+              listener(...args);
+            }
+          },
+        };
+        createdPlayer = player;
+        return player;
+      },
+    }),
+    onPlaybackError: (error) => playbackErrors.push(error),
+  });
+  const video = new FakeEventedVideoElement();
+  const playbackSource = {
+    url: "https://cdn.example.test/live.flv",
+    sourceType: "flv" as const,
+    engine: "mpegts" as const,
+    isLive: true,
+  };
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(playbackSource.url),
+    playbackSource,
+  });
+  createdPlayer?.emitRuntimeError("NETWORK_ERROR", "HTTP_STATUS", {
+    code: 404,
+    url: "expired.flv",
+  });
+
+  assert.equal(playbackErrors.length, 1);
+  assert.match(
+    playbackErrors[0] instanceof Error
+      ? playbackErrors[0].message
+      : String(playbackErrors[0]),
+    /404.*expired\.flv/,
+  );
 });
 
 test("notifies when a new playback source finishes loading", async () => {
@@ -917,6 +1155,7 @@ test("reports native MP4 load errors during refreshed playback hydration", async
 
 test("syncs web-room playback events with the original shared video URL", async () => {
   const video = new FakeEventedVideoElement();
+  const mediaController = new FakeMediaRequestTarget();
   const dispatched: unknown[] = [];
   let seq = 0;
   let now = 5_000;
@@ -937,42 +1176,44 @@ test("syncs web-room playback events with the original shared video URL", async 
     now: () => now,
   });
 
-  await controller.sync(createPlaybackRoot(video), {
-    view: "joined",
-    connectionState: "connected",
-    roomCode: "ABC123",
-    currentMemberId: "member-host",
-    hostMemberId: "member-host",
-    displayName: "Alice",
-    authStatus: "authorized",
-    voice: createInitialWebRoomVoiceState(),
-    playbackUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
-    playbackSource: {
-      url: "https://syncroom.example.test/proxy/segment/segment-1",
-      sourceType: "mp4",
-      engine: "native",
+  await controller.sync(
+    createPlaybackRootWithMediaController(video, mediaController),
+    {
+      view: "joined",
+      connectionState: "connected",
+      roomCode: "ABC123",
+      currentMemberId: "member-host",
+      hostMemberId: "member-host",
+      displayName: "Alice",
+      authStatus: "authorized",
+      voice: createInitialWebRoomVoiceState(),
+      playbackUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+      playbackSource: {
+        url: "https://syncroom.example.test/proxy/segment/segment-1",
+        sourceType: "mp4",
+        engine: "native",
+      },
+      playback: {
+        url: "https://www.bilibili.com/video/BV1xx411c7mD",
+        currentTime: 18,
+        playState: "paused",
+        playbackRate: 1,
+        updatedAt: 5_000,
+        serverTime: 5_000,
+        actorId: "member-guest",
+        seq: 2,
+      },
+      members: [{ id: "member-host", name: "Alice" }],
+      chatMessages: [],
+      danmakuMessages: [],
+      diagnostics: [],
     },
-    playback: {
-      url: "https://www.bilibili.com/video/BV1xx411c7mD",
-      currentTime: 18,
-      playState: "paused",
-      playbackRate: 1,
-      updatedAt: 5_000,
-      serverTime: 5_000,
-      actorId: "member-guest",
-      seq: 2,
-    },
-    members: [{ id: "member-host", name: "Alice" }],
-    chatMessages: [],
-    danmakuMessages: [],
-    diagnostics: [],
-  });
+  );
 
   assert.equal(video.currentTime, 18);
   now = 5_600;
-  video.currentTime = 21;
   video.paused = false;
-  video.emit("seeking");
+  mediaController.emit("mediaseekrequest", { detail: 33 } as unknown as Event);
   video.currentTime = 33;
   video.emit("seeked");
 
@@ -996,6 +1237,118 @@ test("syncs web-room playback events with the original shared video URL", async 
       },
     },
   ]);
+});
+
+test("keeps delayed new-member hydration seek and rate echoes non-explicit", async () => {
+  const video = new FakeEventedVideoElement();
+  const dispatched: Array<Extract<ClientMessage, { type: "playback:update" }>> =
+    [];
+  let now = 5_000;
+  let seq = 0;
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  const controller = createWebRoomPlaybackController({
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-joiner",
+      url: sharedUrl,
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    dispatchPlaybackUpdate: (message) => dispatched.push(message),
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(
+      "https://syncroom.example.test/proxy/segment/movie.mp4",
+    ),
+    currentMemberId: "member-joiner",
+    playbackUrl: sharedUrl,
+    playbackSource: {
+      url: "https://syncroom.example.test/proxy/segment/movie.mp4",
+      sourceType: "mp4",
+      engine: "native",
+    },
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 8,
+    },
+  });
+
+  now = 6_500;
+  video.currentTime = 0;
+  video.emit("ratechange");
+  video.emit("seeked");
+
+  assert.equal(dispatched.length, 2);
+  for (const message of dispatched) {
+    assert.equal(message.payload.playback.currentTime, 0);
+    assert.equal(message.payload.playback.syncIntent, undefined);
+    assert.equal(message.payload.playback.userInitiated, undefined);
+  }
+});
+
+test("suppresses delayed remote seek echoes during Safari native fullscreen", async () => {
+  const video = new FakeEventedVideoElement();
+  video.webkitDisplayingFullscreen = true;
+  video.webkitPresentationMode = "fullscreen";
+  const dispatched: Array<Extract<ClientMessage, { type: "playback:update" }>> =
+    [];
+  let now = 5_000;
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  const controller = createWebRoomPlaybackController({
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    nextSeq: () => 1,
+    dispatchPlaybackUpdate: (message) => dispatched.push(message),
+    now: () => now,
+  });
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(
+      "https://syncroom.example.test/proxy/segment/movie.mp4",
+    ),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playbackSource: {
+      url: "https://syncroom.example.test/proxy/segment/movie.mp4",
+      sourceType: "mp4",
+      engine: "native",
+    },
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 5_000,
+      serverTime: 5_000,
+      actorId: "member-host",
+      seq: 8,
+      syncIntent: "explicit-seek",
+      userInitiated: true,
+    },
+  });
+
+  assert.equal(video.currentTime, 120);
+  now = 6_500;
+  video.emit("seeked");
+  assert.equal(dispatched.length, 0);
+
+  video.currentTime = 150;
+  video.emit("seeked");
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0]?.payload.playback.syncIntent, "explicit-seek");
 });
 
 test("applies persisted self playback after a refreshed media element loads", async () => {
@@ -1708,6 +2061,77 @@ test("reports VOD buffering through the buffer coordination channel", async (t) 
   });
 });
 
+test("does not chase a projected timeline when the same playback revision rerenders", async () => {
+  const video = new FakeEventedVideoElement();
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  let now = 2_000;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    nextSeq: () => 1,
+    now: () => now,
+  });
+  const playingState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "playing" as const,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 3,
+    },
+  };
+
+  await controller.sync(createPlaybackRoot(video), playingState);
+  assert.equal(video.currentTime, 121);
+
+  video.currentTime = 121.25;
+  now = 7_000;
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playbackSync: {
+      strategy: "smooth",
+      hold: { active: false },
+      bufferingMemberIds: ["member-follower"],
+    },
+  });
+  assert.equal(video.currentTime, 121.25);
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...playingState,
+    playback: {
+      ...playingState.playback,
+      currentTime: 200,
+      updatedAt: 7_000,
+      serverTime: 7_000,
+      actorId: "member-seeker",
+      seq: 4,
+      syncIntent: "explicit-seek",
+    },
+  });
+  assert.equal(video.currentTime, 200);
+});
+
 test("continues reporting ready buffer growth while VOD wait mode is holding", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const video = new FakeEventedVideoElement();
@@ -1784,6 +2208,88 @@ test("continues reporting ready buffer growth while VOD wait mode is holding", a
     currentTime: 12,
     bufferAheadSeconds: 3,
   });
+});
+
+test("keeps the buffer reporter bound when player controls rerender during a hold", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const video = new FakeEventedVideoElement();
+  const reports: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  video.currentTime = 12;
+  video.buffered = createBufferedRanges([{ start: 12, end: 16 }]);
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  let now = 2_000;
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-follower",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    dispatchPlaybackBufferReport: (report) => reports.push(report),
+    nextSeq: () => 1,
+    now: () => now,
+  });
+  const heldState = {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-follower",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 12,
+      playState: "playing" as const,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 3,
+    },
+    playbackSync: {
+      strategy: "wait" as const,
+      hold: {
+        active: true,
+        reasonMemberId: "member-follower",
+        startedAt: 1_500,
+        playbackRevision: "barrier-1",
+      },
+      bufferingMemberIds: ["member-follower"],
+    },
+  };
+
+  await controller.sync(
+    createPlaybackRootWithPlayToggle(video, new FakePlayToggleControl()),
+    heldState,
+  );
+  assert.equal(reports.length, 1);
+  now = 2_600;
+  t.mock.timers.tick(500);
+  assert.equal(reports.length, 1);
+
+  await controller.sync(
+    createPlaybackRootWithPlayToggle(video, new FakePlayToggleControl()),
+    heldState,
+  );
+  video.buffered = createBufferedRanges([{ start: 12, end: 19 }]);
+  now = 3_200;
+  t.mock.timers.tick(500);
+
+  assert.deepEqual(reports.at(-1), {
+    state: "ready",
+    currentTime: 12,
+    bufferAheadSeconds: 7,
+    playbackRevision: JSON.stringify([sharedUrl, "member-host", 3, 1_000]),
+  });
+  assert.equal(reports.length, 2);
 });
 
 test("counts a tiny buffered-range gap after seek as ready buffer ahead", async () => {

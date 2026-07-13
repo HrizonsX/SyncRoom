@@ -181,7 +181,10 @@ function isPlaybackSyncState(value: unknown): value is PlaybackSyncState {
     (value.hold.startedAt === undefined ||
       isFiniteNumber(value.hold.startedAt)) &&
     (value.hold.deadlineAt === undefined ||
-      isFiniteNumber(value.hold.deadlineAt))
+      isFiniteNumber(value.hold.deadlineAt)) &&
+    (value.hold.playbackRevision === undefined ||
+      (typeof value.hold.playbackRevision === "string" &&
+        value.hold.playbackRevision.length <= 1_024))
   );
 }
 

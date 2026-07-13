@@ -46,6 +46,28 @@ const MEMBER_PLAYER_SYSTEM_LABELS = [
   "unknown",
 ] as const;
 
+const PROXY_UPSTREAM_REQUEST_OUTCOMES = ["success", "error"] as const;
+
+const PROXY_CACHE_EVENTS = [
+  "hit",
+  "miss",
+  "store",
+  "coalesced",
+  "bypass",
+  "expired",
+] as const;
+
+const NGINX_PROXY_CACHE_STATUSES = [
+  "hit",
+  "miss",
+  "bypass",
+  "expired",
+  "stale",
+  "updating",
+  "revalidated",
+  "unknown",
+] as const;
+
 export type MonitoredMessageType =
   | "video:share"
   | "playback:update"
@@ -62,6 +84,10 @@ export type MemberPlayerBrowserLabel =
   (typeof MEMBER_PLAYER_BROWSER_LABELS)[number];
 export type MemberPlayerSystemLabel =
   (typeof MEMBER_PLAYER_SYSTEM_LABELS)[number];
+export type ProxyUpstreamRequestOutcome =
+  (typeof PROXY_UPSTREAM_REQUEST_OUTCOMES)[number];
+export type ProxyCacheEvent = (typeof PROXY_CACHE_EVENTS)[number];
+export type NginxProxyCacheStatus = (typeof NGINX_PROXY_CACHE_STATUSES)[number];
 
 type LabelValues = Record<string, string>;
 
@@ -112,6 +138,30 @@ export type MetricsCollector = {
     roomCode: string;
     providerId?: string;
     bytes: number;
+  }) => void;
+  recordProxyRequest: (input: {
+    roomCode: string;
+    providerId?: string;
+  }) => void;
+  recordProxyUpstreamTraffic: (input: {
+    roomCode: string;
+    providerId?: string;
+    bytes: number;
+  }) => void;
+  recordProxyUpstreamRequest: (input: {
+    roomCode: string;
+    providerId?: string;
+    outcome: ProxyUpstreamRequestOutcome;
+  }) => void;
+  recordProxyCacheEvent: (input: {
+    roomCode: string;
+    providerId?: string;
+    event: ProxyCacheEvent;
+  }) => void;
+  recordNginxProxyCacheRequest: (input: {
+    status: NginxProxyCacheStatus;
+    bytes: number;
+    durationMs: number;
   }) => void;
   observeMessageHandlerDuration: (
     messageType: MonitoredMessageType,
@@ -264,6 +314,26 @@ export function createMetricsCollector(options: {
     help: "Total playback proxy segment requests aggregated by room and provider",
     samples: new Map(),
   };
+  const proxyUpstreamTrafficBytesCounter: CounterMetric = {
+    help: "Total playback proxy upstream response bytes aggregated by room and provider",
+    samples: new Map(),
+  };
+  const proxyUpstreamRequestCounter: CounterMetric = {
+    help: "Total playback proxy upstream requests aggregated by room, provider, and outcome",
+    samples: new Map(),
+  };
+  const proxyCacheEventCounter: CounterMetric = {
+    help: "Total playback proxy cache events aggregated by room, provider, and event",
+    samples: new Map(),
+  };
+  const nginxProxyCacheRequestCounter: CounterMetric = {
+    help: "Total Nginx playback proxy cache responses grouped by cache status",
+    samples: new Map(),
+  };
+  const nginxProxyCacheBytesCounter: CounterMetric = {
+    help: "Total Nginx playback proxy response bytes grouped by cache status",
+    samples: new Map(),
+  };
   const messageDurationHistogram: HistogramMetric = {
     help: "Duration of monitored message handler paths in seconds",
     buckets: DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
@@ -279,6 +349,11 @@ export function createMetricsCollector(options: {
     buckets: DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
     samples: new Map(),
   };
+  const nginxProxyCacheRequestDurationHistogram: HistogramMetric = {
+    help: "Duration of Nginx playback proxy cache responses in seconds grouped by cache status",
+    buckets: DEFAULT_HISTOGRAM_BUCKETS_SECONDS,
+    samples: new Map(),
+  };
 
   for (const eventName of CORE_EVENT_NAMES) {
     ensureCounterSample(eventCounter, { event: eventName });
@@ -291,6 +366,11 @@ export function createMetricsCollector(options: {
     ensureCounterSample(roomEventPublishDroppedCounter, {
       event_type: eventType,
     });
+  }
+
+  for (const status of NGINX_PROXY_CACHE_STATUSES) {
+    ensureCounterSample(nginxProxyCacheRequestCounter, { status });
+    ensureCounterSample(nginxProxyCacheBytesCounter, { status });
   }
 
   function incrementCounter(
@@ -362,6 +442,31 @@ export function createMetricsCollector(options: {
     ).sort((a, b) =>
       createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
     );
+    const proxyUpstreamTrafficBytesSamples = Array.from(
+      proxyUpstreamTrafficBytesCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const proxyUpstreamRequestSamples = Array.from(
+      proxyUpstreamRequestCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const proxyCacheEventSamples = Array.from(
+      proxyCacheEventCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const nginxProxyCacheRequestSamples = Array.from(
+      nginxProxyCacheRequestCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
+    const nginxProxyCacheBytesSamples = Array.from(
+      nginxProxyCacheBytesCounter.samples.values(),
+    ).sort((a, b) =>
+      createLabelKey(a.labels).localeCompare(createLabelKey(b.labels)),
+    );
     const histogramMetrics = [
       {
         name: "syncroom_message_handler_duration_seconds",
@@ -374,6 +479,10 @@ export function createMetricsCollector(options: {
       {
         name: "syncroom_redis_room_event_bus_publish_duration_seconds",
         metric: redisRoomEventBusPublishDurationHistogram,
+      },
+      {
+        name: "syncroom_nginx_proxy_cache_request_duration_seconds",
+        metric: nginxProxyCacheRequestDurationHistogram,
       },
     ] as const;
 
@@ -487,6 +596,51 @@ export function createMetricsCollector(options: {
           sample.labels,
         ),
       ),
+      "# HELP syncroom_proxy_upstream_traffic_bytes_total Total playback proxy upstream response bytes aggregated by room and provider",
+      "# TYPE syncroom_proxy_upstream_traffic_bytes_total counter",
+      ...proxyUpstreamTrafficBytesSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_proxy_upstream_traffic_bytes_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_proxy_upstream_requests_total Total playback proxy upstream requests aggregated by room, provider, and outcome",
+      "# TYPE syncroom_proxy_upstream_requests_total counter",
+      ...proxyUpstreamRequestSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_proxy_upstream_requests_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_proxy_cache_events_total Total playback proxy cache events aggregated by room, provider, and event",
+      "# TYPE syncroom_proxy_cache_events_total counter",
+      ...proxyCacheEventSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_proxy_cache_events_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_nginx_proxy_cache_requests_total Total Nginx playback proxy cache responses grouped by cache status",
+      "# TYPE syncroom_nginx_proxy_cache_requests_total counter",
+      ...nginxProxyCacheRequestSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_nginx_proxy_cache_requests_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
+      "# HELP syncroom_nginx_proxy_cache_bytes_total Total Nginx playback proxy response bytes grouped by cache status",
+      "# TYPE syncroom_nginx_proxy_cache_bytes_total counter",
+      ...nginxProxyCacheBytesSamples.map((sample) =>
+        formatMetricLine(
+          "syncroom_nginx_proxy_cache_bytes_total",
+          sample.value,
+          sample.labels,
+        ),
+      ),
     ];
 
     for (const { name, metric } of histogramMetrics) {
@@ -568,7 +722,56 @@ export function createMetricsCollector(options: {
         labels,
         normalizeByteCount(input.bytes),
       );
-      incrementCounter(proxyRequestCounter, labels);
+    },
+    recordProxyRequest(input) {
+      incrementCounter(proxyRequestCounter, {
+        provider: normalizeProviderLabel(input.providerId),
+        room_code: normalizeRoomCodeLabel(input.roomCode),
+      });
+    },
+    recordProxyUpstreamTraffic(input) {
+      incrementCounter(
+        proxyUpstreamTrafficBytesCounter,
+        {
+          provider: normalizeProviderLabel(input.providerId),
+          room_code: normalizeRoomCodeLabel(input.roomCode),
+        },
+        normalizeByteCount(input.bytes),
+      );
+    },
+    recordProxyUpstreamRequest(input) {
+      incrementCounter(proxyUpstreamRequestCounter, {
+        outcome: normalizeEnumLabel(
+          input.outcome,
+          PROXY_UPSTREAM_REQUEST_OUTCOMES,
+        ),
+        provider: normalizeProviderLabel(input.providerId),
+        room_code: normalizeRoomCodeLabel(input.roomCode),
+      });
+    },
+    recordProxyCacheEvent(input) {
+      incrementCounter(proxyCacheEventCounter, {
+        event: normalizeEnumLabel(input.event, PROXY_CACHE_EVENTS),
+        provider: normalizeProviderLabel(input.providerId),
+        room_code: normalizeRoomCodeLabel(input.roomCode),
+      });
+    },
+    recordNginxProxyCacheRequest(input) {
+      const status = normalizeEnumLabel(
+        input.status,
+        NGINX_PROXY_CACHE_STATUSES,
+      );
+      incrementCounter(nginxProxyCacheRequestCounter, { status });
+      incrementCounter(
+        nginxProxyCacheBytesCounter,
+        { status },
+        normalizeByteCount(input.bytes),
+      );
+      observeHistogram(
+        nginxProxyCacheRequestDurationHistogram,
+        { status },
+        input.durationMs,
+      );
     },
     observeMessageHandlerDuration(messageType, durationMs) {
       observeHistogram(

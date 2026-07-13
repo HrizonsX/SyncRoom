@@ -8,6 +8,7 @@ import { logEffectiveOriginPolicy } from "./config/security-config.js";
 const {
   port,
   metricsPort,
+  nginxCacheMetricsPort,
   logLevel,
   securityConfig,
   persistenceConfig,
@@ -28,6 +29,7 @@ const { httpServer, metricsHttpServer } = await createSyncServer(
     adminUiConfig,
     logLevel,
     metricsPort,
+    nginxCacheMetricsPort,
     voiceConfig,
     mediaExtractorConfig,
   },

@@ -3083,6 +3083,39 @@ test("shares the selected Bilibili item with the final proxy and shared policy",
   assert.doesNotMatch(JSON.stringify(shared), /SESSDATA|Cookie/i);
 });
 
+test("does not share parsed provider items without playback descriptors", () => {
+  const { controller, recorder } = createJoinedHostController();
+
+  controller.setProviderPickerResults({
+    items: [
+      {
+        itemId: "ep-399856",
+        title: "Episode 1",
+        kind: "episode",
+        unavailableReason: "pgc_preview_playurl",
+        message: "Need member authorization",
+      },
+    ],
+  });
+
+  const sentCount = recorder.sockets[0]?.sent.length ?? 0;
+  controller.shareSelectedProviderItem();
+
+  assert.equal(recorder.sockets[0]?.sent.length, sentCount);
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.status, "ready");
+  assert.equal(state.providerPicker?.selectedItemId, "ep-399856");
+  assert.equal(state.providerPicker?.selectedQualityCandidateId, undefined);
+  assert.match(
+    state.diagnostics.at(-1) ?? "",
+    /provider share denied: missing playback descriptor/,
+  );
+});
+
 test("shares provider videos with the parsed video title after selecting a part", () => {
   const recorder = createSocketRecorder();
   const controller = createWebRoomAppController({
@@ -3685,6 +3718,7 @@ test("switches direct-link failures back to freshly parsed proxy playback", asyn
     },
   ]);
 
+  await flushAsyncTasks();
   await controller.retryProviderProxyFallback();
   state = controller.getState();
   assert.equal(state.view, "joined");
@@ -3694,6 +3728,7 @@ test("switches direct-link failures back to freshly parsed proxy playback", asyn
   assert.deepEqual(
     parseInputs.map((input) => input.policy),
     [
+      { proxy: false, shared: true },
       { proxy: false, shared: true },
       { proxy: true, shared: true },
     ],
@@ -3746,6 +3781,347 @@ test("switches direct-link failures back to freshly parsed proxy playback", asyn
         },
       },
     ],
+  );
+});
+
+test("offers proxy fallback for Bilibili direct private source load failures", async () => {
+  const parseInputs: Array<Parameters<ProviderApiClient["parse"]>[0]> = [];
+  const { controller, recorder } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        parseInputs.push(input);
+        const proxy = input.policy.proxy;
+        return {
+          providerId: "bilibili",
+          sourceId: "ep399856",
+          sourceUrl: "https://www.bilibili.com/bangumi/play/ep399856",
+          title: "当幸福来敲门",
+          items: [
+            {
+              itemId: "ep-399856",
+              title: "《当幸福来敲门》豆瓣9.1分励志神作",
+              kind: "episode",
+              qualityLabel: "480P 标清",
+              sourceType: "mp4",
+              providerDescriptor: {
+                ...providerPlaybackDescriptor,
+                providerId: "bilibili",
+                sourceId: "ep399856",
+                sourceUrl: "https://www.bilibili.com/bangumi/play/ep399856",
+                title: "当幸福来敲门",
+                item: {
+                  ...providerPlaybackDescriptor.item,
+                  itemId: "ep-399856",
+                  title: "《当幸福来敲门》豆瓣9.1分励志神作",
+                  kind: "episode",
+                  epId: "399856",
+                },
+                policy: input.policy,
+                candidates: [
+                  {
+                    id: proxy ? "proxy-preview" : "direct-preview",
+                    sourceType: "mp4",
+                    url: proxy
+                      ? "https://syncroom.example.test/proxy/segment/preview"
+                      : "https://upos.example.test/preview.mp4",
+                    qualityLabel: proxy ? "480P Proxy" : "480P Direct",
+                    default: true,
+                  },
+                ],
+                defaultCandidateId: proxy ? "proxy-preview" : "direct-preview",
+              },
+            },
+          ],
+        };
+      },
+    }),
+  });
+
+  await controller.parseBilibiliUrl({
+    url: "https://www.bilibili.com/bangumi/play/ep399856",
+    proxy: false,
+    shared: false,
+  });
+  controller.showDirectPlaybackFailure({
+    stage: "network",
+    message: "Native media failed to load (code 4).",
+  });
+
+  let state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.deepEqual(state.playbackError, {
+    code: "direct_playback_failed",
+    stage: "network",
+    message: "Native media failed to load (code 4).",
+    canUseProxyFallback: true,
+  });
+
+  await flushAsyncTasks();
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.playbackError?.stage, "network");
+
+  await controller.retryProviderProxyFallback();
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.deepEqual(
+    parseInputs.map((input) => input.policy),
+    [
+      { proxy: false, shared: false },
+      { proxy: true, shared: false },
+    ],
+  );
+  const shared = recorder.sockets[0]?.sent.at(-1);
+  assert.equal((shared as { type?: string } | undefined)?.type, "video:share");
+  const sharedProvider = (
+    shared as {
+      payload?: { video?: { provider?: ProviderPlaybackDescriptor } };
+    }
+  ).payload?.video?.provider;
+  assert.deepEqual(sharedProvider?.policy, {
+    proxy: true,
+    shared: false,
+  });
+  assert.equal(
+    sharedProvider?.candidates[0]?.url,
+    "https://syncroom.example.test/proxy/segment/preview",
+  );
+});
+
+test("refreshes expired provider playback urls with the current policy", async () => {
+  const parseInputs: Array<Parameters<ProviderApiClient["parse"]>[0]> = [];
+  const { controller, recorder } = createJoinedHostController({
+    now: () => 20_000,
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async (input: Parameters<ProviderApiClient["parse"]>[0]) => {
+        parseInputs.push(input);
+        return {
+          providerId: "bilibili",
+          sourceId: "BV1xx411c7mD",
+          sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          items: [
+            {
+              itemId: "BV1xx411c7mD:cid-987654",
+              title: "Part 1",
+              kind: "part",
+              qualityLabel: "720P refreshed",
+              sourceType: "mpd",
+              providerDescriptor: {
+                ...providerPlaybackDescriptor,
+                policy: input.policy,
+                candidates: [
+                  {
+                    id: "dash-avc-720p",
+                    sourceType: "mpd",
+                    url: "https://syncroom.example.test/proxy/manifest/refreshed.mpd",
+                    qualityLabel: "720P refreshed",
+                    default: true,
+                  },
+                ],
+                defaultCandidateId: "dash-avc-720p",
+              },
+            },
+          ],
+        };
+      },
+    }),
+  });
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: {
+          videoId: "BV1xx411c7mD",
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          provider: {
+            ...providerPlaybackDescriptor,
+            policy: { proxy: true, shared: true },
+            candidates: [
+              {
+                id: "dash-avc-720p",
+                sourceType: "mpd",
+                url: "https://syncroom.example.test/proxy/manifest/expired.mpd",
+                qualityLabel: "720P expired",
+                default: true,
+              },
+            ],
+            defaultCandidateId: "dash-avc-720p",
+          },
+        },
+        playback: {
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          currentTime: 120,
+          playState: "paused",
+          playbackRate: 1,
+          updatedAt: 10_000,
+          serverTime: 10_000,
+          actorId: "member-host",
+          seq: 7,
+        },
+        playbackSync: {
+          strategy: "smooth",
+          hold: { active: false },
+          bufferingMemberIds: [],
+        },
+        members: [{ id: "member-host", name: "Alice" }],
+      },
+    }),
+  );
+
+  controller.showDirectPlaybackFailure({
+    stage: "segment",
+    message: "Segment url expired.",
+  });
+  await flushAsyncTasks();
+
+  assert.deepEqual(parseInputs, [
+    {
+      providerId: "bilibili",
+      roomCode: "ABC123",
+      memberToken: "valid-member-token-123",
+      url: "https://www.bilibili.com/video/BV1xx411c7mD",
+      policy: { proxy: true, shared: true },
+    },
+  ]);
+  const shared = recorder.sockets[0]?.sent.at(-1);
+  assert.equal((shared as { type?: string } | undefined)?.type, "video:share");
+  const payload = (
+    shared as {
+      payload?: {
+        playback?: { currentTime?: number; playState?: string; seq?: number };
+        video?: { provider?: ProviderPlaybackDescriptor };
+      };
+    }
+  ).payload;
+  assert.equal(payload?.playback?.currentTime, 120);
+  assert.equal(payload?.playback?.playState, "paused");
+  assert.equal(payload?.playback?.seq, 8);
+  assert.equal(
+    payload?.video?.provider?.candidates[0]?.url,
+    "https://syncroom.example.test/proxy/manifest/refreshed.mpd",
+  );
+});
+
+test("keeps playback failure visible when provider playback refresh fails", async () => {
+  const { controller, recorder } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: async () => {
+        throw new Error("provider unavailable");
+      },
+    }),
+  });
+
+  recorder.sockets[0]?.emit(
+    "message",
+    JSON.stringify({
+      type: "room:state",
+      payload: {
+        roomCode: "ABC123",
+        hostMemberId: "member-host",
+        sharedVideo: {
+          videoId: "BV1xx411c7mD",
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          title: "Bilibili video",
+          provider: {
+            ...providerPlaybackDescriptor,
+            policy: { proxy: false, shared: false },
+            candidates: [
+              {
+                id: "dash-avc-720p",
+                sourceType: "mpd",
+                url: "https://cdn.example.test/expired.mpd",
+                qualityLabel: "720P expired",
+                default: true,
+              },
+            ],
+            defaultCandidateId: "dash-avc-720p",
+          },
+        },
+        playback: {
+          url: "https://www.bilibili.com/video/BV1xx411c7mD",
+          currentTime: 120,
+          playState: "playing",
+          playbackRate: 1,
+          updatedAt: 10_000,
+          serverTime: 10_000,
+          actorId: "member-host",
+          seq: 7,
+        },
+        playbackSync: {
+          strategy: "smooth",
+          hold: { active: false },
+          bufferingMemberIds: [],
+        },
+        members: [{ id: "member-host", name: "Alice" }],
+      },
+    }),
+  );
+
+  controller.showDirectPlaybackFailure({
+    stage: "segment",
+    message: "Segment url expired.",
+  });
+  await flushAsyncTasks();
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  assert.equal(state.playbackError?.stage, "segment");
+  assert.ok(
+    state.diagnostics.some((entry) =>
+      entry.includes("provider playback source refresh failed"),
+    ),
+  );
+  assert.equal(
+    recorder.sockets[0]?.sent.some(
+      (message) =>
+        (message as { type?: string } | undefined)?.type === "video:share",
+    ),
+    false,
   );
 });
 

@@ -4,6 +4,7 @@ import type {
   PlaybackState,
   ProviderPlaybackDescriptor,
   RoomMemberPermissions,
+  SharedVideoClientCapabilities,
   VideoProviderId,
 } from "@syncroom/protocol";
 import type { PlaybackSource } from "../playback/playback-adapter.js";
@@ -101,6 +102,8 @@ export type WebRoomProviderPickerItem = {
   sourceType?: string;
   durationSeconds?: number;
   providerDescriptor?: ProviderPlaybackDescriptor;
+  unavailableReason?: string;
+  message?: string;
 };
 
 export type WebRoomProviderPickerState = {
@@ -169,6 +172,7 @@ export type WebRoomJoinedState = {
   authPanel?: WebRoomAuthPanelState;
   providerPicker?: WebRoomProviderPickerState;
   providerPlaybackStatus?: WebRoomProviderPlaybackStatus;
+  sharedVideoCapabilities?: SharedVideoClientCapabilities;
   playbackSource?: PlaybackSource;
   playback?: PlaybackState;
   playbackSync?: PlaybackSyncState;

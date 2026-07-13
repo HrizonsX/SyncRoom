@@ -24,6 +24,10 @@ test("maps playback startup errors to stable stages", () => {
     "network",
   );
   assert.equal(
+    getPlaybackErrorStage(new Error("Native media failed to load (code 4).")),
+    "network",
+  );
+  assert.equal(
     getPlaybackErrorStage(new Error("codec decode failed")),
     "decode",
   );

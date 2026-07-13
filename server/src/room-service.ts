@@ -27,15 +27,18 @@ import {
 } from "./messages.js";
 import { decidePlaybackAcceptance } from "./playback-authority.js";
 import {
+  coordinatePlaybackCommand,
+  coordinatePlaybackBufferReport,
+  coordinatePlaybackMemberJoin,
+  coordinatePlaybackMemberDeparture,
+  coordinatePlaybackSyncStrategyChange,
   derivePlaybackAuthorityKind,
   isLiveSharedVideo,
   isSamePlaybackSyncState,
   preservePlayingIntentForSeek,
   shouldIgnorePlaybackUpdateDuringHold,
-  updatePlaybackSyncForBufferReport,
 } from "./playback-coordinator.js";
 import {
-  createDefaultPlaybackSyncState,
   createRoomCode,
   clonePlaybackSyncState,
   roomStateFromSessions,
@@ -433,7 +436,7 @@ export function createRoomService(options: {
     session: Session,
     memberToken: string,
     report: PlaybackBufferReport,
-  ) => Promise<{ room: PersistedRoom }>;
+  ) => Promise<{ room: PersistedRoom; changed: boolean }>;
   setPlaybackSyncStrategyForSession: (
     session: Session,
     memberToken: string,
@@ -505,6 +508,27 @@ export function createRoomService(options: {
       ));
   const roomJoinLocks = new Map<string, Promise<void>>();
   let roomCreateAdmissionQueue: Promise<void> = Promise.resolve();
+
+  function supportsPlaybackReadiness(session: Session): boolean {
+    // Extension clients do not expose media-buffer reports. Waiting for them
+    // would keep a web-room readiness barrier blocked until its timeout.
+    return (
+      session.origin === null ||
+      session.origin.startsWith("http://") ||
+      session.origin.startsWith("https://")
+    );
+  }
+
+  async function listPlaybackReadinessMemberIds(
+    roomCode: string,
+  ): Promise<string[]> {
+    const activeRoom = await resolveActiveRoom(roomCode);
+    return activeRoom
+      ? Array.from(activeRoom.members.entries())
+          .filter(([, session]) => supportsPlaybackReadiness(session))
+          .map(([memberId]) => memberId)
+      : [];
+  }
 
   async function clearVideoAuthRoom(
     roomCode: string,
@@ -1445,6 +1469,34 @@ export function createRoomService(options: {
     return readyState === OPEN;
   }
 
+  async function removeDepartedMemberFromPlaybackCoordination(
+    roomCode: string,
+    memberId: string,
+  ): Promise<PersistedRoom | null> {
+    const currentTime = now();
+    return withVersionRetry(roomCode, async (room) => {
+      const coordination = coordinatePlaybackMemberDeparture({
+        room,
+        memberId,
+        currentTime,
+      });
+      if (
+        isSamePlaybackSyncState(room.playbackSync, coordination.playbackSync) &&
+        room.playback === coordination.playback
+      ) {
+        return room;
+      }
+      const result = await roomStore.updateRoom(roomCode, room.version, {
+        playbackSync: coordination.playbackSync,
+        ...(room.playback !== coordination.playback
+          ? { playback: coordination.playback }
+          : {}),
+        lastActiveAt: currentTime,
+      });
+      return result.ok ? result.room : null;
+    });
+  }
+
   async function leaveCurrentRoom(
     session: Session,
     options: LeaveRoomOptions = {},
@@ -1522,6 +1574,23 @@ export function createRoomService(options: {
             reason: "owner_left",
           });
         }
+      }
+
+      if (removal.removed) {
+        const coordinatedRoom =
+          await removeDepartedMemberFromPlaybackCoordination(
+            roomCode,
+            leavingMemberId,
+          );
+        if (!coordinatedRoom) {
+          throw new RoomServiceError(
+            "internal_error",
+            INTERNAL_SERVER_ERROR_MESSAGE,
+            "internal_error",
+            { roomCode, reason: "leave_playback_coordination_failed" },
+          );
+        }
+        roomAfterOwnerChange = coordinatedRoom;
       }
 
       if (!removal.roomEmpty) {
@@ -1770,7 +1839,7 @@ export function createRoomService(options: {
           );
         }
 
-        const joinedRoom = joined.room;
+        let joinedRoom = joined.room;
         const reconnectMemberId = joined.joinTargetState.reconnectMemberId;
         const joinIdentity = buildJoinIdentity(
           session,
@@ -1833,6 +1902,43 @@ export function createRoomService(options: {
           throw error;
         }
         disconnectReplacedSession(session, previousLocalSession);
+
+        if (reconnectMemberId === null && supportsPlaybackReadiness(session)) {
+          const coordinatedRoom = await withVersionRetry(
+            joinedRoom.code,
+            async (currentRoom) => {
+              const coordination = coordinatePlaybackMemberJoin({
+                room: currentRoom,
+                memberId: joinIdentity.memberId,
+                currentTime: now(),
+              });
+              if (
+                isSamePlaybackSyncState(
+                  currentRoom.playbackSync,
+                  coordination.playbackSync,
+                ) &&
+                currentRoom.playback === coordination.playback
+              ) {
+                return currentRoom;
+              }
+              const result = await roomStore.updateRoom(
+                currentRoom.code,
+                currentRoom.version,
+                {
+                  playbackSync: coordination.playbackSync,
+                  ...(currentRoom.playback !== coordination.playback
+                    ? { playback: coordination.playback }
+                    : {}),
+                  lastActiveAt: now(),
+                },
+              );
+              return result.ok ? result.room : null;
+            },
+          );
+          if (coordinatedRoom) {
+            joinedRoom = coordinatedRoom;
+          }
+        }
 
         logEvent("room_restored", {
           roomCode: joinedRoom.code,
@@ -2017,6 +2123,9 @@ export function createRoomService(options: {
       );
       const currentTime = now();
       const actorId = session.memberId ?? session.id;
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
       const shareDedupKey = `share:${actorId}:${video.url}:${playback?.seq ?? 0}:${createProviderShareDedupIdentity(video)}`;
       if (
         !(await runtimeStore.tryClaimMessageSlot(
@@ -2057,6 +2166,13 @@ export function createRoomService(options: {
                   actorId: session.memberId ?? session.id,
                   seq: 0,
                 };
+            const coordination = coordinatePlaybackCommand({
+              room: currentRoom,
+              nextPlayback,
+              activeMemberIds,
+              command: "share",
+              currentTime,
+            });
             const result = await roomStore.updateRoom(
               currentRoom.code,
               currentRoom.version,
@@ -2066,10 +2182,8 @@ export function createRoomService(options: {
                   sharedByMemberId: session.memberId ?? session.id,
                   sharedByDisplayName: session.displayName,
                 },
-                playback: nextPlayback,
-                playbackSync: createDefaultPlaybackSyncState(
-                  currentRoom.playbackSync?.strategy ?? "smooth",
-                ),
+                playback: coordination.playback,
+                playbackSync: coordination.playbackSync,
                 expiresAt: null,
                 lastActiveAt: currentTime,
               },
@@ -2263,13 +2377,31 @@ export function createRoomService(options: {
         return { room: access.persistedRoom, ignored: true };
       }
 
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
+      const command =
+        authorityKind === "play" ||
+        authorityKind === "pause" ||
+        authorityKind === "seek"
+          ? authorityKind
+          : "other";
+      const coordination = coordinatePlaybackCommand({
+        room: access.persistedRoom,
+        nextPlayback,
+        activeMemberIds,
+        command,
+        currentTime,
+      });
+
       let result: Awaited<ReturnType<typeof roomStore.updateRoom>>;
       try {
         result = await roomStore.updateRoom(
           access.persistedRoom.code,
           access.persistedRoom.version,
           {
-            playback: nextPlayback,
+            playback: coordination.playback,
+            playbackSync: coordination.playbackSync,
             expiresAt: null,
             lastActiveAt: currentTime,
           },
@@ -2373,27 +2505,38 @@ export function createRoomService(options: {
       );
       const memberId = session.memberId ?? session.id;
       const currentTime = now();
+      let changed = false;
       const updatedRoom = await withVersionRetry(
         access.persistedRoom.code,
         async (currentRoom) => {
-          const playbackSync = updatePlaybackSyncForBufferReport({
+          const coordination = coordinatePlaybackBufferReport({
             room: currentRoom,
             memberId,
             report,
             currentTime,
           });
-          if (isSamePlaybackSyncState(currentRoom.playbackSync, playbackSync)) {
+          const playbackSyncChanged = !isSamePlaybackSyncState(
+            currentRoom.playbackSync,
+            coordination.playbackSync,
+          );
+          const playbackChanged =
+            currentRoom.playback !== coordination.playback;
+          if (!playbackSyncChanged && !playbackChanged) {
             return currentRoom;
           }
           const result = await roomStore.updateRoom(
             currentRoom.code,
             currentRoom.version,
             {
-              playbackSync,
+              playbackSync: coordination.playbackSync,
+              ...(playbackChanged ? { playback: coordination.playback } : {}),
               expiresAt: null,
               lastActiveAt: currentTime,
             },
           );
+          if (result.ok) {
+            changed = true;
+          }
           return result.ok ? result.room : null;
         },
       );
@@ -2414,11 +2557,12 @@ export function createRoomService(options: {
         state: report.state,
         currentTime: report.currentTime,
         bufferAheadSeconds: report.bufferAheadSeconds ?? null,
+        playbackRevision: report.playbackRevision ?? null,
         strategy: playbackSync.strategy,
         holdActive: playbackSync.hold.active,
         result: "ok",
       });
-      return { room: updatedRoom };
+      return { room: updatedRoom, changed };
     },
 
     async setPlaybackSyncStrategyForSession(session, memberToken, strategy) {
@@ -2428,18 +2572,35 @@ export function createRoomService(options: {
         "playback:sync-strategy:set",
       );
       const currentTime = now();
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
       const updatedRoom = await withVersionRetry(
         access.persistedRoom.code,
         async (currentRoom) => {
-          const playbackSync = createDefaultPlaybackSyncState(strategy);
-          if (isSamePlaybackSyncState(currentRoom.playbackSync, playbackSync)) {
+          const coordination = coordinatePlaybackSyncStrategyChange({
+            room: currentRoom,
+            strategy,
+            currentTime,
+            activeMemberIds,
+          });
+          if (
+            isSamePlaybackSyncState(
+              currentRoom.playbackSync,
+              coordination.playbackSync,
+            ) &&
+            currentRoom.playback === coordination.playback
+          ) {
             return currentRoom;
           }
           const result = await roomStore.updateRoom(
             currentRoom.code,
             currentRoom.version,
             {
-              playbackSync,
+              playbackSync: coordination.playbackSync,
+              ...(currentRoom.playback !== coordination.playback
+                ? { playback: coordination.playback }
+                : {}),
               expiresAt: null,
               lastActiveAt: currentTime,
             },

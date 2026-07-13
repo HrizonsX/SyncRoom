@@ -176,6 +176,19 @@ export interface PlaybackBufferReport {
   state: PlaybackBufferState;
   currentTime: number;
   bufferAheadSeconds?: number;
+  playbackRevision?: string;
+}
+
+export const PLAYBACK_READY_BUFFER_AHEAD_SECONDS = 3;
+export const PLAYBACK_BARRIER_READY_BUFFER_AHEAD_SECONDS = 6;
+
+export function createPlaybackRevision(playback: PlaybackState): string {
+  return JSON.stringify([
+    playback.url,
+    playback.actorId,
+    playback.seq,
+    playback.serverTime,
+  ]);
 }
 
 export interface PlaybackBufferHoldState {
@@ -183,6 +196,7 @@ export interface PlaybackBufferHoldState {
   reasonMemberId?: string;
   startedAt?: number;
   deadlineAt?: number;
+  playbackRevision?: string;
 }
 
 export interface PlaybackSyncState {

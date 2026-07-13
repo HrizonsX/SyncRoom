@@ -17,6 +17,7 @@ import {
   type WebRoomEntryState,
   type WebRoomJoinedState,
   type WebRoomMember,
+  type WebRoomPlaybackErrorStage,
   type WebRoomProviderPickerItem,
   type WebRoomProviderPickerState,
   type WebRoomState,
@@ -933,11 +934,15 @@ function renderProviderPickerItems(picker: WebRoomProviderPickerState): string {
       const selectedCandidate = selected
         ? getProviderPickerSelectedCandidate(picker, item)
         : undefined;
+      const unavailableMessage = item.providerDescriptor
+        ? undefined
+        : item.message;
       const meta = [
         item.kind,
         ...(selectedCandidate
           ? getProviderCandidateLabelParts(selectedCandidate)
           : [item.qualityLabel, item.sourceType]),
+        unavailableMessage,
       ]
         .filter(Boolean)
         .join(" / ");
@@ -1068,6 +1073,20 @@ function renderPolicyHelp(policy: "proxy" | "shared"): string {
   `;
 }
 
+function renderPolicyModeNote(policy: {
+  proxy: boolean;
+  shared: boolean;
+}): string {
+  if (policy.proxy || !policy.shared) {
+    return "";
+  }
+  return `
+    <div class="policy-mode-note" data-policy-mode-note="direct-shared">
+      直链共享会让成员浏览器直接请求真实媒体 URL，省服务器带宽，但可能因防盗链、CORS、过期或平台风控失败。
+    </div>
+  `;
+}
+
 function getPlaybackSyncState(state: WebRoomJoinedState): PlaybackSyncState {
   return (
     state.playbackSync ?? {
@@ -1134,8 +1153,10 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
   const messageHtml = picker.errorMessage
     ? `<small>${escapeHtml(picker.errorMessage)}</small>`
     : "";
+  const selectedProviderItem = getProviderPickerSelectedItem(picker);
   const shareDisabled =
-    picker.selectedItemId && state.connectionState === "connected"
+    selectedProviderItem?.providerDescriptor &&
+    state.connectionState === "connected"
       ? ""
       : " disabled";
 
@@ -1176,6 +1197,7 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
           </span>
         </span>
       </div>
+      ${renderPolicyModeNote(picker)}
       <div class="provider-result-list">${renderProviderPickerItems(picker)}</div>
       ${renderProviderQualityOptions(picker)}
     </section>
@@ -1474,6 +1496,21 @@ function renderDiagnostics(state: WebRoomJoinedState): string {
     .join("");
 }
 
+function getPlaybackErrorStageLabel(stage: WebRoomPlaybackErrorStage): string {
+  switch (stage) {
+    case "manifest":
+      return "清单";
+    case "segment":
+      return "分片";
+    case "decode":
+      return "解码";
+    case "network":
+      return "网络";
+    case "unknown":
+      return "播放";
+  }
+}
+
 function renderPlaybackError(state: WebRoomJoinedState): string {
   const error = state.playbackError;
   if (!error) {
@@ -1488,8 +1525,8 @@ function renderPlaybackError(state: WebRoomJoinedState): string {
 
   return `
     <div class="playback-error" role="alert" data-panel="playback-error" data-playback-error-stage="${escapeHtml(error.stage)}">
-      <strong>${escapeHtml(error.stage)}</strong>
-      <span>${escapeHtml(error.message)}</span>
+      <strong class="playback-error-stage">${escapeHtml(getPlaybackErrorStageLabel(error.stage))}</strong>
+      <span class="playback-error-message">${escapeHtml(error.message)}</span>
       ${fallbackButton}
     </div>
   `;

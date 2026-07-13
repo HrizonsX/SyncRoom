@@ -104,6 +104,38 @@ test("buffer reporter sends buffering and ready states without playback updates"
   binding.dispose();
 });
 
+test("buffer reporter treats waiting with enough buffered media as ready", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const media = createMedia();
+  const reports: unknown[] = [];
+  media.setBuffered([{ start: 12, end: 20 }]);
+
+  const binding = bindPlaybackBufferReporter({
+    media,
+    reportDelayMs: 10,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    dispatch(report) {
+      reports.push(report);
+    },
+  });
+
+  media.emit("waiting");
+  t.mock.timers.tick(10);
+
+  assert.deepEqual(reports, [
+    {
+      state: "ready",
+      currentTime: 12,
+      bufferAheadSeconds: 8,
+    },
+  ]);
+  binding.dispose();
+});
+
 test("buffer reporter polls ready state while wait mode is holding", (t) => {
   t.mock.timers.enable({
     apis: ["setTimeout"],
@@ -143,4 +175,45 @@ test("buffer reporter polls ready state while wait mode is holding", (t) => {
   media.setBuffered([{ start: 12, end: 20 }]);
   t.mock.timers.tick(500);
   assert.equal(reports.length, 1);
+});
+
+test("buffer reporter keeps a bounded heartbeat while a barrier has no buffer growth", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const media = createMedia();
+  const reports: unknown[] = [];
+  let now = 1_000;
+  const binding = bindPlaybackBufferReporter({
+    media,
+    reportDelayMs: 10,
+    pollIntervalMs: 500,
+    maxSilentReportIntervalMs: 2_000,
+    now: () => now,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: "https://syncroom.example.test/video.mpd",
+      playbackRevision: "revision-1",
+    }),
+    dispatch(report) {
+      reports.push(report);
+    },
+  });
+
+  binding.reportNow();
+  binding.setPollingEnabled(true);
+  now = 2_500;
+  t.mock.timers.tick(1_500);
+  assert.equal(reports.length, 1);
+
+  now = 3_000;
+  t.mock.timers.tick(500);
+  assert.equal(reports.length, 2);
+  assert.deepEqual(reports.at(-1), {
+    state: "buffering",
+    currentTime: 12,
+    bufferAheadSeconds: 0,
+    playbackRevision: "revision-1",
+  });
+
+  binding.dispose();
 });

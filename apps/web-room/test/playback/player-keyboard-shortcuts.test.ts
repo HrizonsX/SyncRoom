@@ -14,6 +14,7 @@ class FakePlayerControllerElement {
     playerEmpty: "false",
     playerLive: "false",
   };
+  readonly dispatchedEvents: Event[] = [];
   private readonly attributes = new Set<string>();
 
   constructor(private readonly video: FakeVideoElement) {}
@@ -24,6 +25,11 @@ class FakePlayerControllerElement {
 
   setAttribute(name: string): void {
     this.attributes.add(name);
+  }
+
+  dispatchEvent(event: Event): boolean {
+    this.dispatchedEvents.push(event);
+    return true;
   }
 
   querySelector(selector: string): FakeVideoElement | null {
@@ -88,7 +94,7 @@ function createFixture(
 }
 
 test("ArrowRight advances the current player by five seconds", () => {
-  const { root, video } = createFixture();
+  const { root, video, controller } = createFixture();
   const event = new FakeKeyboardEvent("ArrowRight");
 
   const handled = handlePlayerKeyboardShortcut({
@@ -98,6 +104,11 @@ test("ArrowRight advances the current player by five seconds", () => {
 
   assert.equal(handled, true);
   assert.equal(video.currentTime, 17);
+  assert.equal(controller.dispatchedEvents[0]?.type, "mediaseekrequest");
+  assert.equal(
+    (controller.dispatchedEvents[0] as CustomEvent<number> | undefined)?.detail,
+    17,
+  );
   assert.equal(event.defaultPrevented, true);
   assert.equal(event.propagationStopped, true);
 });

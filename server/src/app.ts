@@ -15,6 +15,10 @@ import { createAdminCommandConsumer } from "./admin-command-consumer.js";
 import { createRuntimeLimitsService } from "./admin/runtime-limits-service.js";
 import { createMessageHandler } from "./message-handler.js";
 import { createNodeHeartbeat } from "./node-heartbeat.js";
+import {
+  createNginxCacheMetricsListener,
+  type NginxCacheMetricsListener,
+} from "./nginx-cache-metrics-listener.js";
 import { createRoomEventConsumer } from "./room-event-consumer.js";
 import { type RoomStore } from "./room-store.js";
 import { createRoomReaper } from "./room-reaper.js";
@@ -106,6 +110,7 @@ export type SyncServerDependencies = {
   logLevel?: LogLevel;
   logSampling?: Record<string, number>;
   metricsPort?: number;
+  nginxCacheMetricsPort?: number;
   adminSessionStoreOverride?: AdminSessionStore;
   videoAuthSessionStore?: VideoAuthSessionStore;
   voiceConfig?: VoiceConfig;
@@ -430,6 +435,29 @@ export async function createSyncServer(
     }),
   );
 
+  let nginxCacheMetricsListener: NginxCacheMetricsListener | null = null;
+  if (
+    dependencies.nginxCacheMetricsPort !== undefined &&
+    dependencies.nginxCacheMetricsPort > 0
+  ) {
+    try {
+      nginxCacheMetricsListener = await createNginxCacheMetricsListener({
+        port: dependencies.nginxCacheMetricsPort,
+        metricsCollector,
+        logEvent,
+      });
+    } catch (error) {
+      // Telemetry must degrade independently; a local UDP bind conflict must
+      // never prevent room and playback traffic from starting.
+      logEvent("nginx_cache_metrics_listener_start_failed", {
+        host: "127.0.0.1",
+        port: dependencies.nginxCacheMetricsPort,
+        result: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   return {
     httpServer,
     metricsHttpServer,
@@ -476,6 +504,14 @@ export async function createSyncServer(
             name: "stop_node_heartbeat",
             run: () => nodeHeartbeat.stop(),
           },
+          ...(nginxCacheMetricsListener
+            ? [
+                {
+                  name: "close_nginx_cache_metrics_listener",
+                  run: () => nginxCacheMetricsListener.close(),
+                },
+              ]
+            : []),
           {
             name: "stop_runtime_index_reaper",
             run: () => runtimeIndexReaper.stop(),

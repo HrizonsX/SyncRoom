@@ -645,6 +645,48 @@ test("selects a normalized provider playback descriptor without leaking raw fiel
   assert.equal(JSON.stringify(descriptor).includes("SESSDATA"), false);
 });
 
+test("rejects encoded provider credential names in direct candidate urls", () => {
+  const parseResult = {
+    providerId: "bilibili",
+    sourceId: "BV1xx411c7mD",
+    sourceUrl: "https://www.bilibili.com/video/BV1xx411c7mD",
+    title: "Shared title",
+    items: [
+      {
+        item: {
+          itemId: "cid-1",
+          title: "Part 1",
+          kind: "part",
+          bvid: "BV1xx411c7mD",
+          cid: "1",
+        },
+        candidates: [
+          {
+            id: "720p-avc",
+            sourceType: "mpd",
+            url: "https://upos.example.test/video.mpd?%53%45%53%53%44%41%54%41=secret",
+            qualityLabel: "720P",
+            default: true,
+          },
+        ],
+        defaultCandidateId: "720p-avc",
+      },
+    ],
+  } satisfies ProviderParseResult;
+
+  assert.throws(
+    () =>
+      createProviderPlaybackDescriptor(parseResult, {
+        itemId: "cid-1",
+        policy: { proxy: false, shared: true },
+      }),
+    (error) =>
+      error instanceof VideoProviderError &&
+      error.code === "provider_parse_failed" &&
+      error.reason === "unsafe_direct_candidate_url",
+  );
+});
+
 test("provider errors are mapped to safe client-visible details", () => {
   const safeProviderError = toSafeProviderError(
     new VideoProviderError(

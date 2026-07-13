@@ -1,6 +1,7 @@
 const DEFAULT_PLAYER_SEEK_SECONDS = 5;
 const PLAYBACK_VIDEO_SELECTOR = '[data-playback-video="true"]';
 const PLAYER_CONTROLLER_SELECTOR = ".player-media-controller";
+const MEDIA_SEEK_REQUEST_EVENT = "mediaseekrequest";
 
 type ElementLike = {
   tagName?: string;
@@ -90,10 +91,20 @@ export function handlePlayerKeyboardShortcut(args: {
     return false;
   }
 
-  video.currentTime = clampPlaybackTime(
+  const targetTime = clampPlaybackTime(
     video.currentTime + deltaSeconds,
     video.duration,
   );
+  // Route keyboard seeking through the same semantic request boundary as the
+  // progress control so it remains distinguishable from hydration echoes.
+  controller.dispatchEvent(
+    new CustomEvent<number>(MEDIA_SEEK_REQUEST_EVENT, {
+      bubbles: true,
+      composed: true,
+      detail: targetTime,
+    }),
+  );
+  video.currentTime = targetTime;
   event.preventDefault();
   event.stopPropagation();
   return true;

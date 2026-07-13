@@ -1,16 +1,17 @@
 import {
+  createPlaybackRevision,
   isExplicitControlSyncIntent,
+  PLAYBACK_BARRIER_READY_BUFFER_AHEAD_SECONDS,
+  PLAYBACK_READY_BUFFER_AHEAD_SECONDS,
   type PlaybackBufferReport,
   type PlaybackState,
+  type PlaybackSyncStrategy,
   type SharedVideo,
 } from "@syncroom/protocol";
 import { clonePlaybackSyncState } from "./room-store.js";
 import type { PersistedRoom, PlaybackAuthority } from "./types.js";
 
-export const PLAYBACK_BUFFER_HOLD_MAX_MS = 10_000;
-// Ready events only mean playback can start. Wait mode requires a small
-// buffered window so resumed members do not immediately stall again.
-export const PLAYBACK_READY_BUFFER_AHEAD_SECONDS = 3;
+const PLAYBACK_READINESS_BARRIER_TIMEOUT_MS = 30_000;
 
 export function isLiveSharedVideo(video: SharedVideo | null): boolean {
   return video?.provider?.item.kind === "live";
@@ -26,6 +27,142 @@ function uniqueMemberIds(ids: readonly string[]): string[] {
 
 function removeMemberId(ids: readonly string[], memberId: string): string[] {
   return ids.filter((id) => id !== memberId);
+}
+
+function createInactivePlaybackSyncState(
+  strategy: PlaybackSyncStrategy,
+): PersistedRoom["playbackSync"] {
+  return {
+    strategy,
+    hold: { active: false },
+    bufferingMemberIds: [],
+  };
+}
+
+function beginReadinessBarrier(args: {
+  room: PersistedRoom;
+  playback: PlaybackState;
+  memberIds: readonly string[];
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playbackRevision: string;
+} {
+  const memberIds = uniqueMemberIds(args.memberIds);
+  const playbackRevision = createPlaybackRevision(args.playback);
+  return {
+    playbackRevision,
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: memberIds[0],
+        startedAt: args.currentTime,
+        deadlineAt: args.currentTime + PLAYBACK_READINESS_BARRIER_TIMEOUT_MS,
+        playbackRevision,
+      },
+      bufferingMemberIds: memberIds,
+    },
+  };
+}
+
+export function coordinatePlaybackCommand(args: {
+  room: PersistedRoom;
+  nextPlayback: PlaybackState;
+  activeMemberIds: readonly string[];
+  command: "share" | "play" | "pause" | "seek" | "other";
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState;
+  playbackRevision: string;
+} {
+  const playbackRevision = createPlaybackRevision(args.nextPlayback);
+  const strategy = args.room.playbackSync?.strategy ?? "smooth";
+  if (args.command === "pause") {
+    return {
+      playbackSync: createInactivePlaybackSyncState(strategy),
+      playback: args.nextPlayback,
+      playbackRevision,
+    };
+  }
+
+  const shouldStartBarrier =
+    strategy === "wait" &&
+    !isLiveSharedVideo(args.room.sharedVideo) &&
+    args.nextPlayback.playState === "playing" &&
+    args.activeMemberIds.length >= 2 &&
+    (args.command === "share" ||
+      args.command === "play" ||
+      args.command === "seek");
+  if (!shouldStartBarrier) {
+    return {
+      playbackSync: clonePlaybackSyncState(args.room.playbackSync),
+      playback: args.nextPlayback,
+      playbackRevision,
+    };
+  }
+
+  const barrier = beginReadinessBarrier({
+    room: args.room,
+    playback: args.nextPlayback,
+    memberIds: args.activeMemberIds,
+    currentTime: args.currentTime,
+  });
+  return {
+    playbackSync: barrier.playbackSync,
+    playback: args.nextPlayback,
+    playbackRevision: barrier.playbackRevision,
+  };
+}
+
+export function coordinatePlaybackMemberJoin(args: {
+  room: PersistedRoom;
+  memberId: string;
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState | null;
+} {
+  if (
+    args.room.playbackSync?.strategy !== "wait" ||
+    !args.room.playback ||
+    args.room.playback.playState !== "playing" ||
+    isLiveSharedVideo(args.room.sharedVideo)
+  ) {
+    return {
+      playbackSync: clonePlaybackSyncState(args.room.playbackSync),
+      playback: args.room.playback,
+    };
+  }
+
+  const existingPlaybackSync = clonePlaybackSyncState(args.room.playbackSync);
+  if (
+    existingPlaybackSync.hold.active &&
+    existingPlaybackSync.hold.playbackRevision
+  ) {
+    existingPlaybackSync.bufferingMemberIds = uniqueMemberIds([
+      ...existingPlaybackSync.bufferingMemberIds,
+      args.memberId,
+    ]);
+    return {
+      playbackSync: existingPlaybackSync,
+      playback: args.room.playback,
+    };
+  }
+
+  const playback: PlaybackState = {
+    ...args.room.playback,
+    currentTime: projectPlaybackTimeline(args.room.playback, args.currentTime),
+    serverTime: args.currentTime,
+  };
+  const barrier = beginReadinessBarrier({
+    room: args.room,
+    playback,
+    memberIds: [args.memberId],
+    currentTime: args.currentTime,
+  });
+  return { playbackSync: barrier.playbackSync, playback };
 }
 
 export function isSamePlaybackSyncState(
@@ -45,48 +182,75 @@ export function updatePlaybackSyncForBufferReport(args: {
   currentTime: number;
 }): PersistedRoom["playbackSync"] {
   const playbackSync = clonePlaybackSyncState(args.room.playbackSync);
+  if (
+    playbackSync.hold.active &&
+    playbackSync.hold.deadlineAt !== undefined &&
+    args.currentTime >= playbackSync.hold.deadlineAt
+  ) {
+    return createInactivePlaybackSyncState(playbackSync.strategy);
+  }
+
+  const barrierRevision = playbackSync.hold.playbackRevision;
+  if (playbackSync.hold.active && barrierRevision) {
+    if (args.report.playbackRevision !== barrierRevision) {
+      return playbackSync;
+    }
+    if (!playbackSync.bufferingMemberIds.includes(args.memberId)) {
+      return playbackSync;
+    }
+    const hasEnoughBarrierBuffer =
+      (args.report.bufferAheadSeconds ?? 0) >=
+      PLAYBACK_BARRIER_READY_BUFFER_AHEAD_SECONDS;
+    if (!hasEnoughBarrierBuffer) {
+      return playbackSync;
+    }
+    playbackSync.bufferingMemberIds = removeMemberId(
+      playbackSync.bufferingMemberIds,
+      args.memberId,
+    );
+    if (playbackSync.bufferingMemberIds.length === 0) {
+      playbackSync.hold = { active: false };
+    } else if (
+      !playbackSync.hold.reasonMemberId ||
+      playbackSync.hold.reasonMemberId === args.memberId
+    ) {
+      playbackSync.hold.reasonMemberId = playbackSync.bufferingMemberIds[0];
+    }
+    return playbackSync;
+  }
+
   const wasMemberBuffering = playbackSync.bufferingMemberIds.includes(
     args.memberId,
   );
-  const hasEnoughReadyBuffer =
-    args.report.state === "ready" &&
+  const hasEnoughBuffer =
     (args.report.bufferAheadSeconds ?? 0) >=
-      PLAYBACK_READY_BUFFER_AHEAD_SECONDS;
-  if (
-    playbackSync.hold.active &&
-    typeof playbackSync.hold.deadlineAt === "number" &&
-    playbackSync.hold.deadlineAt <= args.currentTime
-  ) {
-    playbackSync.hold = { active: false };
-  }
+    PLAYBACK_READY_BUFFER_AHEAD_SECONDS;
+  const isEffectiveBuffering =
+    args.report.state === "buffering" && !hasEnoughBuffer;
+  const hasEnoughReadyBuffer =
+    (args.report.state === "ready" || hasEnoughBuffer) && hasEnoughBuffer;
 
-  playbackSync.bufferingMemberIds =
-    args.report.state === "buffering"
-      ? uniqueMemberIds([...playbackSync.bufferingMemberIds, args.memberId])
-      : hasEnoughReadyBuffer
-        ? removeMemberId(playbackSync.bufferingMemberIds, args.memberId)
-        : playbackSync.bufferingMemberIds;
+  playbackSync.bufferingMemberIds = isEffectiveBuffering
+    ? uniqueMemberIds([...playbackSync.bufferingMemberIds, args.memberId])
+    : hasEnoughReadyBuffer
+      ? removeMemberId(playbackSync.bufferingMemberIds, args.memberId)
+      : playbackSync.bufferingMemberIds;
 
   const shouldHoldRoom =
     playbackSync.strategy === "wait" &&
     !isLiveSharedVideo(args.room.sharedVideo) &&
     args.room.playback?.playState === "playing" &&
-    args.report.state === "buffering" &&
+    isEffectiveBuffering &&
     !wasMemberBuffering;
   if (shouldHoldRoom && !playbackSync.hold.active) {
-    // Hold only on the first buffering report for one incident. Otherwise a
-    // continuously stalled member can immediately restart an expired hold and
-    // keep the room stuck on "waiting".
     playbackSync.hold = {
       active: true,
       reasonMemberId: args.memberId,
       startedAt: args.currentTime,
-      deadlineAt: args.currentTime + PLAYBACK_BUFFER_HOLD_MAX_MS,
     };
   }
 
   if (
-    args.report.state === "ready" &&
     hasEnoughReadyBuffer &&
     playbackSync.hold.active &&
     playbackSync.bufferingMemberIds.length === 0
@@ -97,15 +261,156 @@ export function updatePlaybackSyncForBufferReport(args: {
   return playbackSync;
 }
 
+function normalizePlaybackRate(playbackRate: number): number {
+  return Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+}
+
+function projectPlaybackTimeline(
+  playback: PlaybackState,
+  currentTime: number,
+): number {
+  if (playback.playState !== "playing") {
+    return playback.currentTime;
+  }
+  const elapsedSeconds = Math.max(
+    0,
+    (currentTime - playback.serverTime) / 1_000,
+  );
+  return (
+    playback.currentTime +
+    elapsedSeconds * normalizePlaybackRate(playback.playbackRate)
+  );
+}
+
+function rebasePlaybackForHoldTransition(args: {
+  room: PersistedRoom;
+  playbackSync: PersistedRoom["playbackSync"];
+  currentTime: number;
+}): PlaybackState | null {
+  const playback = args.room.playback;
+  if (!playback || playback.playState !== "playing") {
+    return playback;
+  }
+  const wasHeld = args.room.playbackSync?.hold.active === true;
+  const isHeld = args.playbackSync?.hold.active === true;
+  if (wasHeld === isHeld) {
+    return playback;
+  }
+
+  return {
+    ...playback,
+    currentTime: isHeld
+      ? projectPlaybackTimeline(playback, args.currentTime)
+      : playback.currentTime,
+    serverTime: args.currentTime,
+  };
+}
+
+export function coordinatePlaybackBufferReport(args: {
+  room: PersistedRoom;
+  memberId: string;
+  report: PlaybackBufferReport;
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState | null;
+} {
+  const playbackSync = updatePlaybackSyncForBufferReport(args);
+  return {
+    playbackSync,
+    playback: rebasePlaybackForHoldTransition({
+      room: args.room,
+      playbackSync,
+      currentTime: args.currentTime,
+    }),
+  };
+}
+
+export function coordinatePlaybackMemberDeparture(args: {
+  room: PersistedRoom;
+  memberId: string;
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState | null;
+} {
+  const playbackSync = clonePlaybackSyncState(args.room.playbackSync);
+  if (!playbackSync.bufferingMemberIds.includes(args.memberId)) {
+    return { playbackSync, playback: args.room.playback };
+  }
+
+  playbackSync.bufferingMemberIds = removeMemberId(
+    playbackSync.bufferingMemberIds,
+    args.memberId,
+  );
+  if (playbackSync.bufferingMemberIds.length === 0) {
+    playbackSync.hold = { active: false };
+  } else if (playbackSync.hold.reasonMemberId === args.memberId) {
+    playbackSync.hold = {
+      ...playbackSync.hold,
+      reasonMemberId: playbackSync.bufferingMemberIds[0]!,
+    };
+  }
+
+  return {
+    playbackSync,
+    playback: rebasePlaybackForHoldTransition({
+      room: args.room,
+      playbackSync,
+      currentTime: args.currentTime,
+    }),
+  };
+}
+
+export function coordinatePlaybackSyncStrategyChange(args: {
+  room: PersistedRoom;
+  strategy: PlaybackSyncStrategy;
+  currentTime: number;
+  activeMemberIds?: readonly string[];
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState | null;
+} {
+  const activeMemberIds = args.activeMemberIds ?? [];
+  if (
+    args.strategy === "wait" &&
+    args.room.playback?.playState === "playing" &&
+    !isLiveSharedVideo(args.room.sharedVideo) &&
+    activeMemberIds.length >= 2
+  ) {
+    const playback: PlaybackState = {
+      ...args.room.playback,
+      currentTime: projectPlaybackTimeline(
+        args.room.playback,
+        args.currentTime,
+      ),
+      serverTime: args.currentTime,
+    };
+    const barrier = beginReadinessBarrier({
+      room: args.room,
+      playback,
+      memberIds: activeMemberIds,
+      currentTime: args.currentTime,
+    });
+    return { playbackSync: barrier.playbackSync, playback };
+  }
+
+  const playbackSync = createInactivePlaybackSyncState(args.strategy);
+  return {
+    playbackSync,
+    playback: rebasePlaybackForHoldTransition({
+      room: args.room,
+      playbackSync,
+      currentTime: args.currentTime,
+    }),
+  };
+}
+
 export function isPlaybackHoldActive(
   playbackSync: PersistedRoom["playbackSync"],
-  currentTime: number,
+  _currentTime: number,
 ): boolean {
-  const hold = playbackSync?.hold;
-  if (hold?.active !== true) {
-    return false;
-  }
-  return typeof hold.deadlineAt !== "number" || hold.deadlineAt > currentTime;
+  return playbackSync?.hold.active === true;
 }
 
 export function shouldIgnorePlaybackUpdateDuringHold(args: {

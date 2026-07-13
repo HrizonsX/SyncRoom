@@ -10,14 +10,22 @@ export function getPlaybackErrorStage(
   if (/manifest|mpd|m3u8|playlist/i.test(message)) {
     return "manifest";
   }
-  if (/decode|codec|media/i.test(message)) {
+  if (/decode|codec|\bcode\s*3\b/i.test(message)) {
     return "decode";
   }
   if (/segment|range|partial|404/i.test(message)) {
     return "segment";
   }
+  // Native code 4 is often the browser's opaque source load failure for
+  // anti-hotlink or authorization responses, so prefer a proxy fallback hint.
+  if (/native media failed to load/i.test(message)) {
+    return "network";
+  }
   if (/network|fetch|http|load/i.test(message)) {
     return "network";
+  }
+  if (/media/i.test(message)) {
+    return "decode";
   }
   return "unknown";
 }

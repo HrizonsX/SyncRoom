@@ -63,6 +63,43 @@ test("applies room state messages to renderable web-room state", () => {
   );
 });
 
+test("records shared video capabilities for extension-style page shares", () => {
+  const state = createInitialJoinedState({
+    roomCode: "ABC123",
+    currentMemberId: "member-1",
+    displayName: "Alice",
+  });
+
+  const nextState = applyServerMessage(state, {
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      sharedVideo: {
+        videoId: "web:abc123",
+        url: "https://example.com/watch?v=abc",
+        title: "Example video",
+      },
+      playback: null,
+      members: [{ id: "member-1", name: "Alice" }],
+    },
+  });
+
+  assert.deepEqual(nextState.sharedVideoCapabilities, {
+    page: {
+      canOpen: true,
+      normalizedUrl: "https://example.com/watch?v=abc",
+    },
+    provider: {
+      resolved: false,
+      canPlayInWebRoom: false,
+      candidateCount: 0,
+      sourceTypes: [],
+      unavailableReason: "missing_provider_descriptor",
+    },
+  });
+  assert.equal(nextState.playbackSource, undefined);
+});
+
 test("preserves explicit live play and pause intents from room state", () => {
   const state = createInitialJoinedState({
     roomCode: "ABC123",

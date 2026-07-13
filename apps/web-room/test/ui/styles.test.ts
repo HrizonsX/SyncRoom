@@ -368,6 +368,10 @@ test("styles player danmaku entry for desktop control bar and mobile popover", (
   );
   assert.match(
     styles,
+    /\.player-media-controller\[data-player-autohide-restored\]\[userinactive\]:not\(\s*\[mediapaused\]\s*\)\s+\.player-controls\s*{[^}]*opacity:\s*0 !important;[^}]*transition:\s*none !important;[^}]*}/s,
+  );
+  assert.match(
+    styles,
     /\.player-live-progress\s*{[^}]*pointer-events:\s*none;[^}]*}/s,
   );
   assert.match(
@@ -500,11 +504,27 @@ test("styles settings header actions with bounded errors", () => {
   );
   assert.match(
     styles,
-    /\.playback-error\s*{[^}]*display:\s*flex;[^}]*grid-column:\s*1 \/ -1;[^}]*font-size:\s*11px;[^}]*white-space:\s*nowrap;[^}]*}/s,
+    /\.playback-error\s*{[^}]*display:\s*flex;[^}]*grid-column:\s*1 \/ -1;[^}]*align-items:\s*flex-start;[^}]*flex-wrap:\s*wrap;[^}]*font-size:\s*12px;[^}]*}/s,
   );
   assert.match(
     styles,
-    /\.playback-error\s+span\s*{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*}/s,
+    /\.playback-error-stage\s*{[^}]*border-radius:\s*999px;[^}]*text-transform:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.playback-error-message\s*{[^}]*flex:\s*1 1 220px;[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.playback-error\s+\.secondary-button\s*{(?=[^}]*margin-left:\s*auto;)(?=[^}]*flex:\s*0 0 auto;)[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*?\.playback-error-message\s*{[^}]*flex-basis:\s*calc\(100% - 58px\);[^}]*}/,
+  );
+  assert.match(
+    styles,
+    /@media\s*\(max-width:\s*820px\)\s*{[\s\S]*?\.playback-error\s+\.secondary-button\s*{[^}]*flex:\s*1 1 100%;[^}]*justify-content:\s*center;[^}]*margin-left:\s*0;[^}]*}/,
   );
   assert.match(
     styles,

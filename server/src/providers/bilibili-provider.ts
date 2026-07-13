@@ -47,6 +47,8 @@ const BILIBILI_WBI_PLAYURL_URL =
 const BILIBILI_PGC_SEASON_URL = "https://api.bilibili.com/pgc/view/web/season";
 const BILIBILI_PGC_PLAYURL_URL =
   "https://api.bilibili.com/pgc/player/web/playurl";
+const BILIBILI_PGC_AUTH_REQUIRED_MESSAGE =
+  "已解析到剧集信息，但未获取到完整播放源；请确认 Bilibili 会员授权有效。";
 const BILIBILI_LIVE_ROOM_INFO_URL =
   "https://api.live.bilibili.com/room/v1/Room/get_info";
 const BILIBILI_LIVE_PLAYURL_URL =
@@ -2030,6 +2032,39 @@ function readPgcEpisodes(
     .filter((episode): episode is ParsedPgcEpisode => episode !== null);
 }
 
+function createPgcProviderItem(
+  episode: ParsedPgcEpisode,
+  candidates: ProviderPlayableItem["candidates"],
+  unavailable?: {
+    reason: string;
+    message: string;
+  },
+): ProviderPlayableItem {
+  return {
+    item: {
+      itemId: `ep-${episode.epId}`,
+      title: episode.title,
+      kind: "episode",
+      ...(episode.aid ? { aid: episode.aid } : {}),
+      ...(episode.bvid ? { bvid: episode.bvid } : {}),
+      cid: episode.cid,
+      epId: episode.epId,
+      ...(episode.seasonId ? { seasonId: episode.seasonId } : {}),
+      ...(episode.durationSeconds !== undefined
+        ? { durationSeconds: episode.durationSeconds }
+        : {}),
+    },
+    candidates,
+    ...(candidates[0]?.id ? { defaultCandidateId: candidates[0].id } : {}),
+    ...(unavailable
+      ? {
+          unavailableReason: unavailable.reason,
+          message: unavailable.message,
+        }
+      : {}),
+  };
+}
+
 function readVideoPages(viewData: BilibiliVideoViewData): Array<{
   cid: string;
   page: number;
@@ -2282,11 +2317,13 @@ async function parsePgcVideo(
     const playCode = readPgcPlayCode(playPayload);
     const playData = readPgcPlayData(playPayload);
     if ((playCode !== null && playCode !== 0) || !playData) {
-      throw new VideoProviderError(
-        "provider_parse_failed",
-        "Bilibili bangumi playback metadata request failed.",
-        "pgc_playurl_failed",
+      items.push(
+        createPgcProviderItem(episode, [], {
+          reason: "pgc_playurl_failed",
+          message: BILIBILI_PGC_AUTH_REQUIRED_MESSAGE,
+        }),
       );
+      continue;
     }
     logPgcPlayUrlDiagnostics({
       logEvent: args.logEvent,
@@ -2296,14 +2333,6 @@ async function parsePgcVideo(
       playData,
       playCode,
     });
-    if (isPgcPreviewPlayData(playData, episode)) {
-      throw new VideoProviderError(
-        "provider_parse_failed",
-        "Bilibili bangumi playback metadata is preview-only.",
-        "pgc_preview_playurl",
-      );
-    }
-
     const candidates = readPlaybackCandidates(playData, {
       preferDash: input.policy.proxy === true,
       upstreamHeaders: createMediaUpstreamHeaders(
@@ -2311,30 +2340,35 @@ async function parsePgcVideo(
         buvidCookie,
       ),
     });
-    if (candidates.length === 0) {
-      throw new VideoProviderError(
-        "provider_parse_failed",
-        "Bilibili bangumi has no supported playback candidates.",
-        getNoPlaybackCandidatesReason(input, "no_pgc_playback_candidates"),
+    const isPreview = isPgcPreviewPlayData(playData, episode);
+    if (isPreview && candidates.length === 0) {
+      items.push(
+        createPgcProviderItem(episode, [], {
+          reason: "pgc_preview_playurl",
+          message: BILIBILI_PGC_AUTH_REQUIRED_MESSAGE,
+        }),
       );
+      continue;
+    }
+    if (candidates.length === 0) {
+      items.push(
+        createPgcProviderItem(episode, [], {
+          reason: getNoPlaybackCandidatesReason(
+            input,
+            "no_pgc_playback_candidates",
+          ),
+          message: BILIBILI_PGC_AUTH_REQUIRED_MESSAGE,
+        }),
+      );
+      continue;
     }
 
     items.push({
-      item: {
-        itemId: `ep-${episode.epId}`,
-        title: episode.title,
-        kind: "episode",
-        ...(episode.aid ? { aid: episode.aid } : {}),
-        ...(episode.bvid ? { bvid: episode.bvid } : {}),
-        cid: episode.cid,
-        epId: episode.epId,
-        ...(episode.seasonId ? { seasonId: episode.seasonId } : {}),
-        ...(episode.durationSeconds !== undefined
-          ? { durationSeconds: episode.durationSeconds }
-          : {}),
-      },
-      candidates,
-      defaultCandidateId: candidates[0]?.id,
+      ...createPgcProviderItem(episode, candidates),
+      // Anonymous preview URLs still require Bilibili media headers that a
+      // browser video request cannot safely attach. Keep this marker internal
+      // so the router can use the room proxy without exposing those headers.
+      ...(isPreview ? { requiresProxy: true } : {}),
     });
   }
 

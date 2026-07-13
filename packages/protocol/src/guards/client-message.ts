@@ -442,7 +442,10 @@ function isPlaybackBufferReportPayload(
     isOneOf(value.state, PLAYBACK_BUFFER_STATES) &&
     isNonNegativeFiniteNumber(value.currentTime) &&
     (value.bufferAheadSeconds === undefined ||
-      isNonNegativeFiniteNumber(value.bufferAheadSeconds))
+      isNonNegativeFiniteNumber(value.bufferAheadSeconds)) &&
+    (value.playbackRevision === undefined ||
+      (typeof value.playbackRevision === "string" &&
+        value.playbackRevision.length <= 1_024))
   );
 }
 

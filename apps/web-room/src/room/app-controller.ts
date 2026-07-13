@@ -302,6 +302,7 @@ export function createWebRoomAppController(
   let voiceErrorTimerKey: string | null = null;
   let playbackErrorTimer: AuthPollTimeoutHandle | null = null;
   let playbackErrorTimerKey: string | null = null;
+  let providerPlaybackRefreshKey: string | null = null;
   let reconnectTimer: ReconnectTimeoutHandle | null = null;
   let reconnectAttempt = 0;
   let clockSyncTimer: ClockSyncIntervalHandle | null = null;
@@ -892,6 +893,64 @@ export function createWebRoomAppController(
         ...candidate,
         default: candidate.id === selectedCandidateId,
       })),
+    };
+  }
+
+  function getProjectedPlaybackCurrentTime(playback: PlaybackState): number {
+    if (playback.playState !== "playing") {
+      return playback.currentTime;
+    }
+    const playbackRate =
+      Number.isFinite(playback.playbackRate) && playback.playbackRate > 0
+        ? playback.playbackRate
+        : 1;
+    return (
+      playback.currentTime +
+      (Math.max(0, getCurrentTime() - playback.serverTime) * playbackRate) /
+        1_000
+    );
+  }
+
+  /**
+   * 刷新过期播放地址时复用房间当前播放态，避免重新分享 provider 结果把点播重置到 0 秒。
+   */
+  function createProviderRefreshPlayback(
+    playbackUrl: string,
+    itemKind: ProviderPlaybackDescriptor["item"]["kind"],
+  ): PlaybackState | undefined {
+    if (state.view !== "joined") {
+      return undefined;
+    }
+    const currentTime = getCurrentTime();
+    if (!state.playback) {
+      if (itemKind !== "live") {
+        return undefined;
+      }
+      return {
+        url: playbackUrl,
+        currentTime: 0,
+        playState: "playing",
+        userInitiated: true,
+        playbackRate: 1,
+        updatedAt: currentTime,
+        serverTime: currentTime,
+        actorId: state.currentMemberId,
+        seq: 0,
+      };
+    }
+
+    return {
+      ...state.playback,
+      url: playbackUrl,
+      currentTime:
+        itemKind === "live"
+          ? 0
+          : getProjectedPlaybackCurrentTime(state.playback),
+      userInitiated: true,
+      updatedAt: currentTime,
+      serverTime: currentTime,
+      actorId: state.currentMemberId,
+      seq: state.playback.seq + 1,
     };
   }
 
@@ -2253,7 +2312,9 @@ export function createWebRoomAppController(
     });
   }
 
-  function shareSelectedProviderItem(): void {
+  function shareSelectedProviderItem(input?: {
+    preservePlayback?: boolean;
+  }): void {
     if (state.view !== "joined" || !requireHostAuthorizationState()) {
       return;
     }
@@ -2314,8 +2375,12 @@ export function createWebRoomAppController(
       },
     };
     const sharePlaybackTime = getCurrentTime();
-    const sharePlayback: PlaybackState | undefined =
-      selectedProviderDescriptor.item.kind === "live"
+    const sharePlayback: PlaybackState | undefined = input?.preservePlayback
+      ? createProviderRefreshPlayback(
+          sharedRef.normalizedUrl,
+          selectedProviderDescriptor.item.kind,
+        )
+      : selectedProviderDescriptor.item.kind === "live"
         ? {
             url: sharedRef.normalizedUrl,
             currentTime: 0,
@@ -2347,7 +2412,20 @@ export function createWebRoomAppController(
     const playbackPolicyAllowsFallback =
       state.providerPlaybackStatus?.proxy === false &&
       state.providerPlaybackStatus.shared === true;
-    return pickerPolicyAllowsFallback || playbackPolicyAllowsFallback;
+    const picker = state.providerPicker;
+    const selectedItem = picker ? getSelectedProviderPickerItem(picker) : null;
+    const bilibiliDirectPickerAllowsFallback =
+      picker?.proxy === false &&
+      selectedItem?.providerDescriptor?.providerId === "bilibili";
+    const bilibiliDirectPlaybackAllowsFallback =
+      state.providerPlaybackStatus?.providerId === "bilibili" &&
+      state.providerPlaybackStatus.proxy === false;
+    return (
+      pickerPolicyAllowsFallback ||
+      playbackPolicyAllowsFallback ||
+      bilibiliDirectPickerAllowsFallback ||
+      bilibiliDirectPlaybackAllowsFallback
+    );
   }
 
   function getCurrentProviderId(): VideoProviderId | undefined {
@@ -2386,6 +2464,116 @@ export function createWebRoomAppController(
     });
   }
 
+  function shouldRefreshProviderPlayback(
+    stage: WebRoomPlaybackErrorStage,
+  ): boolean {
+    if (stage === "decode") {
+      return false;
+    }
+    // Private Bilibili direct URLs usually fail because the browser cannot send
+    // the provider referrer headers; refreshing the same policy just loops.
+    if (
+      stage === "network" &&
+      state.view === "joined" &&
+      state.providerPicker?.proxy === false &&
+      state.providerPicker.shared === false &&
+      getCurrentProviderId() === "bilibili"
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  function emitProviderPlaybackRefreshFailure(error?: unknown): void {
+    if (state.view !== "joined") {
+      return;
+    }
+    const suffix =
+      error === undefined
+        ? ""
+        : `: ${error instanceof Error ? error.message : String(error)}`;
+    emit({
+      ...state,
+      diagnostics: appendDiagnosticItem(
+        `provider playback source refresh failed${suffix}`,
+      ),
+    });
+  }
+
+  /**
+   * 播放地址长时间暂停后可能过期；由房主用原始 provider 链接重新解析并广播新候选，成员不各自抢写房间状态。
+   */
+  async function refreshCurrentProviderPlayback(input: {
+    stage: WebRoomPlaybackErrorStage;
+  }): Promise<void> {
+    if (
+      state.view !== "joined" ||
+      state.currentMemberId !== state.hostMemberId ||
+      !shouldRefreshProviderPlayback(input.stage)
+    ) {
+      return;
+    }
+    const picker = state.providerPicker;
+    const url = picker?.url?.trim();
+    if (!picker || picker.status === "loading" || !url) {
+      return;
+    }
+
+    const refreshKey = [
+      url,
+      picker.proxy ? "proxy" : "direct",
+      picker.shared ? "shared" : "private",
+      picker.selectedItemId ?? "",
+      picker.selectedQualityCandidateId ?? "",
+    ].join(":");
+    if (providerPlaybackRefreshKey === refreshKey) {
+      return;
+    }
+
+    const selectedItemId = picker.selectedItemId;
+    const selectedQualityCandidateId = picker.selectedQualityCandidateId;
+    providerPlaybackRefreshKey = refreshKey;
+    try {
+      await parseBilibiliUrl({
+        url,
+        proxy: picker.proxy,
+        shared: picker.shared,
+      });
+      if (state.view !== "joined" || state.providerPicker?.status !== "ready") {
+        emitProviderPlaybackRefreshFailure();
+        return;
+      }
+      if (
+        selectedItemId &&
+        state.providerPicker.items.some(
+          (item) => item.itemId === selectedItemId,
+        )
+      ) {
+        selectProviderItem(selectedItemId);
+      }
+      if (selectedQualityCandidateId) {
+        selectProviderQuality(selectedQualityCandidateId);
+      }
+      if (state.view !== "joined" || state.providerPicker?.status !== "ready") {
+        return;
+      }
+      shareSelectedProviderItem({ preservePlayback: true });
+      if (state.view === "joined") {
+        emit({
+          ...state,
+          playbackError: undefined,
+          diagnostics: appendDiagnosticItem(
+            "provider playback source refreshed",
+          ),
+        });
+      }
+    } catch (error) {
+      emitProviderPlaybackRefreshFailure(error);
+    } finally {
+      providerPlaybackRefreshKey = null;
+    }
+  }
+
   function showDirectPlaybackFailure(input: {
     stage: WebRoomPlaybackErrorStage;
     message: string;
@@ -2410,6 +2598,7 @@ export function createWebRoomAppController(
         canUseProxyFallback: canFallback,
       },
     });
+    void refreshCurrentProviderPlayback({ stage: input.stage });
   }
 
   async function retryProviderProxyFallback(): Promise<void> {
@@ -2434,7 +2623,7 @@ export function createWebRoomAppController(
     await parseBilibiliUrl({
       url,
       proxy: true,
-      shared: true,
+      shared: picker.shared,
     });
     if (state.view !== "joined" || state.providerPicker?.status !== "ready") {
       return;

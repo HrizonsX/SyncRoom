@@ -13,6 +13,8 @@ export type MediaElementLike = {
 };
 
 export type EventedMediaElementLike = MediaElementLike & {
+  webkitDisplayingFullscreen?: boolean;
+  webkitPresentationMode?: "inline" | "fullscreen" | "picture-in-picture";
   addEventListener: (type: string, listener: () => void) => void;
   removeEventListener: (type: string, listener: () => void) => void;
 };
@@ -51,11 +53,19 @@ const PLAYBACK_EVENT_TYPES: readonly LocalPlaybackEvent[] = [
 ];
 const LOCAL_PAUSE_TEARDOWN_GUARD_MS = 150;
 const EXPLICIT_PLAY_TOGGLE_ECHO_GUARD_MS = 300;
-const RANGE_SEEK_ECHO_GUARD_MS = 300;
 const RANGE_SEEK_ECHO_TOLERANCE_SECONDS = 0.5;
 const MEDIA_PLAY_REQUEST_EVENT = "mediaplayrequest";
 const MEDIA_PAUSE_REQUEST_EVENT = "mediapauserequest";
 const MEDIA_SEEK_REQUEST_EVENT = "mediaseekrequest";
+const MEDIA_PLAYBACK_RATE_REQUEST_EVENT = "mediaplaybackraterequest";
+const SEMANTIC_REQUEST_ECHO_GUARD_MS = 1_000;
+const NATIVE_FULLSCREEN_SEEK_ECHO_GUARD_MS = 30_000;
+const NATIVE_FULLSCREEN_SEEK_ECHO_TOLERANCE_SECONDS = 0.75;
+
+export type PlaybackSyncControlsBinding = {
+  dispose: () => void;
+  suppressNativeSeekEcho: (targetTime: number) => void;
+};
 
 export type ApplyRemotePlaybackResult =
   | {
@@ -73,16 +83,6 @@ function derivePlayState(media: MediaElementLike, event: LocalPlaybackEvent) {
     return "buffering";
   }
   return media.paused ? "paused" : "playing";
-}
-
-function deriveSyncIntent(event: LocalPlaybackEvent) {
-  if (event === "seeking" || event === "seeked") {
-    return "explicit-seek";
-  }
-  if (event === "ratechange") {
-    return "explicit-ratechange";
-  }
-  return undefined;
 }
 
 function normalizePlaybackRate(playbackRate: number): number {
@@ -103,7 +103,9 @@ export function createPlaybackUpdateMessage(args: {
   now?: () => number;
 }): Extract<ClientMessage, { type: "playback:update" }> {
   const currentTime = args.now?.() ?? Date.now();
-  const syncIntent = args.syncIntent ?? deriveSyncIntent(args.event);
+  // Native media events are also emitted by source hydration and remote state
+  // application. Only a semantic control request may mark an update explicit.
+  const syncIntent = args.syncIntent;
   const playback: PlaybackState = {
     url: args.url,
     currentTime: args.media.currentTime,
@@ -145,7 +147,7 @@ export function bindPlaybackSyncControls(args: {
     message: Extract<ClientMessage, { type: "playback:update" }>,
   ) => void;
   now?: () => number;
-}): { dispose: () => void } {
+}): PlaybackSyncControlsBinding {
   const listeners = new Map<LocalPlaybackEvent, () => void>();
   const eventTypes = args.events ?? PLAYBACK_EVENT_TYPES;
   const shouldUseSeekedAsSeekCommit = eventTypes.includes("seeked");
@@ -157,6 +159,11 @@ export function bindPlaybackSyncControls(args: {
   let suppressRangeSeekedUntil = 0;
   let lastRangeSeekCommitTime: number | null = null;
   let pendingRangeSeekTime: number | null = null;
+  let suppressRateChangeUntil = 0;
+  let lastRequestedPlaybackRate: number | null = null;
+  let nativeFullscreenEventState: boolean | null = null;
+  let suppressedNativeSeekTarget: number | null = null;
+  let suppressNativeSeekUntil = 0;
 
   const clearPendingPause = (): void => {
     if (pendingPauseTimer === null) {
@@ -190,6 +197,50 @@ export function bindPlaybackSyncControls(args: {
   };
 
   const getGuardNow = (): number => args.now?.() ?? Date.now();
+
+  const isNativeFullscreenActive = (): boolean =>
+    nativeFullscreenEventState ??
+    (args.media.webkitDisplayingFullscreen === true ||
+      args.media.webkitPresentationMode === "fullscreen");
+
+  const clearSuppressedNativeSeek = (): void => {
+    suppressedNativeSeekTarget = null;
+    suppressNativeSeekUntil = 0;
+  };
+
+  const shouldSuppressNativeSeekEcho = (): boolean => {
+    if (suppressedNativeSeekTarget === null) {
+      return false;
+    }
+    if (!isNativeFullscreenActive()) {
+      clearSuppressedNativeSeek();
+      return false;
+    }
+    const targetTime = suppressedNativeSeekTarget;
+    const isFresh = getGuardNow() <= suppressNativeSeekUntil;
+    clearSuppressedNativeSeek();
+    return (
+      isFresh &&
+      Math.abs(args.media.currentTime - targetTime) <=
+        NATIVE_FULLSCREEN_SEEK_ECHO_TOLERANCE_SECONDS
+    );
+  };
+
+  const handleNativeFullscreenBegin = (): void => {
+    nativeFullscreenEventState = true;
+  };
+  const handleNativeFullscreenEnd = (): void => {
+    nativeFullscreenEventState = false;
+    clearSuppressedNativeSeek();
+  };
+  const handleNativePresentationModeChange = (): void => {
+    nativeFullscreenEventState =
+      args.media.webkitDisplayingFullscreen === true ||
+      args.media.webkitPresentationMode === "fullscreen";
+    if (!nativeFullscreenEventState) {
+      clearSuppressedNativeSeek();
+    }
+  };
 
   const isPlayToggleDisabled = (): boolean =>
     args.playToggleControl?.disabled === true ||
@@ -247,6 +298,24 @@ export function bindPlaybackSyncControls(args: {
     );
   };
 
+  const shouldSuppressRateChangeEcho = (): boolean => {
+    if (lastRequestedPlaybackRate === null) {
+      return false;
+    }
+    if (getGuardNow() > suppressRateChangeUntil) {
+      lastRequestedPlaybackRate = null;
+      return false;
+    }
+    return (
+      Math.abs(args.media.playbackRate - lastRequestedPlaybackRate) <= 0.01
+    );
+  };
+
+  const rememberSeekEcho = (targetTime: number): void => {
+    lastRangeSeekCommitTime = targetTime;
+    suppressRangeSeekedUntil = getGuardNow() + SEMANTIC_REQUEST_ECHO_GUARD_MS;
+  };
+
   const commitRangeSeek = (): void => {
     if (!rangeSeekDirty) {
       return;
@@ -257,9 +326,8 @@ export function bindPlaybackSyncControls(args: {
     if (targetTime !== null) {
       args.media.currentTime = targetTime;
     }
-    lastRangeSeekCommitTime = args.media.currentTime;
-    suppressRangeSeekedUntil = getGuardNow() + RANGE_SEEK_ECHO_GUARD_MS;
-    dispatchLocalEvent("seeked");
+    rememberSeekEcho(args.media.currentTime);
+    dispatchLocalEvent("seeked", args.media, "explicit-seek");
   };
 
   const handleTimeRangePointerDown = (): void => {
@@ -332,6 +400,57 @@ export function bindPlaybackSyncControls(args: {
   const handleMediaPauseRequest = (): void => {
     dispatchExplicitPlayToggleRequest("paused");
   };
+  const handleMediaSeekRequest = (event?: Event): void => {
+    const requestedTime = (event as CustomEvent<unknown> | undefined)?.detail;
+    if (typeof requestedTime !== "number" || !Number.isFinite(requestedTime)) {
+      return;
+    }
+    const targetTime = Math.max(0, requestedTime);
+    rememberSeekEcho(targetTime);
+    dispatchLocalEvent(
+      "seeked",
+      {
+        currentTime: targetTime,
+        playbackRate: args.media.playbackRate,
+        paused: args.media.paused,
+        play: args.media.play,
+        pause: args.media.pause,
+      },
+      "explicit-seek",
+    );
+  };
+  const handleMediaPlaybackRateRequest = (event?: Event): void => {
+    const requestedRate = (event as CustomEvent<unknown> | undefined)?.detail;
+    if (
+      typeof requestedRate !== "number" ||
+      !Number.isFinite(requestedRate) ||
+      requestedRate <= 0
+    ) {
+      return;
+    }
+    if (
+      Math.abs(
+        normalizePlaybackRate(args.media.playbackRate) - requestedRate,
+      ) <= 0.01
+    ) {
+      // Recreated media-chrome controls can repeat their current value. A
+      // no-op rate request must not become a fresh room timeline command.
+      return;
+    }
+    lastRequestedPlaybackRate = requestedRate;
+    suppressRateChangeUntil = getGuardNow() + SEMANTIC_REQUEST_ECHO_GUARD_MS;
+    dispatchLocalEvent(
+      "ratechange",
+      {
+        currentTime: args.media.currentTime,
+        playbackRate: requestedRate,
+        paused: args.media.paused,
+        play: args.media.play,
+        pause: args.media.pause,
+      },
+      "explicit-ratechange",
+    );
+  };
   const playbackRequestTarget =
     args.playbackRequestTarget ?? args.playToggleControl;
 
@@ -342,6 +461,14 @@ export function bindPlaybackSyncControls(args: {
   playbackRequestTarget?.addEventListener(
     MEDIA_PAUSE_REQUEST_EVENT,
     handleMediaPauseRequest,
+  );
+  playbackRequestTarget?.addEventListener(
+    MEDIA_SEEK_REQUEST_EVENT,
+    handleMediaSeekRequest,
+  );
+  playbackRequestTarget?.addEventListener(
+    MEDIA_PLAYBACK_RATE_REQUEST_EVENT,
+    handleMediaPlaybackRateRequest,
   );
   args.timeRangeControl?.addEventListener(
     "pointerdown",
@@ -360,6 +487,15 @@ export function bindPlaybackSyncControls(args: {
     MEDIA_SEEK_REQUEST_EVENT,
     handleTimeRangeSeekRequest,
   );
+  args.media.addEventListener(
+    "webkitbeginfullscreen",
+    handleNativeFullscreenBegin,
+  );
+  args.media.addEventListener("webkitendfullscreen", handleNativeFullscreenEnd);
+  args.media.addEventListener(
+    "webkitpresentationmodechanged",
+    handleNativePresentationModeChange,
+  );
 
   for (const event of eventTypes) {
     const listener = () => {
@@ -374,6 +510,16 @@ export function bindPlaybackSyncControls(args: {
         if (shouldSuppressRangeSeekedEcho()) {
           return;
         }
+        if (shouldSuppressNativeSeekEcho()) {
+          return;
+        }
+        if (isNativeFullscreenActive()) {
+          dispatchLocalEvent(event, args.media, "explicit-seek");
+          return;
+        }
+      }
+      if (event === "ratechange" && shouldSuppressRateChangeEcho()) {
+        return;
       }
       if (event === "pause") {
         clearPendingPause();
@@ -408,8 +554,17 @@ export function bindPlaybackSyncControls(args: {
   }
 
   return {
+    suppressNativeSeekEcho(targetTime: number) {
+      if (!Number.isFinite(targetTime)) {
+        return;
+      }
+      suppressedNativeSeekTarget = Math.max(0, targetTime);
+      suppressNativeSeekUntil =
+        getGuardNow() + NATIVE_FULLSCREEN_SEEK_ECHO_GUARD_MS;
+    },
     dispose() {
       clearPendingPause();
+      clearSuppressedNativeSeek();
       removeWindowRangeEndListeners();
       playbackRequestTarget?.removeEventListener(
         MEDIA_PLAY_REQUEST_EVENT,
@@ -418,6 +573,14 @@ export function bindPlaybackSyncControls(args: {
       playbackRequestTarget?.removeEventListener(
         MEDIA_PAUSE_REQUEST_EVENT,
         handleMediaPauseRequest,
+      );
+      playbackRequestTarget?.removeEventListener(
+        MEDIA_SEEK_REQUEST_EVENT,
+        handleMediaSeekRequest,
+      );
+      playbackRequestTarget?.removeEventListener(
+        MEDIA_PLAYBACK_RATE_REQUEST_EVENT,
+        handleMediaPlaybackRateRequest,
       );
       args.timeRangeControl?.removeEventListener(
         "pointerdown",
@@ -435,6 +598,18 @@ export function bindPlaybackSyncControls(args: {
       args.timeRangeControl?.removeEventListener(
         MEDIA_SEEK_REQUEST_EVENT,
         handleTimeRangeSeekRequest,
+      );
+      args.media.removeEventListener(
+        "webkitbeginfullscreen",
+        handleNativeFullscreenBegin,
+      );
+      args.media.removeEventListener(
+        "webkitendfullscreen",
+        handleNativeFullscreenEnd,
+      );
+      args.media.removeEventListener(
+        "webkitpresentationmodechanged",
+        handleNativePresentationModeChange,
       );
       for (const [event, listener] of listeners.entries()) {
         args.media.removeEventListener(event, listener);
@@ -469,6 +644,7 @@ export async function applyRemotePlaybackState(args: {
   playback: PlaybackState;
   allowLocalEcho?: boolean;
   seekToleranceSeconds?: number;
+  onBeforeSeek?: (targetTime: number) => void;
   now?: () => number;
 }): Promise<ApplyRemotePlaybackResult> {
   if (args.playback.actorId === args.localMemberId && !args.allowLocalEcho) {
@@ -488,6 +664,7 @@ export async function applyRemotePlaybackState(args: {
     Math.abs(args.media.currentTime - projectedCurrentTime) >
     seekToleranceSeconds
   ) {
+    args.onBeforeSeek?.(projectedCurrentTime);
     args.media.currentTime = projectedCurrentTime;
     actions.push("seek");
   }

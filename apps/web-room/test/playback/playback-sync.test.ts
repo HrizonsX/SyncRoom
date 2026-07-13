@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { ClientMessage } from "@syncroom/protocol";
 import {
   applyRemotePlaybackState,
   bindPlaybackSyncControls,
@@ -41,6 +42,7 @@ test("creates playback:update messages from local player events", () => {
       media,
       event: "seeked",
       seq: 7,
+      syncIntent: "explicit-seek",
       now: () => 1_000,
     }),
     {
@@ -107,6 +109,112 @@ test("does not mark plain media pause events as user initiated", () => {
   assert.equal(message.payload.playback.userInitiated, undefined);
 });
 
+test("does not promote native seek and rate echoes to explicit user controls", () => {
+  const seekMessage = createPlaybackUpdateMessage({
+    memberToken: "valid-member-token-123",
+    actorId: "member-joiner",
+    url: "https://syncroom.example.test/video.mpd",
+    media: createMedia({ currentTime: 0, playbackRate: 1, paused: true }),
+    event: "seeked",
+    seq: 1,
+    now: () => 2_000,
+  });
+  const rateMessage = createPlaybackUpdateMessage({
+    memberToken: "valid-member-token-123",
+    actorId: "member-joiner",
+    url: "https://syncroom.example.test/video.mpd",
+    media: createMedia({ currentTime: 0, playbackRate: 1, paused: true }),
+    event: "ratechange",
+    seq: 2,
+    now: () => 2_000,
+  });
+
+  for (const message of [seekMessage, rateMessage]) {
+    assert.equal(message.payload.playback.syncIntent, undefined);
+    assert.equal(message.payload.playback.userInitiated, undefined);
+  }
+});
+
+test("dispatches semantic seek and playback-rate requests as explicit controls", () => {
+  const mediaListeners = new Map<string, Set<() => void>>();
+  const requestListeners = new Map<string, Set<(event?: Event) => void>>();
+  const media = {
+    ...createMedia({ currentTime: 24, playbackRate: 1, paused: false }),
+    addEventListener(type: string, listener: () => void) {
+      const items = mediaListeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      mediaListeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      mediaListeners.get(type)?.delete(listener);
+    },
+  };
+  const requestTarget = {
+    addEventListener(type: string, listener: (event?: Event) => void) {
+      const items =
+        requestListeners.get(type) ?? new Set<(event?: Event) => void>();
+      items.add(listener);
+      requestListeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: (event?: Event) => void) {
+      requestListeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: Array<ReturnType<typeof createPlaybackUpdateMessage>> = [];
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    playbackRequestTarget: requestTarget,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => {
+      seq += 1;
+      return seq;
+    },
+    now: () => 3_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  requestListeners
+    .get("mediaseekrequest")
+    ?.forEach((listener) => listener({ detail: 96 } as unknown as Event));
+  requestListeners
+    .get("mediaplaybackraterequest")
+    ?.forEach((listener) => listener({ detail: 1 } as unknown as Event));
+  requestListeners
+    .get("mediaplaybackraterequest")
+    ?.forEach((listener) => listener({ detail: 1.5 } as unknown as Event));
+  binding.dispose();
+
+  assert.deepEqual(
+    dispatched.map((message) => ({
+      currentTime: message.payload.playback.currentTime,
+      playbackRate: message.payload.playback.playbackRate,
+      syncIntent: message.payload.playback.syncIntent,
+      userInitiated: message.payload.playback.userInitiated,
+    })),
+    [
+      {
+        currentTime: 96,
+        playbackRate: 1,
+        syncIntent: "explicit-seek",
+        userInitiated: true,
+      },
+      {
+        currentTime: 24,
+        playbackRate: 1.5,
+        syncIntent: "explicit-ratechange",
+        userInitiated: true,
+      },
+    ],
+  );
+});
+
 test("binds player events to playback update dispatch", () => {
   const listeners = new Map<string, Set<() => void>>();
   const media = {
@@ -162,7 +270,7 @@ test("binds player events to playback update dispatch", () => {
   });
 });
 
-test("dispatches explicit seek on seeking when seeked is not bound", () => {
+test("dispatches native seeking as a non-explicit playback observation", () => {
   const listeners = new Map<string, Set<() => void>>();
   const media = {
     ...createMedia({ currentTime: 64, paused: false }),
@@ -203,8 +311,6 @@ test("dispatches explicit seek on seeking when seeked is not bound", () => {
           url: "https://syncroom.example.test/video.mpd",
           currentTime: 64,
           playState: "playing",
-          syncIntent: "explicit-seek",
-          userInitiated: true,
           playbackRate: 1,
           updatedAt: 3_000,
           serverTime: 3_000,
@@ -216,7 +322,7 @@ test("dispatches explicit seek on seeking when seeked is not bound", () => {
   ]);
 });
 
-test("dispatches final seeked position instead of intermediate drag position", () => {
+test("dispatches final native seeked position without claiming user intent", () => {
   const listeners = new Map<string, Set<() => void>>();
   const media = {
     ...createMedia({ currentTime: 24, paused: false }),
@@ -263,8 +369,6 @@ test("dispatches final seeked position instead of intermediate drag position", (
           url: "https://syncroom.example.test/video.mpd",
           currentTime: 72,
           playState: "playing",
-          syncIntent: "explicit-seek",
-          userInitiated: true,
           playbackRate: 1,
           updatedAt: 4_000,
           serverTime: 4_000,
@@ -274,6 +378,101 @@ test("dispatches final seeked position instead of intermediate drag position", (
       },
     },
   ]);
+});
+
+test("dispatches Safari native fullscreen seeked as an explicit user seek", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ currentTime: 72, paused: false }),
+    webkitDisplayingFullscreen: true,
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: unknown[] = [];
+  const binding = bindPlaybackSyncControls({
+    media,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => 9,
+    now: () => 5_000,
+    dispatch(message) {
+      dispatched.push(message);
+    },
+  });
+
+  listeners.get("seeked")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.deepEqual(dispatched, [
+    {
+      type: "playback:update",
+      payload: {
+        memberToken: "valid-member-token-123",
+        playback: {
+          url: "https://syncroom.example.test/video.mpd",
+          currentTime: 72,
+          playState: "playing",
+          syncIntent: "explicit-seek",
+          userInitiated: true,
+          playbackRate: 1,
+          updatedAt: 5_000,
+          serverTime: 5_000,
+          actorId: "member-1",
+          seq: 9,
+        },
+      },
+    },
+  ]);
+});
+
+test("stops treating native seeks as explicit after Safari exits fullscreen", () => {
+  const listeners = new Map<string, Set<() => void>>();
+  const media = {
+    ...createMedia({ currentTime: 72, paused: false }),
+    webkitDisplayingFullscreen: true,
+    addEventListener(type: string, listener: () => void) {
+      const items = listeners.get(type) ?? new Set<() => void>();
+      items.add(listener);
+      listeners.set(type, items);
+    },
+    removeEventListener(type: string, listener: () => void) {
+      listeners.get(type)?.delete(listener);
+    },
+  };
+  const dispatched: Array<Extract<ClientMessage, { type: "playback:update" }>> =
+    [];
+  let seq = 0;
+  const binding = bindPlaybackSyncControls({
+    media,
+    getContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-1",
+      url: "https://syncroom.example.test/video.mpd",
+    }),
+    nextSeq: () => ++seq,
+    dispatch: (message) => dispatched.push(message),
+  });
+
+  listeners.get("webkitbeginfullscreen")?.forEach((listener) => listener());
+  listeners.get("seeked")?.forEach((listener) => listener());
+  listeners.get("webkitendfullscreen")?.forEach((listener) => listener());
+  media.currentTime = 96;
+  listeners.get("seeked")?.forEach((listener) => listener());
+  binding.dispose();
+
+  assert.equal(dispatched[0]?.payload.playback.syncIntent, "explicit-seek");
+  assert.equal(dispatched[0]?.payload.playback.userInitiated, true);
+  assert.equal(dispatched[1]?.payload.playback.syncIntent, undefined);
+  assert.equal(dispatched[1]?.payload.playback.userInitiated, undefined);
 });
 
 test("defers range-drag seek updates until pointer release", () => {

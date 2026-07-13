@@ -9,6 +9,10 @@ import {
   preservePlaybackVideoElement,
 } from "./playback/playback-video-preservation.js";
 import {
+  readPlayerChromeAutohideState,
+  restorePlayerChromeAutohideState,
+} from "./playback/player-chrome-preservation.js";
+import {
   captureDanmakuLayerAnimationSnapshots,
   findDanmakuLayerElement,
   parkDanmakuLayerElement,
@@ -69,6 +73,13 @@ if (app) {
     }
 
     const existingPlaybackVideo = findPlaybackVideoElement(appRoot);
+    const shouldRestorePlayerChromeAutohide =
+      state.view === "joined" &&
+      state.playbackSource !== undefined &&
+      state.playback?.playState === "playing";
+    const playerChromeAutohideState = shouldRestorePlayerChromeAutohide
+      ? readPlayerChromeAutohideState(appRoot)
+      : null;
     const existingDanmakuLayer = shouldPreserveDanmakuLayer
       ? findDanmakuLayerElement(appRoot)
       : null;
@@ -94,6 +105,7 @@ if (app) {
       restoreChatScrollState(appRoot, chatScrollState);
       restoreDisclosureOpenState(appRoot, disclosureOpenState);
       preservePlaybackVideoElement(appRoot, existingPlaybackVideo);
+      restorePlayerChromeAutohideState(appRoot, playerChromeAutohideState);
       preserveDanmakuLayerElement(
         appRoot,
         existingDanmakuLayer,

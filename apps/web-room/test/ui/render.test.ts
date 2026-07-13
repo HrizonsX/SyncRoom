@@ -1104,6 +1104,24 @@ test("renders provider proxy and shared unchecked by default", () => {
   assert.doesNotMatch(html, /name="providerShared" checked type="checkbox"/);
 });
 
+test("renders direct shared mode risk note when proxy is off", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    providerPicker: {
+      open: true,
+      status: "ready",
+      url: "https://www.bilibili.com/video/BV1TEST",
+      proxy: false,
+      shared: true,
+      items: [],
+    },
+  });
+
+  assert.match(html, /data-policy-mode-note="direct-shared"/);
+  assert.match(html, /省服务器带宽/);
+  assert.match(html, /真实媒体 URL/);
+});
+
 test("renders host picker controls for Bilibili parse results and playback policy", () => {
   const html = renderWebRoomApp({
     ...joinedRoomState,
@@ -1220,6 +1238,41 @@ test("renders host picker controls for Bilibili parse results and playback polic
   );
 });
 
+test("disables provider sharing when the selected picker item has no playback descriptor", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    providerPicker: {
+      open: true,
+      status: "ready",
+      url: "https://www.bilibili.com/bangumi/play/ep399856",
+      proxy: true,
+      shared: true,
+      selectedItemId: "ep-399856",
+      items: [
+        {
+          itemId: "ep-399856",
+          title: "Episode 1",
+          kind: "episode",
+          unavailableReason: "pgc_preview_playurl",
+          message: "Need member authorization",
+        },
+      ],
+    },
+  });
+
+  const providerUrlRowStart = html.indexOf('class="provider-url-row"');
+  const providerUrlRowHtml = html.slice(
+    providerUrlRowStart,
+    html.indexOf("</div>", providerUrlRowStart),
+  );
+  assert.match(
+    providerUrlRowHtml,
+    /data-action="share-provider-item" disabled/,
+  );
+  assert.match(html, /Need member authorization/);
+  assert.doesNotMatch(html, /data-action="select-provider-quality"/);
+});
+
 test("omits the default provider picker helper copy", () => {
   const html = renderWebRoomApp(joinedRoomState);
   const pickerStart = html.indexOf('data-panel="host-picker"');
@@ -1277,6 +1330,25 @@ test("renders direct playback failure with host proxy fallback action", () => {
   assert.doesNotMatch(playerRegion, /data-playback-error-stage/);
   assert.match(settingsRegion, /role="alert"/);
   assert.match(settingsRegion, /data-action="retry-provider-proxy"/);
+});
+
+test("renders network playback errors with a friendly stage label", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    playbackError: {
+      code: "direct_playback_failed",
+      stage: "network",
+      message: "网络加载失败，请稍后重试或切换到 proxy 播放。",
+      canUseProxyFallback: true,
+    },
+  });
+
+  assert.match(html, /<strong class="playback-error-stage">网络<\/strong>/);
+  assert.doesNotMatch(html, />network<\/strong>/);
+  assert.match(
+    html,
+    /<span class="playback-error-message">网络加载失败，请稍后重试或切换到 proxy 播放。<\/span>/,
+  );
 });
 
 test("exposes member-safe authorization state for non-host users", () => {

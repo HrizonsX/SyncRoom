@@ -347,6 +347,9 @@ export function createWebRoomSocketClient(options: WebRoomSocketClientOptions) {
           ...(input.bufferAheadSeconds === undefined
             ? {}
             : { bufferAheadSeconds: input.bufferAheadSeconds }),
+          ...(input.playbackRevision
+            ? { playbackRevision: input.playbackRevision }
+            : {}),
         },
       });
     },

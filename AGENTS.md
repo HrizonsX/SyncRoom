@@ -156,7 +156,9 @@ Refactors touching these areas require regression coverage:
 - Server config loading
 - Protocol validation (type guards)
 - Server room lifecycle and admin routing
-- Web-room media-chrome playback sync changes must cover control-bar requests, video-surface requests, rapid opposite toggles, and delayed native media play/pause echoes; semantic request events are the authoritative user intent during the short echo guard.
+- Web-room media-chrome playback sync changes must cover control-bar requests, video-surface requests, keyboard seeks, rapid opposite toggles, new-member/refresh hydration, and delayed native media play/pause/seek/rate echoes; only semantic request events are authoritative user intent, while native hydration echoes must remain non-explicit.
+- Web-room VOD playback revisions are command boundaries: member, chat, permission, and buffer-only `room:state` updates must not re-project and re-seek the same playback revision. Regression tests must prove that a new playback revision still applies.
+- Web-room wait-mode changes must cover false `waiting` events with sufficient buffer, player-chrome rerenders without buffer-reporter resets, frozen playback timeline rebasing on hold/release, no-op buffer reports without room broadcasts, strategy changes, and buffering-member departure.
 - Provider parse and picker-error changes must cover unsupported URLs, no playable candidates, auth-required responses, transport/non-JSON failures, and must not leak raw backend or English provider errors into user-facing picker copy.
 
 ## Agent Execution Rules

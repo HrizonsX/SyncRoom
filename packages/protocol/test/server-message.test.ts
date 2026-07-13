@@ -61,6 +61,31 @@ test("accepts a valid room:state message", () => {
   );
 });
 
+test("validates readiness barrier revisions in room state", () => {
+  const createMessage = (playbackRevision: unknown) => ({
+    type: "room:state",
+    payload: {
+      roomCode: "ABC123",
+      hostMemberId: "member-1",
+      sharedVideo: null,
+      playback: null,
+      playbackSync: {
+        strategy: "wait",
+        hold: {
+          active: true,
+          playbackRevision,
+        },
+        bufferingMemberIds: ["member-1"],
+      },
+      members: [{ id: "member-1", name: "Alice" }],
+    },
+  });
+
+  assert.equal(isServerMessage(createMessage("revision-1")), true);
+  assert.equal(isServerMessage(createMessage("x".repeat(1_025))), false);
+  assert.equal(isServerMessage(createMessage(42)), false);
+});
+
 test("accepts room:state with long refresh-restored playback urls", () => {
   const url = createGenericVideoUrlWithExactLength(1024);
   const ref = parseSharedVideoRef(url);

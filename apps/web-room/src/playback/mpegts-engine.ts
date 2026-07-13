@@ -12,6 +12,8 @@ export type MpegtsPlayerConfig = Record<string, unknown>;
 export type MpegtsPlayerInstance = {
   attachMediaElement: (video: PlaybackVideoElement) => void;
   load: () => void;
+  off?: (event: "error", listener: (...args: unknown[]) => void) => void;
+  on?: (event: "error", listener: (...args: unknown[]) => void) => void;
   unload?: () => void;
   detachMediaElement?: () => void;
   destroy?: () => void;

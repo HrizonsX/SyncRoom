@@ -2050,6 +2050,7 @@ test("reports VOD buffering through the buffer coordination channel", async (t) 
       state: "buffering",
       currentTime: 12,
       bufferAheadSeconds: 0,
+      playbackRevision: JSON.stringify([sharedUrl, "member-host", 1, 1_000]),
     },
   ]);
 
@@ -2058,6 +2059,7 @@ test("reports VOD buffering through the buffer coordination channel", async (t) 
     state: "ready",
     currentTime: 12,
     bufferAheadSeconds: 0,
+    playbackRevision: JSON.stringify([sharedUrl, "member-host", 1, 1_000]),
   });
 });
 
@@ -2198,6 +2200,7 @@ test("continues reporting ready buffer growth while VOD wait mode is holding", a
       state: "ready",
       currentTime: 12,
       bufferAheadSeconds: 1,
+      playbackRevision: JSON.stringify([sharedUrl, "member-host", 1, 1_000]),
     },
   ]);
 
@@ -2207,7 +2210,77 @@ test("continues reporting ready buffer growth while VOD wait mode is holding", a
     state: "ready",
     currentTime: 12,
     bufferAheadSeconds: 3,
+    playbackRevision: JSON.stringify([sharedUrl, "member-host", 1, 1_000]),
   });
+});
+
+test("seeks to the held VOD target before reporting readiness", async (t) => {
+  const video = new FakeEventedVideoElement();
+  const reports: unknown[] = [];
+  const sourceUrl = "https://cdn.example.test/video.mpd";
+  const sharedUrl = "https://www.bilibili.com/video/BV1xx411c7mD";
+  video.currentTime = 12;
+  video.buffered = createBufferedRanges([{ start: 12, end: 20 }]);
+  class FakeShakaPlayer {
+    async attach(): Promise<void> {
+      return undefined;
+    }
+
+    async load(): Promise<void> {
+      return undefined;
+    }
+  }
+  const controller = createWebRoomPlaybackController({
+    loadShakaPlayer: async () => ({ Player: FakeShakaPlayer }),
+    getSyncContext: () => ({
+      memberToken: "valid-member-token-123",
+      actorId: "member-guest",
+      url: sharedUrl,
+    }),
+    dispatchPlaybackUpdate: () => undefined,
+    dispatchPlaybackBufferReport: (report) => reports.push(report),
+    nextSeq: () => 1,
+    now: () => 1_000,
+  });
+  t.after(() => controller.dispose());
+
+  await controller.sync(createPlaybackRoot(video), {
+    ...createJoinedPlaybackState(sourceUrl),
+    currentMemberId: "member-guest",
+    playbackUrl: sharedUrl,
+    playback: {
+      url: sharedUrl,
+      currentTime: 120,
+      playState: "playing",
+      userInitiated: true,
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "member-host",
+      seq: 2,
+    },
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 1_000,
+        deadlineAt: 31_000,
+        playbackRevision: "barrier-seek-120",
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  assert.equal(video.currentTime, 120);
+  assert.deepEqual(reports, [
+    {
+      state: "buffering",
+      currentTime: 120,
+      bufferAheadSeconds: 0,
+      playbackRevision: JSON.stringify([sharedUrl, "member-host", 2, 1_000]),
+    },
+  ]);
 });
 
 test("keeps the buffer reporter bound when player controls rerender during a hold", async (t) => {
@@ -2347,6 +2420,7 @@ test("counts a tiny buffered-range gap after seek as ready buffer ahead", async 
       state: "ready",
       currentTime: 12,
       bufferAheadSeconds: 3.25,
+      playbackRevision: JSON.stringify([sharedUrl, "member-host", 1, 1_000]),
     },
   ]);
 });

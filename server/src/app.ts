@@ -15,6 +15,7 @@ import { createAdminCommandConsumer } from "./admin-command-consumer.js";
 import { createRuntimeLimitsService } from "./admin/runtime-limits-service.js";
 import { createMessageHandler } from "./message-handler.js";
 import { createNodeHeartbeat } from "./node-heartbeat.js";
+import { createPlaybackHoldExpiryScheduler } from "./playback-hold-expiry-scheduler.js";
 import {
   createNginxCacheMetricsListener,
   type NginxCacheMetricsListener,
@@ -194,6 +195,15 @@ export async function createSyncServer(
     defaultTtlMs: DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS,
     now,
   });
+  const playbackProxyService = createPlaybackProxyService({
+    metricsCollector,
+    logEvent,
+  });
+  const playbackProxyRouter = createPlaybackProxyRouter({
+    controller: createPlaybackProxyController({
+      service: playbackProxyService,
+    }),
+  });
 
   const runtimeLimitsService = createRuntimeLimitsService();
   const roomService = createRoomService({
@@ -225,6 +235,10 @@ export async function createSyncServer(
       clearOwner: videoAuthService.clearOwner,
       pruneExpired: videoAuthService.pruneExpired,
     },
+    playbackProxyLifecycle: {
+      clearRoom: playbackProxyService.clearRoom,
+      cleanupExpired: playbackProxyService.cleanupExpired,
+    },
   });
   const voiceService = createVoiceAccessService({
     config: voiceConfig,
@@ -234,15 +248,6 @@ export async function createSyncServer(
     now,
   });
   const announcementStore = createInMemoryAnnouncementStore({ now });
-  const playbackProxyService = createPlaybackProxyService({
-    metricsCollector,
-    logEvent,
-  });
-  const playbackProxyRouter = createPlaybackProxyRouter({
-    controller: createPlaybackProxyController({
-      service: playbackProxyService,
-    }),
-  });
   const mediaExtractorClient =
     dependencies.mediaExtractorClient ??
     createMediaExtractorClient({
@@ -301,6 +306,20 @@ export async function createSyncServer(
     }
   }
 
+  const playbackHoldExpiryScheduler = createPlaybackHoldExpiryScheduler({
+    releaseExpiredHold: (roomCode, expectedDeadline) =>
+      roomService.releaseExpiredPlaybackHold(roomCode, expectedDeadline),
+    publishRoomStateUpdated: (roomCode) =>
+      publishRoomEvent({
+        type: "room_state_updated",
+        roomCode,
+        sourceInstanceId: persistenceConfig.instanceId,
+        emittedAt: now(),
+      }),
+    logEvent,
+    now,
+  });
+
   const roomEventConsumer = await createRoomEventConsumer({
     roomEventBus,
     getRoomStateByCode: (roomCode) => roomService.getRoomStateByCode(roomCode),
@@ -309,6 +328,11 @@ export async function createSyncServer(
     send,
     instanceId: persistenceConfig.instanceId,
     logEvent,
+    onRoomStateObserved: playbackHoldExpiryScheduler.observeRoom,
+    onRoomDeleted: (roomCode) => {
+      playbackHoldExpiryScheduler.forgetRoom(roomCode);
+      playbackProxyService.clearRoom(roomCode);
+    },
   });
   const adminCommandConsumer = await createAdminCommandConsumer({
     instanceId: persistenceConfig.instanceId,
@@ -499,6 +523,10 @@ export async function createSyncServer(
             run: () => {
               roomReaper.stop();
             },
+          },
+          {
+            name: "stop_playback_hold_expiry_scheduler",
+            run: () => playbackHoldExpiryScheduler.stop(),
           },
           {
             name: "stop_node_heartbeat",

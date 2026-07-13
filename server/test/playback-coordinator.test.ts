@@ -4,6 +4,7 @@ import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
 import {
   coordinatePlaybackCommand,
   coordinatePlaybackBufferReport,
+  coordinatePlaybackHoldExpiry,
   coordinatePlaybackMemberJoin,
   coordinatePlaybackMemberDeparture,
   coordinatePlaybackSyncStrategyChange,
@@ -107,6 +108,7 @@ test("coordinator keeps explicit seek as playing intent while wait mode buffers"
   });
 
   assert.equal(held.hold.active, true);
+  assert.equal(held.hold.deadlineAt, 12_000);
   assert.deepEqual(held.bufferingMemberIds, ["member-guest"]);
 });
 
@@ -378,6 +380,60 @@ test("coordinator freezes and rebases the playback timeline across a wait hold",
   assert.equal(released.playback?.serverTime, 8_000);
 });
 
+test("coordinator expires a wait hold without a follow-up buffer report", () => {
+  const room = createRoom({
+    playback: createPlayback({ currentTime: 42, serverTime: 3_000 }),
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 3_000,
+        deadlineAt: 13_000,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  const expired = coordinatePlaybackHoldExpiry({
+    room,
+    expectedDeadline: 13_000,
+    currentTime: 13_000,
+  });
+
+  assert.equal(expired.expired, true);
+  assert.equal(expired.playbackSync.hold.active, false);
+  assert.deepEqual(expired.playbackSync.bufferingMemberIds, []);
+  assert.equal(expired.playback?.currentTime, 42);
+  assert.equal(expired.playback?.serverTime, 13_000);
+});
+
+test("an old hold deadline cannot release a newer playback barrier", () => {
+  const room = createRoom({
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 4_000,
+        deadlineAt: 34_000,
+        playbackRevision: "new-revision",
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  const staleTimer = coordinatePlaybackHoldExpiry({
+    room,
+    expectedDeadline: 13_000,
+    currentTime: 40_000,
+  });
+
+  assert.equal(staleTimer.expired, false);
+  assert.equal(staleTimer.playbackSync.hold.active, true);
+  assert.equal(staleTimer.playbackSync.hold.playbackRevision, "new-revision");
+});
+
 test("coordinator releases a hold when the last buffering member leaves", () => {
   const room = createRoom({
     playback: createPlayback({
@@ -469,6 +525,30 @@ test("coordinator ignores non-explicit hold pauses without mutating playback int
       currentTime: 3_000,
     }),
     true,
+  );
+});
+
+test("coordinator stops suppressing playback updates after a hold deadline", () => {
+  const room = createRoom({
+    playbackSync: {
+      strategy: "wait",
+      hold: {
+        active: true,
+        reasonMemberId: "member-guest",
+        startedAt: 2_000,
+        deadlineAt: 12_000,
+      },
+      bufferingMemberIds: ["member-guest"],
+    },
+  });
+
+  assert.equal(
+    shouldIgnorePlaybackUpdateDuringHold({
+      room,
+      nextPlayback: createPlayback({ playState: "paused", seq: 2 }),
+      currentTime: 12_000,
+    }),
+    false,
   );
 });
 

@@ -73,6 +73,10 @@ export async function createRoomEventConsumer(options: {
   send: SendMessage;
   instanceId?: string;
   logEvent?: import("./types.js").LogEvent;
+  onRoomStateObserved?: (
+    state: import("./types.js").RoomStoreRoomState,
+  ) => void;
+  onRoomDeleted?: (roomCode: string) => void;
 }): Promise<{ close: () => Promise<void> }> {
   const unsubscribe = await options.roomEventBus.subscribe(async (message) => {
     try {
@@ -116,6 +120,13 @@ export async function createRoomEventConsumer(options: {
             type: "room:state",
             payload: roomState,
           });
+        }
+
+        if (options.onRoomStateObserved) {
+          const roomState = await getLegacyRoomState();
+          if (roomState) {
+            options.onRoomStateObserved(roomState);
+          }
         }
 
         options.logEvent?.("room_event_consumed", {
@@ -218,6 +229,9 @@ export async function createRoomEventConsumer(options: {
         return;
       }
 
+      if (message.type === "room_deleted") {
+        options.onRoomDeleted?.(message.roomCode);
+      }
       const state =
         message.type === "room_deleted"
           ? {
@@ -229,6 +243,9 @@ export async function createRoomEventConsumer(options: {
           : await options.getRoomStateByCode(message.roomCode);
       if (!state) {
         return;
+      }
+      if (message.type !== "room_deleted") {
+        options.onRoomStateObserved?.(state);
       }
 
       for (const session of localSessions) {

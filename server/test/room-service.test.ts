@@ -4719,6 +4719,62 @@ test("host can enable wait mode and a buffering VOD member holds playback briefl
   assert.equal(released.room.playback?.serverTime, 5_000);
 });
 
+test("wait mode releases its readiness barrier without another buffer report", async () => {
+  let currentTime = 1_000;
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore({ now: () => currentTime }),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM26",
+  });
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createSharedVideo(),
+    createPlayback(owner.memberId ?? owner.id, {
+      currentTime: 30,
+      playState: "playing",
+      updatedAt: currentTime,
+      seq: 1,
+    }),
+  );
+  const waiting = await service.setPlaybackSyncStrategyForSession(
+    owner,
+    created.memberToken,
+    "wait",
+  );
+  const deadline = waiting.room.playbackSync.hold.deadlineAt;
+  assert.equal(deadline, 31_000);
+
+  currentTime = deadline!;
+  const released = await service.releaseExpiredPlaybackHold(
+    created.room.code,
+    deadline!,
+  );
+
+  assert.equal(released.changed, true);
+  assert.equal(released.room?.playbackSync.hold.active, false);
+  assert.deepEqual(released.room?.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.room?.playback?.currentTime, 30);
+  assert.equal(released.room?.playback?.serverTime, deadline);
+});
+
 test("wait mode starts a fresh readiness barrier for explicit play and seek commands", async () => {
   let currentTime = 1_000;
   const service = createRoomService({

@@ -361,3 +361,43 @@ test("metrics collector aggregates web playback and proxy observability with saf
   assert.equal(rendered.includes("Authorization"), false);
   assert.equal(rendered.includes("https://cdn.example.com"), false);
 });
+
+test("metrics collector removes per-room proxy series when a room is cleared", async () => {
+  const metrics = createMetricsCollector({
+    runtimeStore: createInMemoryRuntimeStore(() => 0),
+    roomStore: {
+      async countRooms() {
+        return 0;
+      },
+    } as never,
+  });
+  for (const roomCode of ["ROOM01", "ROOM02"]) {
+    metrics.recordProxyTraffic({
+      roomCode,
+      providerId: "bilibili",
+      bytes: 1_024,
+    });
+    metrics.recordProxyRequest({ roomCode, providerId: "bilibili" });
+    metrics.recordProxyUpstreamTraffic({
+      roomCode,
+      providerId: "bilibili",
+      bytes: 1_024,
+    });
+    metrics.recordProxyUpstreamRequest({
+      roomCode,
+      providerId: "bilibili",
+      outcome: "success",
+    });
+    metrics.recordProxyCacheEvent({
+      roomCode,
+      providerId: "bilibili",
+      event: "hit",
+    });
+  }
+
+  metrics.clearProxyRoom("room01");
+  const rendered = await metrics.render();
+
+  assert.equal(rendered.includes('room_code="ROOM01"'), false);
+  assert.equal(rendered.includes('room_code="ROOM02"'), true);
+});

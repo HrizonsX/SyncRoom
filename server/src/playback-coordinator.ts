@@ -12,6 +12,7 @@ import { clonePlaybackSyncState } from "./room-store.js";
 import type { PersistedRoom, PlaybackAuthority } from "./types.js";
 
 const PLAYBACK_READINESS_BARRIER_TIMEOUT_MS = 30_000;
+const PLAYBACK_BUFFER_HOLD_MAX_MS = 10_000;
 
 export function isLiveSharedVideo(video: SharedVideo | null): boolean {
   return video?.provider?.item.kind === "live";
@@ -138,7 +139,7 @@ export function coordinatePlaybackMemberJoin(args: {
 
   const existingPlaybackSync = clonePlaybackSyncState(args.room.playbackSync);
   if (
-    existingPlaybackSync.hold.active &&
+    isPlaybackHoldActive(existingPlaybackSync, args.currentTime) &&
     existingPlaybackSync.hold.playbackRevision
   ) {
     existingPlaybackSync.bufferingMemberIds = uniqueMemberIds([
@@ -182,11 +183,8 @@ export function updatePlaybackSyncForBufferReport(args: {
   currentTime: number;
 }): PersistedRoom["playbackSync"] {
   const playbackSync = clonePlaybackSyncState(args.room.playbackSync);
-  if (
-    playbackSync.hold.active &&
-    playbackSync.hold.deadlineAt !== undefined &&
-    args.currentTime >= playbackSync.hold.deadlineAt
-  ) {
+  const holdDeadline = getPlaybackHoldDeadline(playbackSync);
+  if (holdDeadline !== undefined && args.currentTime >= holdDeadline) {
     return createInactivePlaybackSyncState(playbackSync.strategy);
   }
 
@@ -247,6 +245,7 @@ export function updatePlaybackSyncForBufferReport(args: {
       active: true,
       reasonMemberId: args.memberId,
       startedAt: args.currentTime,
+      deadlineAt: args.currentTime + PLAYBACK_BUFFER_HOLD_MAX_MS,
     };
   }
 
@@ -323,6 +322,59 @@ export function coordinatePlaybackBufferReport(args: {
       playbackSync,
       currentTime: args.currentTime,
     }),
+  };
+}
+
+export function getPlaybackHoldDeadline(
+  playbackSync: PersistedRoom["playbackSync"],
+): number | undefined {
+  if (playbackSync?.hold.active !== true) {
+    return undefined;
+  }
+  if (playbackSync.hold.deadlineAt !== undefined) {
+    return playbackSync.hold.deadlineAt;
+  }
+  if (playbackSync.hold.startedAt !== undefined) {
+    return playbackSync.hold.startedAt + PLAYBACK_BUFFER_HOLD_MAX_MS;
+  }
+  // A malformed or legacy active hold without timing metadata must not block
+  // the room forever after an upgrade.
+  return 0;
+}
+
+export function coordinatePlaybackHoldExpiry(args: {
+  room: PersistedRoom;
+  expectedDeadline: number;
+  currentTime: number;
+}): {
+  playbackSync: PersistedRoom["playbackSync"];
+  playback: PlaybackState | null;
+  expired: boolean;
+} {
+  const deadline = getPlaybackHoldDeadline(args.room.playbackSync);
+  if (
+    deadline === undefined ||
+    deadline !== args.expectedDeadline ||
+    args.currentTime < deadline
+  ) {
+    return {
+      playbackSync: clonePlaybackSyncState(args.room.playbackSync),
+      playback: args.room.playback,
+      expired: false,
+    };
+  }
+
+  const playbackSync = createInactivePlaybackSyncState(
+    args.room.playbackSync?.strategy ?? "smooth",
+  );
+  return {
+    playbackSync,
+    playback: rebasePlaybackForHoldTransition({
+      room: args.room,
+      playbackSync,
+      currentTime: args.currentTime,
+    }),
+    expired: true,
   };
 }
 
@@ -408,9 +460,10 @@ export function coordinatePlaybackSyncStrategyChange(args: {
 
 export function isPlaybackHoldActive(
   playbackSync: PersistedRoom["playbackSync"],
-  _currentTime: number,
+  currentTime: number,
 ): boolean {
-  return playbackSync?.hold.active === true;
+  const deadline = getPlaybackHoldDeadline(playbackSync);
+  return deadline !== undefined && currentTime < deadline;
 }
 
 export function shouldIgnorePlaybackUpdateDuringHold(args: {

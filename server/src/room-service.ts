@@ -29,6 +29,7 @@ import { decidePlaybackAcceptance } from "./playback-authority.js";
 import {
   coordinatePlaybackCommand,
   coordinatePlaybackBufferReport,
+  coordinatePlaybackHoldExpiry,
   coordinatePlaybackMemberJoin,
   coordinatePlaybackMemberDeparture,
   coordinatePlaybackSyncStrategyChange,
@@ -341,6 +342,11 @@ type JoinAdmissionLockGuard = {
   assertActive: () => void;
 };
 
+type PlaybackProxyLifecycle = {
+  clearRoom: (roomCode: string) => number;
+  cleanupExpired: () => number;
+};
+
 type JoinedSessionSnapshot = {
   roomCode: string;
   memberId: string;
@@ -374,6 +380,7 @@ export function createRoomService(options: {
     currentTime: number,
   ) => Promise<boolean>;
   videoAuthLifecycle?: VideoAuthLifecycle;
+  playbackProxyLifecycle?: PlaybackProxyLifecycle;
 }): {
   createRoomForSession: (
     session: Session,
@@ -437,6 +444,11 @@ export function createRoomService(options: {
     memberToken: string,
     report: PlaybackBufferReport,
   ) => Promise<{ room: PersistedRoom; changed: boolean }>;
+  releaseExpiredPlaybackHold: (
+    roomCode: string,
+    expectedDeadline: number,
+    currentTime?: number,
+  ) => Promise<{ room: PersistedRoom | null; changed: boolean }>;
   setPlaybackSyncStrategyForSession: (
     session: Session,
     memberToken: string,
@@ -484,6 +496,7 @@ export function createRoomService(options: {
 } {
   const { config, persistence, roomStore, generateToken, logEvent } = options;
   const videoAuthLifecycle = options.videoAuthLifecycle;
+  const playbackProxyLifecycle = options.playbackProxyLifecycle;
   const runtimeStoreOption = options.runtimeStore ?? options.activeRooms;
   const now = options.now ?? Date.now;
   const nextRoomCode = options.createRoomCode ?? createRoomCode;
@@ -604,6 +617,46 @@ export function createRoomService(options: {
     } catch (error) {
       logEvent("video_auth_lifecycle_cleanup_failed", {
         scope: "expired",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  function clearPlaybackProxyRoom(roomCode: string, reason: string): void {
+    try {
+      const deletedCount = playbackProxyLifecycle?.clearRoom(roomCode) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("playback_proxy_lifecycle_cleanup", {
+          roomCode,
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("playback_proxy_lifecycle_cleanup_failed", {
+        roomCode,
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  function pruneExpiredPlaybackProxyResources(reason: string): void {
+    try {
+      const deletedCount = playbackProxyLifecycle?.cleanupExpired() ?? 0;
+      if (deletedCount > 0) {
+        logEvent("playback_proxy_lifecycle_cleanup", {
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("playback_proxy_lifecycle_cleanup_failed", {
         reason,
         result: "error",
         error: redactSensitiveText(error),
@@ -874,6 +927,7 @@ export function createRoomService(options: {
       runtimeStore.deleteRoom(code);
       playbackAuthorityByRoom.delete(code);
       await clearVideoAuthRoom(code, "room_expired");
+      clearPlaybackProxyRoom(code, "room_expired");
       return null;
     }
     return room;
@@ -2565,6 +2619,50 @@ export function createRoomService(options: {
       return { room: updatedRoom, changed };
     },
 
+    async releaseExpiredPlaybackHold(
+      roomCode,
+      expectedDeadline,
+      currentTime = now(),
+    ) {
+      if (!Number.isFinite(expectedDeadline) || !Number.isFinite(currentTime)) {
+        return { room: null, changed: false };
+      }
+      const result = await withVersionRetry<{
+        room: PersistedRoom;
+        changed: boolean;
+      }>(roomCode, async (currentRoom) => {
+        const coordination = coordinatePlaybackHoldExpiry({
+          room: currentRoom,
+          expectedDeadline,
+          currentTime,
+        });
+        if (!coordination.expired) {
+          return { room: currentRoom, changed: false };
+        }
+        const updated = await roomStore.updateRoom(
+          roomCode,
+          currentRoom.version,
+          {
+            playbackSync: coordination.playbackSync,
+            ...(currentRoom.playback !== coordination.playback
+              ? { playback: coordination.playback }
+              : {}),
+            // Timeout recovery is coordination housekeeping, not user activity.
+            lastActiveAt: currentRoom.lastActiveAt,
+          },
+        );
+        return updated.ok ? { room: updated.room, changed: true } : null;
+      });
+      if (result?.changed) {
+        logEvent("playback_hold_expired", {
+          roomCode,
+          expectedDeadline,
+          result: "ok",
+        });
+      }
+      return result ?? { room: null, changed: false };
+    },
+
     async setPlaybackSyncStrategyForSession(session, memberToken, strategy) {
       const access = await requireHostRoomAccess(
         session,
@@ -2783,8 +2881,10 @@ export function createRoomService(options: {
         runtimeStore.deleteRoom(roomCode);
         playbackAuthorityByRoom.delete(roomCode);
         await clearVideoAuthRoom(roomCode, "room_expired");
+        clearPlaybackProxyRoom(roomCode, "room_expired");
       }
       await pruneExpiredVideoAuthSessions("owner_offline_ttl_expired");
+      pruneExpiredPlaybackProxyResources("resource_ttl_expired");
       return result.deletedCount;
     },
   };

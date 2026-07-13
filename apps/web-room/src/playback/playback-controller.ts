@@ -116,6 +116,7 @@ export function createWebRoomPlaybackController(
   let lastAppliedPlaybackRevision: string | undefined;
   let activeBufferPlaybackRevision: string | undefined;
   let lastReportedBarrierRevision: string | undefined;
+  let allowBufferReportsDuringPlaybackHold = false;
   // play() 重试会处理刷新恢复、等待同步释放、浏览器自动播放限制等场景；
   // 控制器只提供代际和本地事件压制边界，避免重试过程误广播成用户操作。
   const playbackPlayRetryController = createPlaybackPlayRetryController({
@@ -181,6 +182,7 @@ export function createWebRoomPlaybackController(
     boundBufferUrl = undefined;
     activeBufferPlaybackRevision = undefined;
     lastReportedBarrierRevision = undefined;
+    allowBufferReportsDuringPlaybackHold = false;
   }
 
   function disposePlaybackBindings(): void {
@@ -220,7 +222,11 @@ export function createWebRoomPlaybackController(
       reportDelayMs,
       pollIntervalMs: PLAYBACK_BUFFER_HOLD_POLL_INTERVAL_MS,
       getContext: () => {
-        if (pageLifecycleEnding || getNow() < suppressLocalEventsUntil) {
+        if (
+          pageLifecycleEnding ||
+          (getNow() < suppressLocalEventsUntil &&
+            !allowBufferReportsDuringPlaybackHold)
+        ) {
           return null;
         }
         const context = options.getSyncContext?.();
@@ -370,9 +376,6 @@ export function createWebRoomPlaybackController(
       }
 
       const currentUrl = state.playbackUrl ?? state.playback?.url;
-      activeBufferPlaybackRevision = state.playback
-        ? createPlaybackRevision(state.playback)
-        : undefined;
       const isLivePlayback = state.playbackSource.isLive === true;
       const playToggleControl =
         root.querySelector<HTMLElement>("media-play-button") ?? undefined;
@@ -390,6 +393,9 @@ export function createWebRoomPlaybackController(
         timeRangeControl,
       );
       ensurePlaybackBufferBinding(video, currentUrl, isLivePlayback);
+      activeBufferPlaybackRevision = state.playback
+        ? createPlaybackRevision(state.playback)
+        : undefined;
       const isVodPlaybackHoldActive =
         !isLivePlayback &&
         state.playback !== undefined &&
@@ -399,36 +405,64 @@ export function createWebRoomPlaybackController(
         state.playbackSync?.bufferingMemberIds.includes(
           state.currentMemberId,
         ) === true;
-      playbackBufferBinding?.setPollingEnabled(isCurrentMemberPendingReadiness);
-      const barrierRevision = state.playbackSync?.hold.playbackRevision;
-      if (
-        isCurrentMemberPendingReadiness &&
-        barrierRevision &&
-        barrierRevision !== lastReportedBarrierRevision
-      ) {
-        lastReportedBarrierRevision = barrierRevision;
-        playbackBufferBinding?.reportNow();
-      } else if (!isCurrentMemberPendingReadiness) {
-        lastReportedBarrierRevision = undefined;
-      }
       if (!state.playback || !currentUrl) {
+        allowBufferReportsDuringPlaybackHold = false;
+        playbackBufferBinding?.setPollingEnabled(false);
+        lastReportedBarrierRevision = undefined;
         resumeAfterPlaybackHold = false;
         resetAppliedPlaybackRevision();
         return;
       }
       if (isVodPlaybackHoldActive) {
-        // 等人同步只是在本地暂停等待缓冲，不改变房间目标播放态。
-        // 等待解除后，即使本机刚刚是最后一次播放事件来源，也必须允许远端状态恢复播放。
+        // A held command must seek before readiness is measured. Otherwise an
+        // old buffered range can be reported as ready for the new revision.
         resumeAfterPlaybackHold = state.playback.playState === "playing";
+        allowBufferReportsDuringPlaybackHold = true;
         suppressLocalEventsUntil = Math.max(
           suppressLocalEventsUntil,
           getNow() + PLAYBACK_HOLD_SUPPRESS_LOCAL_EVENTS_MS,
         );
-        if (!video.paused) {
-          video.pause();
+        try {
+          await applyRemotePlaybackState({
+            media: video,
+            localMemberId: state.currentMemberId,
+            currentUrl,
+            playback: { ...state.playback, playState: "paused" },
+            allowLocalEcho: true,
+            onBeforeSeek: (targetTime) =>
+              playbackBinding?.suppressNativeSeekEcho(targetTime),
+            now: options.now,
+          });
+        } catch (error) {
+          if (generation === syncGeneration) {
+            allowBufferReportsDuringPlaybackHold = false;
+            options.onPlaybackError?.(error, state.playbackSource);
+          }
+          return;
+        }
+        if (generation !== syncGeneration) {
+          return;
+        }
+
+        playbackBufferBinding?.setPollingEnabled(
+          isCurrentMemberPendingReadiness,
+        );
+        const barrierRevision = state.playbackSync?.hold.playbackRevision;
+        if (
+          isCurrentMemberPendingReadiness &&
+          barrierRevision &&
+          barrierRevision !== lastReportedBarrierRevision
+        ) {
+          lastReportedBarrierRevision = barrierRevision;
+          playbackBufferBinding?.reportNow();
+        } else if (!isCurrentMemberPendingReadiness) {
+          lastReportedBarrierRevision = undefined;
         }
         return;
       }
+      allowBufferReportsDuringPlaybackHold = false;
+      playbackBufferBinding?.setPollingEnabled(false);
+      lastReportedBarrierRevision = undefined;
       if (state.playback.playState !== "playing") {
         resumeAfterPlaybackHold = false;
       }

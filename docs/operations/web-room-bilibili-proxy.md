@@ -104,7 +104,9 @@ through the same reverse proxy, prefer an edge or reverse-proxy cache that slice
 responses into small range requests before they reach the Node server.
 
 For Nginx deployments with `ngx_http_slice_module`, use a short-lived disk cache on
-`/proxy/segment/`:
+`/proxy/segment/`. Confirm the module is present with `nginx -V 2>&1`. Put
+`proxy_cache_path` and `log_format` in the `http` block, and put `location` in the
+public `server` block:
 
 ```nginx
 proxy_cache_path /var/cache/nginx/syncroom-proxy-segment
@@ -129,11 +131,37 @@ location ^~ /proxy/segment/ {
   proxy_cache_lock_age 10s;
   proxy_ignore_headers Cache-Control Expires Set-Cookie;
   proxy_hide_header Set-Cookie;
+  proxy_buffering on;
+  proxy_http_version 1.1;
+  proxy_set_header Accept-Encoding "";
   proxy_set_header Range $slice_range;
   proxy_pass http://127.0.0.1:8787;
+  # Keep this line only when NGINX_CACHE_METRICS_PORT=5514 is enabled.
   access_log syslog:server=127.0.0.1:5514,facility=local7,tag=syncroom_cache,nohostname syncroom_cache;
+  # Useful for rollout verification; it may be removed after validation.
+  add_header X-SyncRoom-Cache $upstream_cache_status always;
 }
 ```
+
+Create the cache directory for the configured Nginx worker user, validate, and reload:
+
+```bash
+sudo install -d -o www-data -g www-data /var/cache/nginx/syncroom-proxy-segment
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Some distributions use the `nginx` user instead of `www-data`; follow the `user` directive
+in `nginx.conf`. Request the same generated opaque resource id and closed Range twice:
+
+```bash
+curl -sS -D - -o /dev/null -H 'Range: bytes=0-262143' \
+  'https://sync.example.com/proxy/segment/<resource-id>' | grep -i x-syncroom-cache
+```
+
+A cold request should report `MISS`, followed by `HIT`. If both are `MISS`, verify the slice
+module, cache-directory permissions, identical URL and Range values, and a `200` or `206`
+upstream response.
 
 Set `NGINX_CACHE_METRICS_PORT=5514` on the SyncRoom server process to ingest
 the local UDP records. The payload contains only cache status, response bytes,
@@ -146,6 +174,12 @@ resource, but it does not reduce the final bytes sent from the edge to each brow
 use gzip or brotli for video segment responses; video bytes are already codec-compressed and
 compressed range responses can break seek and buffering behavior.
 
+The Node layer still coalesces identical closed Range requests. Its defaults are a 60-second
+TTL, 256 MiB total cache, 16 MiB per entry, and at most 64 distinct cache fills at once. When
+the byte budget is unavailable, the response is streamed instead of being fully accumulated
+in memory. Concurrent cache hits share the cached backing bytes rather than cloning a complete
+segment for each member.
+
 The 256 KiB locked profile favors two-client completion fairness: one request fills each cold
 slice and the other client receives a cache hit. It increases the number of Node requests and
 can add a small first-byte delay compared with 512 KiB slices without a lock. It does not
@@ -156,11 +190,16 @@ Segment caching is a bandwidth optimization, not a playback barrier. In `smooth`
 member who seeks can resume before another member has buffered the target. A stalled member
 keeps loading its current range instead of repeatedly chasing the projected timeline from
 buffer-only room updates, so it can temporarily fall behind. Use the room's `wait` strategy
-when all members should pause for a buffering participant before resuming. Wait mode freezes
-the shared timeline until every reported buffering member has at least three seconds buffered;
-the host can switch back to smooth mode, and a departing buffering member is removed from the
-hold. A media `waiting` event with at least three seconds already buffered is treated as ready
-because MSE append-window changes can emit transient false stalls.
+when all members should pause for a buffering participant before resuming. For initial play,
+share, and seek barriers, each web member is positioned at the target before readiness is
+measured, and six seconds at that target are required. For example, a member at 12 seconds who
+receives a host seek to 120 seconds must seek first and measure the range around 120, rather
+than report an old buffered range around 12 as ready. Ordinary mid-playback buffering uses a
+three-second ready threshold. Barriers expire after 30 seconds and ordinary holds after 10
+seconds even if an abnormal client stops reporting. The host can switch back to smooth mode,
+and a departing buffering member is removed from the hold. A media `waiting` event with at
+least three seconds already buffered is treated as ready because MSE append-window changes can
+emit transient false stalls.
 
 ## Observability
 
@@ -177,6 +216,10 @@ Low-cardinality metrics include:
 - `syncroom_nginx_proxy_cache_requests_total`
 - `syncroom_nginx_proxy_cache_bytes_total`
 - `syncroom_nginx_proxy_cache_request_duration_seconds`
+
+Node proxy series carrying `room_code` are removed when room deletion is observed or when the
+room's last proxy resource expires. This bounds long-running process memory and `/metrics`
+output. Nginx HIT/MISS series do not carry room ids.
 
 Admin audit records safe host actions such as selecting video, changing source, and changing `proxy/shared` policy. It does not store per-segment events, cookies, headers, or raw upstream signed URLs.
 

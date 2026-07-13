@@ -158,6 +158,7 @@ export type MetricsCollector = {
     providerId?: string;
     event: ProxyCacheEvent;
   }) => void;
+  clearProxyRoom: (roomCode: string) => void;
   recordNginxProxyCacheRequest: (input: {
     status: NginxProxyCacheStatus;
     bytes: number;
@@ -379,6 +380,17 @@ export function createMetricsCollector(options: {
     value = 1,
   ): void {
     ensureCounterSample(metric, labels).value += value;
+  }
+
+  function clearCounterRoomSamples(
+    metric: CounterMetric,
+    roomCode: string,
+  ): void {
+    for (const [key, sample] of metric.samples.entries()) {
+      if (sample.labels.room_code === roomCode) {
+        metric.samples.delete(key);
+      }
+    }
   }
 
   function observeHistogram(
@@ -755,6 +767,18 @@ export function createMetricsCollector(options: {
         provider: normalizeProviderLabel(input.providerId),
         room_code: normalizeRoomCodeLabel(input.roomCode),
       });
+    },
+    clearProxyRoom(roomCode) {
+      const normalizedRoomCode = normalizeRoomCodeLabel(roomCode);
+      for (const metric of [
+        proxyTrafficBytesCounter,
+        proxyRequestCounter,
+        proxyUpstreamTrafficBytesCounter,
+        proxyUpstreamRequestCounter,
+        proxyCacheEventCounter,
+      ]) {
+        clearCounterRoomSamples(metric, normalizedRoomCode);
+      }
     },
     recordNginxProxyCacheRequest(input) {
       const status = normalizeEnumLabel(

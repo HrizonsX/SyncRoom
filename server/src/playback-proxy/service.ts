@@ -83,6 +83,7 @@ export type PlaybackProxyServiceOptions = {
       | "recordProxyUpstreamTraffic"
       | "recordProxyUpstreamRequest"
       | "recordProxyCacheEvent"
+      | "clearProxyRoom"
     >
   >;
   logEvent?: LogEvent;
@@ -94,6 +95,7 @@ export type PlaybackProxyServiceOptions = {
   segmentCacheMaxBytes?: number;
   segmentCacheMaxEntryBytes?: number;
   segmentCacheMaxEntries?: number;
+  segmentCacheMaxPendingEntries?: number;
 };
 
 type StoredProxyResource =
@@ -124,6 +126,7 @@ const DEFAULT_SEGMENT_CACHE_TTL_MS = 60_000;
 const DEFAULT_SEGMENT_CACHE_MAX_BYTES = 256 * 1024 * 1024;
 const DEFAULT_SEGMENT_CACHE_MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 const DEFAULT_SEGMENT_CACHE_MAX_ENTRIES = 2_048;
+const DEFAULT_SEGMENT_CACHE_MAX_PENDING_ENTRIES = 64;
 
 type CachedSegmentResponse = {
   statusCode: number;
@@ -347,6 +350,9 @@ export function createPlaybackProxyService(
   options: PlaybackProxyServiceOptions = {},
 ): PlaybackProxyService {
   const resources = new Map<string, StoredProxyResource>();
+  const activeSegmentResources = new WeakSet<
+    Extract<StoredProxyResource, { kind: "segment" }>
+  >();
   const segmentResponseCache = new Map<string, CachedSegmentResponse>();
   const pendingSegmentFetches = new Map<
     string,
@@ -366,7 +372,11 @@ export function createPlaybackProxyService(
     options.segmentCacheMaxEntryBytes ?? DEFAULT_SEGMENT_CACHE_MAX_ENTRY_BYTES;
   const segmentCacheMaxEntries =
     options.segmentCacheMaxEntries ?? DEFAULT_SEGMENT_CACHE_MAX_ENTRIES;
+  const segmentCacheMaxPendingEntries =
+    options.segmentCacheMaxPendingEntries ??
+    DEFAULT_SEGMENT_CACHE_MAX_PENDING_ENTRIES;
   let segmentCacheBytes = 0;
+  let pendingSegmentBytes = 0;
 
   function getEffectivePublicBaseUrl(override: string | undefined): string {
     return override !== undefined
@@ -418,7 +428,7 @@ export function createPlaybackProxyService(
     }
 
     const segmentId = createResourceId();
-    resources.set(resourceKey("segment", segmentId), {
+    const segmentResource: Extract<StoredProxyResource, { kind: "segment" }> = {
       kind: "segment",
       roomCode,
       providerId,
@@ -426,7 +436,9 @@ export function createPlaybackProxyService(
       upstreamHeaders,
       expiresAt,
       ttlMs,
-    });
+    };
+    resources.set(resourceKey("segment", segmentId), segmentResource);
+    activeSegmentResources.add(segmentResource);
     if (stableMappings && stableMappingKey) {
       stableMappings.set(stableMappingKey, segmentId);
     }
@@ -853,14 +865,14 @@ export function createPlaybackProxyService(
     return statusCode === 200 || statusCode === 206;
   }
 
-  async function readResponseBody(
+  async function readKnownLengthResponseBody(
     body: ReadableStream<Uint8Array> | null,
-    maxBytes: number,
+    expectedBytes: number,
   ): Promise<Uint8Array | null> {
     if (!body) {
-      return new Uint8Array();
+      return expectedBytes === 0 ? new Uint8Array() : null;
     }
-    const chunks: Uint8Array[] = [];
+    const merged = new Uint8Array(expectedBytes);
     let totalBytes = 0;
     const reader = body.getReader();
     while (true) {
@@ -868,28 +880,21 @@ export function createPlaybackProxyService(
       if (result.done) {
         break;
       }
-      if (totalBytes + result.value.byteLength > maxBytes) {
+      if (totalBytes + result.value.byteLength > expectedBytes) {
         await reader.cancel();
         return null;
       }
-      chunks.push(result.value);
+      merged.set(result.value, totalBytes);
       totalBytes += result.value.byteLength;
     }
-
-    const merged = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return merged;
+    return totalBytes === expectedBytes ? merged : null;
   }
 
   function recordProxyResponseBytes(
     resource: Extract<StoredProxyResource, { kind: "segment" }>,
     bytes: number,
   ): void {
-    if (bytes <= 0) {
+    if (bytes <= 0 || !activeSegmentResources.has(resource)) {
       return;
     }
     options.metricsCollector?.recordProxyTraffic?.({
@@ -902,6 +907,9 @@ export function createPlaybackProxyService(
   function recordProxyRequest(
     resource: Extract<StoredProxyResource, { kind: "segment" }>,
   ): void {
+    if (!activeSegmentResources.has(resource)) {
+      return;
+    }
     options.metricsCollector?.recordProxyRequest?.({
       roomCode: resource.roomCode,
       providerId: resource.providerId,
@@ -912,7 +920,7 @@ export function createPlaybackProxyService(
     resource: Extract<StoredProxyResource, { kind: "segment" }>,
     bytes: number,
   ): void {
-    if (bytes <= 0) {
+    if (bytes <= 0 || !activeSegmentResources.has(resource)) {
       return;
     }
     options.metricsCollector?.recordProxyUpstreamTraffic?.({
@@ -926,6 +934,9 @@ export function createPlaybackProxyService(
     resource: Extract<StoredProxyResource, { kind: "segment" }>,
     outcome: "success" | "error",
   ): void {
+    if (!activeSegmentResources.has(resource)) {
+      return;
+    }
     options.metricsCollector?.recordProxyUpstreamRequest?.({
       roomCode: resource.roomCode,
       providerId: resource.providerId,
@@ -939,6 +950,13 @@ export function createPlaybackProxyService(
       | CachedSegmentResponse,
     event: "hit" | "miss" | "store" | "coalesced" | "bypass" | "expired",
   ): void {
+    if (
+      "kind" in resource &&
+      resource.kind === "segment" &&
+      !activeSegmentResources.has(resource)
+    ) {
+      return;
+    }
     options.metricsCollector?.recordProxyCacheEvent?.({
       roomCode: resource.roomCode,
       providerId: resource.providerId,
@@ -1024,9 +1042,37 @@ export function createPlaybackProxyService(
     return {
       statusCode: entry.statusCode,
       contentType: entry.contentType,
-      body: entry.body.slice(),
+      // ServerResponse treats the body as immutable. A shared view avoids a
+      // full segment copy for every room member while retaining the cache body.
+      body: entry.body.subarray(),
       headers: { ...entry.headers },
     };
+  }
+
+  function reservePendingSegmentBytes(sizeBytes: number): boolean {
+    purgeExpiredSegmentCache(now());
+    while (
+      segmentResponseCache.size > 0 &&
+      segmentCacheBytes + pendingSegmentBytes + sizeBytes > segmentCacheMaxBytes
+    ) {
+      const oldestKey = segmentResponseCache.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      deleteSegmentCacheEntry(oldestKey);
+    }
+    if (
+      sizeBytes > segmentCacheMaxBytes ||
+      segmentCacheBytes + pendingSegmentBytes + sizeBytes > segmentCacheMaxBytes
+    ) {
+      return false;
+    }
+    pendingSegmentBytes += sizeBytes;
+    return true;
+  }
+
+  function releasePendingSegmentBytes(sizeBytes: number): void {
+    pendingSegmentBytes = Math.max(0, pendingSegmentBytes - sizeBytes);
   }
 
   function storeCachedSegmentResponse(
@@ -1184,40 +1230,79 @@ export function createPlaybackProxyService(
       };
     }
 
-    const body = await readResponseBody(
-      fetched.response.body,
-      Math.min(segmentCacheMaxEntryBytes, segmentCacheMaxBytes),
-    );
-    if (!body) {
+    if (!reservePendingSegmentBytes(contentLength)) {
       return {
         reusable: false,
-        resource: await resolveUncachedSegmentResource(resource, request),
-      };
-    }
-    recordProxyUpstreamBytes(resource, body.byteLength);
-    const entry = storeCachedSegmentResponse(
-      cacheKey,
-      resourceKeyValue,
-      resource,
-      fetched.response,
-      body,
-      currentTime,
-    );
-    if (!entry) {
-      return {
-        reusable: false,
-        resource: {
-          statusCode: fetched.response.status,
-          contentType:
-            fetched.response.headers.get("content-type") ??
-            "application/octet-stream",
-          body,
-          headers: copyUpstreamResponseHeaders(fetched.response.headers),
-        },
+        resource: createStreamingSegmentResource(
+          resource,
+          request,
+          fetched.response,
+        ),
       };
     }
 
-    return { reusable: true, entry };
+    let reservationActive = true;
+    try {
+      const body = await readKnownLengthResponseBody(
+        fetched.response.body,
+        contentLength,
+      );
+      if (!body) {
+        return {
+          reusable: false,
+          resource: await resolveUncachedSegmentResource(resource, request),
+        };
+      }
+      recordProxyUpstreamBytes(resource, body.byteLength);
+      releasePendingSegmentBytes(contentLength);
+      reservationActive = false;
+      if (
+        resources.get(resourceKeyValue) !== resource ||
+        resource.expiresAt <= now()
+      ) {
+        // A room or refreshed mapping can retire this capability while its
+        // upstream body is still in flight. Serve the accepted request, but do
+        // not resurrect cache state after lifecycle cleanup.
+        return {
+          reusable: false,
+          resource: {
+            statusCode: fetched.response.status,
+            contentType:
+              fetched.response.headers.get("content-type") ??
+              "application/octet-stream",
+            body,
+            headers: copyUpstreamResponseHeaders(fetched.response.headers),
+          },
+        };
+      }
+      const entry = storeCachedSegmentResponse(
+        cacheKey,
+        resourceKeyValue,
+        resource,
+        fetched.response,
+        body,
+        currentTime,
+      );
+      if (!entry) {
+        return {
+          reusable: false,
+          resource: {
+            statusCode: fetched.response.status,
+            contentType:
+              fetched.response.headers.get("content-type") ??
+              "application/octet-stream",
+            body,
+            headers: copyUpstreamResponseHeaders(fetched.response.headers),
+          },
+        };
+      }
+
+      return { reusable: true, entry };
+    } finally {
+      if (reservationActive) {
+        releasePendingSegmentBytes(contentLength);
+      }
+    }
   }
 
   async function resolveCachedRangedSegmentResource(
@@ -1254,6 +1339,11 @@ export function createPlaybackProxyService(
       if (resources.get(resourceKeyValue) !== resource) {
         return null;
       }
+      recordProxyCacheEvent(resource, "bypass");
+      return await resolveUncachedSegmentResource(resource, request);
+    }
+
+    if (pendingSegmentFetches.size >= segmentCacheMaxPendingEntries) {
       recordProxyCacheEvent(resource, "bypass");
       return await resolveUncachedSegmentResource(resource, request);
     }
@@ -1338,6 +1428,9 @@ export function createPlaybackProxyService(
         continue;
       }
       resources.delete(key);
+      if (resource.kind === "segment") {
+        activeSegmentResources.delete(resource);
+      }
       deleteSegmentCacheWhere((entry) => entry.resourceKey === key);
       deletePendingSegmentFetchesWhere((cacheKey) =>
         cacheKey.startsWith(`${key}\n`),
@@ -1345,6 +1438,22 @@ export function createPlaybackProxyService(
       deleted += 1;
     }
     return deleted;
+  }
+
+  function clearMetricsForRoomsWithoutResources(
+    candidateRoomCodes: ReadonlySet<string>,
+  ): void {
+    if (candidateRoomCodes.size === 0) {
+      return;
+    }
+    const roomsWithResources = new Set(
+      Array.from(resources.values(), (resource) => resource.roomCode),
+    );
+    for (const roomCode of candidateRoomCodes) {
+      if (!roomsWithResources.has(roomCode)) {
+        options.metricsCollector?.clearProxyRoom?.(roomCode);
+      }
+    }
   }
 
   return {
@@ -1518,20 +1627,33 @@ export function createPlaybackProxyService(
     cleanupExpired() {
       const currentTime = now();
       purgeExpiredSegmentCache(currentTime);
-      return deleteResourcesWhere(
-        (resource) => resource.expiresAt <= currentTime,
-      );
+      const expiredRoomCodes = new Set<string>();
+      const deleted = deleteResourcesWhere((resource) => {
+        const expired = resource.expiresAt <= currentTime;
+        if (expired) {
+          expiredRoomCodes.add(resource.roomCode);
+        }
+        return expired;
+      });
+      clearMetricsForRoomsWithoutResources(expiredRoomCodes);
+      return deleted;
     },
 
     clearRoom(roomCode) {
-      return deleteResourcesWhere((resource) => resource.roomCode === roomCode);
+      const deleted = deleteResourcesWhere(
+        (resource) => resource.roomCode === roomCode,
+      );
+      options.metricsCollector?.clearProxyRoom?.(roomCode);
+      return deleted;
     },
 
     clearProviderAuth(roomCode, providerId) {
-      return deleteResourcesWhere(
+      const deleted = deleteResourcesWhere(
         (resource) =>
           resource.roomCode === roomCode && resource.providerId === providerId,
       );
+      clearMetricsForRoomsWithoutResources(new Set([roomCode]));
+      return deleted;
     },
   };
 }

@@ -148,6 +148,8 @@ test("room service preserves host video auth during refresh disconnect", async (
 
 test("room service clears room auth for expired room cleanup and owner ttl expiry", async () => {
   let currentTime = 10_000;
+  const clearedProxyRooms: string[] = [];
+  let proxyCleanupRuns = 0;
   const authService = createVideoAuthSessionService({
     store: createInMemoryVideoAuthSessionStore(),
     now: () => currentTime,
@@ -167,6 +169,16 @@ test("room service clears room auth for expired room cleanup and owner ttl expir
       clearOwner: (args) => authService.clearOwner(args),
       clearRoom: (roomCode) => authService.clearRoom(roomCode),
       pruneExpired: () => authService.pruneExpired(),
+    },
+    playbackProxyLifecycle: {
+      clearRoom(roomCode) {
+        clearedProxyRooms.push(roomCode);
+        return 1;
+      },
+      cleanupExpired() {
+        proxyCleanupRuns += 1;
+        return 0;
+      },
     },
   });
 
@@ -190,6 +202,8 @@ test("room service clears room auth for expired room cleanup and owner ttl expir
   });
 
   assert.equal(await service.deleteExpiredRooms(), 1);
+  assert.deepEqual(clearedProxyRooms, ["EXP001"]);
+  assert.equal(proxyCleanupRuns, 1);
   assert.equal(
     await authService.getStatus({
       roomCode: expiredRoom.code,
@@ -217,6 +231,7 @@ test("room service clears room auth for expired room cleanup and owner ttl expir
 
   currentTime += 51;
   assert.equal(await service.deleteExpiredRooms(), 0);
+  assert.equal(proxyCleanupRuns, 2);
   assert.equal(
     await authService.getStatus({
       roomCode: "LIVE01",

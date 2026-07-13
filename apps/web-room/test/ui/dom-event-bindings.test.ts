@@ -11,14 +11,44 @@ type ClickListener = (event: Event) => void;
 class FakeElement {
   dataset: Record<string, string> = {};
   textContent = "";
+  clearableWrapper: FakeElement | null = null;
+  input: FakeInput | null = null;
 
   closest(selector: string): FakeElement | null {
-    return selector === "[data-action]" ? this : null;
+    if (selector === "[data-action]") {
+      return this;
+    }
+    return selector === ".clearable-input" ? this.clearableWrapper : null;
+  }
+
+  querySelector(): FakeInput | null {
+    return this.input;
+  }
+}
+
+class FakeInput {
+  disabled = false;
+  focused = false;
+  dispatchedEvents: Event[] = [];
+
+  constructor(
+    readonly name: string,
+    public value: string,
+  ) {}
+
+  dispatchEvent(event: Event): boolean {
+    this.dispatchedEvents.push(event);
+    return true;
+  }
+
+  focus(): void {
+    this.focused = true;
   }
 }
 
 class FakeRoot {
   clickListener: ClickListener | null = null;
+  input: FakeInput | null = null;
 
   addEventListener(type: string, listener: EventListener): void {
     if (type === "click") {
@@ -26,10 +56,54 @@ class FakeRoot {
     }
   }
 
-  querySelector(): null {
-    return null;
+  querySelector(selector: string): FakeInput | null {
+    return selector === 'input[name="bilibiliUrl"]' ? this.input : null;
   }
 }
+
+test("clears a provider URL and persists the empty value in controller state", () => {
+  const previousElement = globalThis.Element;
+  const clearedPolicies: Array<{ url?: string }> = [];
+  Object.defineProperty(globalThis, "Element", {
+    configurable: true,
+    value: FakeElement,
+  });
+
+  try {
+    const input = new FakeInput(
+      "bilibiliUrl",
+      "https://www.bilibili.com/video/BV1test",
+    );
+    const wrapper = new FakeElement();
+    wrapper.input = input;
+    const button = new FakeElement();
+    button.dataset.action = "clear-text-input";
+    button.clearableWrapper = wrapper;
+    const root = new FakeRoot();
+    root.input = input;
+
+    bindWebRoomDomEvents({
+      root: root as unknown as HTMLElement,
+      controller: {
+        setProviderPlaybackPolicy(policy) {
+          clearedPolicies.push(policy);
+        },
+      } as WebRoomAppController,
+    });
+
+    root.clickListener?.({ target: button } as unknown as Event);
+
+    assert.equal(input.value, "");
+    assert.equal(input.focused, true);
+    assert.equal(input.dispatchedEvents.length, 1);
+    assert.deepEqual(clearedPolicies, [{ url: "" }]);
+  } finally {
+    Object.defineProperty(globalThis, "Element", {
+      configurable: true,
+      value: previousElement,
+    });
+  }
+});
 
 test("shows localized copied text after copying the room invite", async () => {
   const previousElement = globalThis.Element;

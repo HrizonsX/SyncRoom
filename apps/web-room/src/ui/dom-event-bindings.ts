@@ -34,6 +34,31 @@ function setInputValue(root: HTMLElement, name: string, value: string): void {
   }
 }
 
+function clearTextInput(
+  root: HTMLElement,
+  controller: WebRoomAppController,
+  actionElement: HTMLElement,
+): void {
+  const input = actionElement
+    .closest<HTMLElement>(".clearable-input")
+    ?.querySelector<HTMLInputElement>("input");
+  if (!input || input.disabled) {
+    return;
+  }
+
+  input.value = "";
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+
+  if (input.name === "bilibiliUrl") {
+    // 点播链接属于控制器状态；显式写入空值，避免下一次房间重绘又恢复旧链接。
+    controller.setProviderPlaybackPolicy({ url: "" });
+    root.querySelector<HTMLInputElement>('input[name="bilibiliUrl"]')?.focus();
+    return;
+  }
+
+  input.focus();
+}
+
 function copyTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text).catch(() => {
@@ -183,6 +208,11 @@ export function bindWebRoomDomEvents({
       return;
     }
     if (handleWebRoomImmediateAction({ action, controller })) {
+      return;
+    }
+
+    if (action === "clear-text-input") {
+      clearTextInput(root, controller, actionElement);
       return;
     }
 

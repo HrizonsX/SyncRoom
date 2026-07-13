@@ -22,6 +22,7 @@ import {
   type WebRoomProviderPickerState,
   type WebRoomState,
   type WebRoomThemeMode,
+  type WebRoomToast,
 } from "./render-types.js";
 export {
   JOINED_ROOM_REGION_ORDER,
@@ -47,6 +48,7 @@ export type {
   WebRoomState,
   WebRoomSystemChatEventType,
   WebRoomThemeMode,
+  WebRoomToast,
 } from "./render-types.js";
 
 const WEB_ROOM_BRAND_NAME = "SyncRoom";
@@ -258,6 +260,47 @@ function renderEntryIcon(name: EntryIconName, className: string): string {
 
 function renderUiIcon(name: UiIconName, className: string): string {
   return renderIconSvg(name, className, "data-ui-icon");
+}
+
+type ClearableTextInputOptions = {
+  id?: string;
+  name: string;
+  label: string;
+  value?: string;
+  autocomplete?: string;
+  placeholder?: string;
+  maxLength?: number;
+  disabled?: boolean;
+};
+
+function renderClearableTextInput({
+  id,
+  name,
+  label,
+  value = "",
+  autocomplete,
+  placeholder = " ",
+  maxLength,
+  disabled = false,
+}: ClearableTextInputOptions): string {
+  const clearLabel = `清空${label}`;
+  const idAttribute = id ? ` id="${escapeHtml(id)}"` : "";
+  const autocompleteAttribute = autocomplete
+    ? ` autocomplete="${escapeHtml(autocomplete)}"`
+    : "";
+  const maxLengthAttribute =
+    typeof maxLength === "number" ? ` maxlength="${maxLength}"` : "";
+  const disabledAttribute = disabled ? " disabled" : "";
+
+  return `
+    <span class="clearable-input">
+      <input${idAttribute} name="${escapeHtml(name)}"${autocompleteAttribute}${maxLengthAttribute} placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(value)}" aria-label="${escapeHtml(label)}"${disabledAttribute} />
+      <button type="button" class="clearable-input-clear" data-action="clear-text-input" aria-label="${escapeHtml(clearLabel)}" title="${escapeHtml(clearLabel)}"${disabledAttribute}>
+        ${renderUiIcon("close", "clearable-input-clear-icon")}
+        <span class="visually-hidden">${escapeHtml(clearLabel)}</span>
+      </button>
+    </span>
+  `;
 }
 
 function renderEntryLabelText(label: string, icon: EntryIconName): string {
@@ -639,26 +682,32 @@ function renderEntry(state: WebRoomEntryState): string {
             ${renderWebRoomBrand("entry-brand announcement-brand")}
             <p>创建或加入房间后直接进入同步观影工作台。</p>
           </div>
-          <label class="entry-field entry-name-field">
+          <div class="entry-field entry-name-field">
+            <label for="web-room-display-name">
             ${renderEntryLabelText("昵称", "nickname")}
-            <input name="displayName" autocomplete="nickname" maxlength="32" value="${escapeHtml(state.displayName ?? "")}" />
-          </label>
+            </label>
+            ${renderClearableTextInput({ id: "web-room-display-name", name: "displayName", label: "昵称", value: state.displayName, autocomplete: "nickname", maxLength: 32 })}
+          </div>
         </div>
         <div class="entry-actions">
           <div class="entry-room-action-row">
-            <label class="join-field entry-invite-field">
+            <div class="join-field entry-invite-field">
+              <label for="web-room-invite">
               ${renderEntryLabelText("房间邀请", "invite")}
-              <input name="roomInvite" autocomplete="off" value="${escapeHtml(roomInvite)}" placeholder="粘贴房间号和口令" />
-            </label>
+              </label>
+              ${renderClearableTextInput({ id: "web-room-invite", name: "roomInvite", label: "房间邀请", value: roomInvite, autocomplete: "off", placeholder: "粘贴房间号和口令" })}
+            </div>
             <button type="button" class="secondary-button" data-action="join-room"${buttonsDisabled}>${renderEntryButtonText("加入房间", "join")}</button>
             <button type="button" class="primary-button" data-action="create-room"${buttonsDisabled}>${renderEntryButtonText("创建房间", "create")}</button>
           </div>
           <details class="entry-server-settings">
             <summary>${renderEntryLabelText("服务器设置", "server")}</summary>
-            <label class="entry-field entry-server-field">
+            <div class="entry-field entry-server-field">
+              <label for="web-room-server-url">
               ${renderEntryLabelText("服务器地址", "server-url")}
-              <input name="serverUrl" autocomplete="url" value="${escapeHtml(state.serverUrl ?? "")}" />
-            </label>
+              </label>
+              ${renderClearableTextInput({ id: "web-room-server-url", name: "serverUrl", label: "服务器地址", value: state.serverUrl, autocomplete: "url" })}
+            </div>
           </details>
         </div>
         ${error}
@@ -1178,7 +1227,7 @@ function renderProviderPickerPanel(state: WebRoomJoinedState): string {
         ${messageHtml}
       </div>
       <div class="provider-url-row">
-        <input name="bilibiliUrl" autocomplete="url" placeholder="粘贴视频链接" value="${escapeHtml(picker.url ?? "")}" />
+        ${renderClearableTextInput({ name: "bilibiliUrl", label: "视频链接", value: picker.url, autocomplete: "url", placeholder: "粘贴视频链接" })}
         <button type="button" class="secondary-button" data-action="parse-bilibili-url">${renderButtonText("解析", "parse")}</button>
         <button type="button" class="primary-button" data-action="share-provider-item"${shareDisabled}>${renderButtonText("开始播放", "play")}</button>
       </div>
@@ -1532,6 +1581,21 @@ function renderPlaybackError(state: WebRoomJoinedState): string {
   `;
 }
 
+function renderWebRoomToast(toast: WebRoomToast | undefined): string {
+  if (!toast) {
+    return "";
+  }
+
+  return `
+    <div class="web-room-toast-region" aria-live="polite" aria-atomic="true">
+      <div class="web-room-toast" role="status" data-toast-tone="${escapeHtml(toast.tone)}">
+        ${renderUiIcon("auth", "web-room-toast-icon")}
+        <span>${escapeHtml(toast.message)}</span>
+      </div>
+    </div>
+  `;
+}
+
 /**
  * 渲染已加入房间后的完整工作台布局，包括播放器、聊天、房间信息和视频设置。
  */
@@ -1552,11 +1616,11 @@ function renderJoined(state: WebRoomJoinedState): string {
   const canSendChat = canCurrentMember(state, "chat");
   const canUseVoice = canCurrentMember(state, "voice");
   const chatSendDisabled = chatCoolingDown || !canSendChat ? " disabled" : "";
-  const chatInputDisabled = canSendChat ? "" : " disabled";
   const chatSendLabel = chatCoolingDown ? `${chatCooldownSeconds}s` : "发送";
 
   return `
     <main class="web-room-shell web-room-workspace" data-view="joined" data-theme-mode="${themeMode}">
+      ${renderWebRoomToast(state.toast)}
       ${renderAnnouncementStrip(state)}
       <section class="player-chat-grid" data-region="player-chat">
         <div class="player-panel" data-panel="player" data-region="player">
@@ -1571,7 +1635,7 @@ function renderJoined(state: WebRoomJoinedState): string {
           ${renderChatVoicePanel(state)}
           <div class="chat-list">${renderChatMessages(state)}</div>
           <div class="chat-input-row"${chatCooldownAttribute}>
-            <input name="chat" maxlength="500"${chatInputDisabled} />
+            ${renderClearableTextInput({ name: "chat", label: "聊天内容", maxLength: 500, disabled: !canSendChat })}
             <button type="button" class="secondary-button" data-action="send-chat"${chatSendDisabled}>${renderButtonText(chatSendLabel, "send")}</button>
             ${renderVoiceToggleButton(state.voice, canUseVoice)}
           </div>

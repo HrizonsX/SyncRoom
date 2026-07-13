@@ -141,6 +141,12 @@ export type WebRoomPlaybackError = {
   canUseProxyFallback?: boolean;
 };
 
+export type WebRoomToast = {
+  id: number;
+  message: string;
+  tone: "success";
+};
+
 export type WebRoomEntryState = {
   view: "entry";
   connectionState: WebRoomConnectionState;
@@ -178,6 +184,7 @@ export type WebRoomJoinedState = {
   playbackSync?: PlaybackSyncState;
   playbackUrl?: string;
   playbackError?: WebRoomPlaybackError;
+  toast?: WebRoomToast;
   members: WebRoomMember[];
   chatMessages: WebRoomChatMessage[];
   danmakuMessages: WebRoomDanmakuMessage[];

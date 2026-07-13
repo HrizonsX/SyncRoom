@@ -119,6 +119,75 @@ test("renders entry room invite with colon-delimited room and token", () => {
   );
 });
 
+test("renders clear actions for regular text inputs", () => {
+  const entryHtml = renderWebRoomApp({
+    view: "entry",
+    connectionState: "disconnected",
+    displayName: "Alice",
+    roomInvite: "ABC123:join-token",
+    serverUrl: "wss://syncroom.example.test",
+  });
+
+  for (const inputName of ["displayName", "roomInvite", "serverUrl"]) {
+    assert.match(
+      entryHtml,
+      new RegExp(
+        `class="clearable-input"[\\s\\S]*?name="${inputName}"[\\s\\S]*?data-action="clear-text-input"`,
+      ),
+    );
+  }
+  assert.match(entryHtml, /<label for="web-room-display-name">/);
+  assert.match(entryHtml, /<label for="web-room-invite">/);
+  assert.match(entryHtml, /<label for="web-room-server-url">/);
+  assert.doesNotMatch(entryHtml, /<label class="(?:entry-field|join-field)/);
+
+  const joinedHtml = renderWebRoomApp({
+    ...joinedRoomState,
+    providerPicker: {
+      open: true,
+      status: "idle",
+      url: "https://www.bilibili.com/video/BV1test",
+      proxy: false,
+      shared: false,
+      items: [],
+    },
+  });
+
+  assert.match(
+    joinedHtml,
+    /class="clearable-input"[\s\S]*?name="bilibiliUrl"[\s\S]*?data-action="clear-text-input"/,
+  );
+  assert.match(
+    joinedHtml,
+    /class="clearable-input"[\s\S]*?name="chat"[\s\S]*?data-action="clear-text-input"/,
+  );
+  const playerRegion = joinedHtml.slice(
+    joinedHtml.indexOf('class="player-panel"'),
+    joinedHtml.indexOf('class="chat-panel"'),
+  );
+  assert.doesNotMatch(
+    playerRegion,
+    /name="playerDanmaku"[\s\S]*?data-action="clear-text-input"/,
+  );
+});
+
+test("renders a compact accessible success toast", () => {
+  const html = renderWebRoomApp({
+    ...joinedRoomState,
+    toast: {
+      id: 1,
+      message: "授权成功",
+      tone: "success",
+    },
+  });
+
+  assert.match(html, /class="web-room-toast"/);
+  assert.match(html, /role="status"/);
+  assert.match(html, /aria-live="polite"/);
+  assert.match(html, /data-toast-tone="success"/);
+  assert.match(html, />授权成功</);
+});
+
 test("renders the supplied joined-room desktop layout regions", () => {
   const html = renderWebRoomApp(joinedRoomState);
 
@@ -695,7 +764,10 @@ test("renders denied member permissions as disabled controls", () => {
   assert.match(html, /<media-controller\b[^>]*gesturesdisabled/);
   assert.match(html, /<media-time-range disabled>/);
   assert.match(html, /<media-playback-rate-button notooltip disabled>/);
-  assert.match(html, /name="chat" maxlength="500" disabled/);
+  assert.match(
+    html,
+    /name="chat" maxlength="500"[^>]*aria-label="聊天内容" disabled/,
+  );
   assert.match(html, /data-action="voice-toggle"[\s\S]*disabled/);
   assert.match(html, /data-action="send-player-danmaku"[\s\S]*disabled/);
   assert.doesNotMatch(html, /data-action="kick-member"/);

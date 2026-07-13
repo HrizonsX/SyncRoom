@@ -20,6 +20,7 @@ import type {
   WebRoomProviderPickerState,
   WebRoomState,
   WebRoomThemeMode,
+  WebRoomToast,
 } from "../ui/render.js";
 import {
   appendSystemChatMessage,
@@ -95,6 +96,7 @@ const DEFAULT_RECONNECT_MAX_DELAY_MS = 30_000;
 const DANMAKU_SEND_COOLDOWN_MS = 1_000;
 const TRANSIENT_VOICE_ERROR_MS = 3_000;
 const TRANSIENT_PLAYBACK_ERROR_MS = 10_000;
+const TRANSIENT_TOAST_MS = 3_000;
 const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/;
 
 export type CreateRoomInput = {
@@ -302,6 +304,9 @@ export function createWebRoomAppController(
   let voiceErrorTimerKey: string | null = null;
   let playbackErrorTimer: AuthPollTimeoutHandle | null = null;
   let playbackErrorTimerKey: string | null = null;
+  let toastTimer: AuthPollTimeoutHandle | null = null;
+  let toastTimerId: number | null = null;
+  let toastSequence = 0;
   let providerPlaybackRefreshKey: string | null = null;
   let reconnectTimer: ReconnectTimeoutHandle | null = null;
   let reconnectAttempt = 0;
@@ -356,6 +361,15 @@ export function createWebRoomAppController(
     return state.themeMode === "dark" ? "dark" : "light";
   }
 
+  function createAuthorizationSuccessToast(): WebRoomToast {
+    toastSequence += 1;
+    return {
+      id: toastSequence,
+      message: "授权成功",
+      tone: "success",
+    };
+  }
+
   function clearChatCooldownTimer(): void {
     if (chatCooldownTimer === null) {
       return;
@@ -390,6 +404,15 @@ export function createWebRoomAppController(
     clearAuthPollTimeout(playbackErrorTimer);
     playbackErrorTimer = null;
     playbackErrorTimerKey = null;
+  }
+
+  function clearToastTimer(): void {
+    if (toastTimer === null) {
+      return;
+    }
+    clearAuthPollTimeout(toastTimer);
+    toastTimer = null;
+    toastTimerId = null;
   }
 
   function handleChatCooldownTimer(): void {
@@ -472,12 +495,25 @@ export function createWebRoomAppController(
     });
   }
 
+  function handleToastTimer(toastId: number): void {
+    toastTimer = null;
+    toastTimerId = null;
+    if (state.view !== "joined" || state.toast?.id !== toastId) {
+      return;
+    }
+    emit({
+      ...state,
+      toast: undefined,
+    });
+  }
+
   function syncTransientUiTimers(): void {
     if (state.view !== "joined") {
       clearChatCooldownTimer();
       clearDanmakuCooldownTimer();
       clearVoiceErrorTimer();
       clearPlaybackErrorTimer();
+      clearToastTimer();
       return;
     }
 
@@ -554,6 +590,20 @@ export function createWebRoomAppController(
       }
     } else {
       clearPlaybackErrorTimer();
+    }
+
+    const toast = state.toast;
+    if (toast) {
+      if (toastTimerId !== toast.id) {
+        clearToastTimer();
+        toastTimerId = toast.id;
+        toastTimer = setAuthPollTimeout(
+          () => handleToastTimer(toast.id),
+          TRANSIENT_TOAST_MS,
+        );
+      }
+    } else {
+      clearToastTimer();
     }
   }
 
@@ -1035,6 +1085,7 @@ export function createWebRoomAppController(
     method: WebRoomAuthMethod,
     providerId: VideoProviderId,
     result: BilibiliAuthStatusResult,
+    showSuccessToast = false,
   ): void {
     if (state.view !== "joined") {
       return;
@@ -1057,6 +1108,7 @@ export function createWebRoomAppController(
     emit({
       ...state,
       authStatus: "authorized",
+      ...(showSuccessToast ? { toast: createAuthorizationSuccessToast() } : {}),
       authPanel: {
         open: authPanelOpen,
         ...(providerId !== "bilibili" ? { providerId } : {}),
@@ -1123,7 +1175,7 @@ export function createWebRoomAppController(
         if (input.generation !== authPollGeneration) {
           return;
         }
-        applyBilibiliAuthStatusResult(input.method, providerId, status);
+        applyBilibiliAuthStatusResult(input.method, providerId, status, true);
         resetBilibiliAuthPolling();
         return;
       }
@@ -2305,7 +2357,7 @@ export function createWebRoomAppController(
       ...state,
       providerPicker: {
         ...picker,
-        url: policy.url?.trim() || picker.url,
+        url: policy.url === undefined ? picker.url : policy.url.trim(),
         proxy: policy.proxy ?? picker.proxy,
         shared: policy.shared ?? picker.shared,
       },

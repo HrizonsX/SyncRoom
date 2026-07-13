@@ -17,6 +17,33 @@ test("styles Bilibili QR authorization as a scannable square", () => {
   );
 });
 
+test("styles clearable inputs and compact top toast without shifting layout", () => {
+  assert.match(
+    styles,
+    /\.clearable-input\s*{[^}]*position:\s*relative;[^}]*display:\s*block;[^}]*min-width:\s*0;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.clearable-input\s*>\s*input\s*{[^}]*padding-right:\s*34px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.clearable-input-clear\s*{[^}]*position:\s*absolute;[^}]*right:\s*6px;[^}]*width:\s*22px;[^}]*height:\s*22px;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.clearable-input\s*>\s*input:placeholder-shown\s*\+\s*\.clearable-input-clear\s*{[^}]*visibility:\s*hidden;[^}]*pointer-events:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-toast-region\s*{[^}]*position:\s*fixed;[^}]*top:\s*14px;[^}]*z-index:\s*40;[^}]*pointer-events:\s*none;[^}]*}/s,
+  );
+  assert.match(
+    styles,
+    /\.web-room-toast\s*{[^}]*display:\s*inline-flex;[^}]*max-width:\s*min\(calc\(100vw - 24px\),\s*360px\);[^}]*}/s,
+  );
+});
+
 test("styles announcement brand and chat voice action", () => {
   assert.match(
     styles,

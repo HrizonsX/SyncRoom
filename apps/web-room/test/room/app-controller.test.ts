@@ -751,6 +751,7 @@ test("refreshes Bilibili authorization when refresh rejoin restores host identit
     state.view === "joined" ? state.authPanel?.profileName : null,
     "Alice B",
   );
+  assert.equal(state.view === "joined" ? state.toast : undefined, undefined);
 });
 
 test("leaves a joined room and clears the persisted rejoin session", () => {
@@ -1321,6 +1322,20 @@ test("polls Bilibili QR authorization until the host is authorized", async () =>
     vipLabel: "annual",
     expiresAt: 122_000,
   });
+  assert.deepEqual(state.toast, {
+    id: 1,
+    message: "授权成功",
+    tone: "success",
+  });
+  assert.deepEqual(scheduledDelays, [25, 3_000]);
+
+  scheduledCallbacks[1]?.();
+  const stateAfterToast = controller.getState();
+  assert.equal(stateAfterToast.view, "joined");
+  if (stateAfterToast.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(stateAfterToast.toast, undefined);
 });
 
 test("refreshes Bilibili auth details when opening an authorized panel", async () => {
@@ -1412,6 +1427,12 @@ test("refreshes Bilibili auth details when opening an authorized panel", async (
     vipLabel: "annual",
     expiresAt: 122_000,
   });
+  assert.deepEqual(state.toast, {
+    id: 1,
+    message: "授权成功",
+    tone: "success",
+  });
+  assert.equal(scheduledCallbacks.length, 2);
 });
 
 test("keeps Bilibili authorization controls host-only", () => {
@@ -1583,7 +1604,7 @@ test("keeps a typed provider URL when playback policy changes before parsing", (
     url: "https://www.bilibili.com/video/BV1PENDING",
   });
 
-  const state = controller.getState();
+  let state = controller.getState();
   assert.equal(state.view, "joined");
   if (state.view !== "joined") {
     throw new Error("Expected joined state.");
@@ -1592,6 +1613,14 @@ test("keeps a typed provider URL when playback policy changes before parsing", (
     state.providerPicker?.url,
     "https://www.bilibili.com/video/BV1PENDING",
   );
+
+  controller.setProviderPlaybackPolicy({ url: "" });
+  state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.url, "");
 });
 
 test("loads Bilibili parse results from the provider API", async () => {

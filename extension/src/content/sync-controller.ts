@@ -30,6 +30,10 @@ import {
 } from "./sync-guards";
 import { createSoftApplyController } from "./soft-apply-controller";
 import { createPendingLocalOverrideController } from "./pending-local-override";
+import {
+  acceptInitialRoomStateHydration as acceptInitialRoomStateHydrationRuntime,
+  acceptInitialRoomStateHydrationIfPending as acceptInitialRoomStateHydrationRuntimeIfPending,
+} from "./hydration-runtime-state";
 import type {
   ContentRuntimeState,
   LocalPlaybackEventSource,
@@ -298,14 +302,11 @@ export function createSyncController(args: {
   }
 
   function acceptInitialRoomStateHydration(): void {
-    args.runtimeState.pendingRoomStateHydration = false;
-    args.runtimeState.hasReceivedInitialRoomState = true;
+    acceptInitialRoomStateHydrationRuntime(args.runtimeState);
   }
 
   function acceptInitialRoomStateHydrationIfPending(): void {
-    if (args.runtimeState.pendingRoomStateHydration) {
-      acceptInitialRoomStateHydration();
-    }
+    acceptInitialRoomStateHydrationRuntimeIfPending(args.runtimeState);
   }
 
   function logIgnoredRemotePlayback(argsForLog: {

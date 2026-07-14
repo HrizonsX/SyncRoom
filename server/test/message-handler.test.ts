@@ -603,6 +603,79 @@ test("message handler skips room state publish when playback update is ignored",
   assert.deepEqual(published, []);
 });
 
+test("message handler rate limits playback buffer churn per session", async () => {
+  const session = createSession("member-1", {
+    roomCode: "ROOM01",
+    memberId: "member-1",
+    memberToken: "member-token-1",
+  });
+  let serviceCalls = 0;
+  let published = 0;
+  const events: string[] = [];
+  const handler = createMessageHandler({
+    config: CONFIG,
+    roomService: {
+      async createRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async joinRoomForSession() {
+        throw new Error("unreachable");
+      },
+      async leaveRoomForSession() {
+        return { room: null };
+      },
+      async shareVideoForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackForSession() {
+        throw new Error("unreachable");
+      },
+      async updatePlaybackBufferForSession() {
+        serviceCalls += 1;
+        return { room: { code: "ROOM01" }, changed: true };
+      },
+      async updateProfileForSession() {
+        throw new Error("unreachable");
+      },
+      async getRoomStateForSession() {
+        return {
+          roomCode: "ROOM01",
+          sharedVideo: null,
+          playback: null,
+          members: [{ id: "member-1", name: "Alice" }],
+        };
+      },
+    },
+    logEvent(event) {
+      events.push(event);
+    },
+    send() {},
+    sendError() {},
+    async publishRoomEvent() {
+      published += 1;
+    },
+    instanceId: "node-a",
+    now: () => 1_000,
+  });
+
+  for (let index = 0; index < 7; index += 1) {
+    await handler.handleClientMessage(session, {
+      type: "playback:buffer",
+      payload: {
+        memberToken: "member-token-1",
+        state: index % 2 === 0 ? "buffering" : "ready",
+        currentTime: 12,
+        bufferAheadSeconds: index % 2 === 0 ? 0 : 6,
+      },
+    });
+  }
+  await handler.flushPendingPublishes();
+
+  assert.equal(serviceCalls, 6);
+  assert.equal(published, 6);
+  assert.ok(events.includes("rate_limited"));
+});
+
 test("message handler keeps leave completed when member change publish fails", async () => {
   const events: string[] = [];
   const left: string[] = [];

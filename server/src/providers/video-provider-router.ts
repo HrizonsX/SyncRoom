@@ -58,7 +58,9 @@ type ProviderPickerItem = {
   kind: string;
   qualityLabel?: string;
   sourceType?: string;
-  providerDescriptor: ProviderPlaybackDescriptor;
+  providerDescriptor?: ProviderPlaybackDescriptor;
+  unavailableReason?: string;
+  message?: string;
 };
 
 export type VideoProviderRouter = {
@@ -117,6 +119,23 @@ function readOptionalRecord(value: unknown): JsonObject | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
     : undefined;
+}
+
+function matchProviderUrlSafely(
+  provider: HostProviderContext["provider"],
+  url: string,
+): ReturnType<HostProviderContext["provider"]["matchUrl"]> {
+  try {
+    return provider.matchUrl(url);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      // Provider adapters should return null for unsupported URLs, but URL
+      // constructors can throw before that branch. Keep malformed user input
+      // on the 400 path instead of surfacing it as a server fault.
+      return null;
+    }
+    throw error;
+  }
 }
 
 function getHeaderValue(value: string | string[] | undefined): string | null {
@@ -258,6 +277,30 @@ function createPickerItem(
   };
 }
 
+function readPickerMessage(value: unknown): string | undefined {
+  const message = typeof value === "string" ? value.trim() : "";
+  return message.length > 0 && message.length <= 280 ? message : undefined;
+}
+
+function readPickerUnavailableReason(value: unknown): string | undefined {
+  const reason = typeof value === "string" ? value.trim() : "";
+  return /^[a-z0-9_.:-]+$/i.test(reason) ? reason : undefined;
+}
+
+function createUnavailablePickerItem(
+  item: ProviderPlayableItem,
+): ProviderPickerItem {
+  const message = readPickerMessage(item.message);
+  const unavailableReason = readPickerUnavailableReason(item.unavailableReason);
+  return {
+    itemId: item.item.itemId,
+    title: item.item.title,
+    kind: item.item.kind,
+    ...(unavailableReason ? { unavailableReason } : {}),
+    ...(message ? { message } : {}),
+  };
+}
+
 async function readUpstreamManifest(args: {
   fetchImpl: typeof fetch;
   url: string;
@@ -375,7 +418,11 @@ async function createPickerItems(args: {
 }): Promise<ProviderPickerItem[]> {
   const items: ProviderPickerItem[] = [];
   for (const item of args.result.items) {
-    const playableItem: ProviderPlayableItem = args.policy.proxy
+    const effectivePolicy: PlaybackProxyPolicy =
+      item.requiresProxy === true
+        ? { ...args.policy, proxy: true }
+        : args.policy;
+    const playableItem: ProviderPlayableItem = effectivePolicy.proxy
       ? {
           ...item,
           candidates: (await Promise.all(
@@ -393,6 +440,10 @@ async function createPickerItems(args: {
           )) as ProviderPlayableItem["candidates"],
         }
       : item;
+    if (playableItem.candidates.length === 0) {
+      items.push(createUnavailablePickerItem(playableItem));
+      continue;
+    }
     const descriptor = createProviderPlaybackDescriptor(
       {
         ...args.result,
@@ -400,7 +451,7 @@ async function createPickerItems(args: {
       },
       {
         itemId: playableItem.item.itemId,
-        policy: args.policy,
+        policy: effectivePolicy,
       },
     );
     items.push(createPickerItem(descriptor));
@@ -629,7 +680,7 @@ export function createVideoProviderRouter(
       sendError(response, 400, "invalid_request", "Invalid provider request.");
       return;
     }
-    const matchedUrl = context.provider.matchUrl(url);
+    const matchedUrl = matchProviderUrlSafely(context.provider, url);
     if (!matchedUrl) {
       sendError(
         response,
@@ -673,8 +724,9 @@ export function createVideoProviderRouter(
     });
     const upstreamHeaders = createProviderHeaders(providerId, credentials);
     const publicBaseUrl = getPublicBaseUrl(request);
-    // Delivery mode is an explicit front-end choice: direct mode returns CDN
-    // URLs untouched; proxy mode registers media resources under /proxy.
+    // Delivery mode normally follows the front-end choice. A provider item may
+    // require the room proxy when its safe browser form cannot carry mandatory
+    // media headers, as with anonymous Bilibili previews.
     const deliveryPolicy = parsePolicy;
     const items = await createPickerItems({
       result,

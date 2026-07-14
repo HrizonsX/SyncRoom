@@ -1753,7 +1753,7 @@ test("Bilibili provider parses bangumi episode into a safe playback item", async
   assert.equal(JSON.stringify(events).includes("pgc-ep-123456"), false);
 });
 
-test("Bilibili provider rejects bangumi preview-only playback metadata", async () => {
+test("Bilibili provider parses bangumi preview-only playback metadata as playable preview", async () => {
   const mock = createMockFetch([
     {
       body: {
@@ -1824,28 +1824,55 @@ test("Bilibili provider rejects bangumi preview-only playback metadata", async (
     now: () => 1_700_000_000_000,
   });
 
-  await assert.rejects(
-    () =>
-      provider.parse({
-        matchedUrl: {
-          providerId: "bilibili",
-          kind: "pgc",
-          rawId: "ep123456",
-          page: null,
-          normalizedUrl: "https://www.bilibili.com/bangumi/play/ep123456",
-          requiresResolution: false,
+  const result = await provider.parse({
+    matchedUrl: {
+      providerId: "bilibili",
+      kind: "pgc",
+      rawId: "ep123456",
+      page: null,
+      normalizedUrl: "https://www.bilibili.com/bangumi/play/ep123456",
+      requiresResolution: false,
+    },
+    policy: { proxy: true, shared: true },
+    credentials: {
+      cookies: "SESSDATA=session-secret; bili_jct=csrf-secret",
+      csrf: "csrf-secret",
+    },
+  });
+
+  assert.equal(result.providerId, "bilibili");
+  assert.equal(result.sourceId, "ep123456");
+  assert.equal(result.items.length, 1);
+  assert.deepEqual(result.items[0], {
+    item: {
+      itemId: "ep-123456",
+      title: "Movie",
+      kind: "episode",
+      aid: "456",
+      bvid: "BV1pgcPreview",
+      cid: "333",
+      epId: "123456",
+      seasonId: "98765",
+      durationSeconds: 7200,
+    },
+    candidates: [
+      {
+        id: "mp4-32-1",
+        sourceType: "mp4",
+        url: "https://upos.example.test/pgc-preview-6min.mp4",
+        mimeType: "video/mp4",
+        qualityLabel: "480P 标清",
+        bandwidth: 800_000,
+        upstreamHeaders: {
+          Cookie:
+            "SESSDATA=session-secret; bili_jct=csrf-secret; buvid3=pgc-preview-buvid-3; buvid4=pgc-preview-buvid-4",
         },
-        policy: { proxy: true, shared: true },
-        credentials: {
-          cookies: "SESSDATA=session-secret; bili_jct=csrf-secret",
-          csrf: "csrf-secret",
-        },
-      }),
-    (error) =>
-      error instanceof VideoProviderError &&
-      error.code === "provider_parse_failed" &&
-      error.reason === "pgc_preview_playurl",
-  );
+        default: true,
+      },
+    ],
+    defaultCandidateId: "mp4-32-1",
+    requiresProxy: true,
+  });
 });
 
 test("Bilibili provider parses bangumi season into selectable episodes", async () => {

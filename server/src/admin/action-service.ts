@@ -392,7 +392,9 @@ export function createAdminActionService(options: {
 
       await getRoomOrThrow(roomCode);
       await options.roomStore.deleteRoom(roomCode);
+      options.runtimeStore.deleteRoom(roomCode);
       await clearVideoAuthRoom(roomCode, "admin_room_expired");
+      await options.publishRoomDeleted(roomCode);
 
       options.logEvent("admin_room_expired", {
         roomCode,

@@ -8,7 +8,10 @@ export type PlaybackAcceptanceDecision =
   | { decision: "accept"; reason: "same-actor" | "no-current" | "default" }
   | {
       decision: "ignore-as-follow";
-      reason: "authority-window-follow";
+      reason:
+        | "authority-window-follow"
+        | "live-non-explicit-stop"
+        | "unchanged-ratechange";
     }
   | {
       decision: "ignore-stale-like";
@@ -24,6 +27,22 @@ export function decidePlaybackAcceptance(args: {
 }): PlaybackAcceptanceDecision {
   if (!args.currentPlayback) {
     return { decision: "accept", reason: "no-current" };
+  }
+
+  if (
+    args.incomingPlayback.syncIntent === "explicit-ratechange" &&
+    Math.abs(
+      normalizePlaybackRate(args.incomingPlayback.playbackRate) -
+        normalizePlaybackRate(args.currentPlayback.playbackRate),
+    ) <= 0.01
+  ) {
+    // A rate control that repeats the current value is not a timeline update.
+    // Ignoring it also contains buggy or stale clients that emit the request
+    // whenever their controls are recreated.
+    return {
+      decision: "ignore-as-follow",
+      reason: "unchanged-ratechange",
+    };
   }
 
   const currentIsStopLike =
@@ -63,6 +82,21 @@ export function decidePlaybackAcceptance(args: {
     args.incomingPlayback.currentTime + 1 < effectiveCurrentTime;
   const materiallyBackBehindCurrent =
     args.incomingPlayback.currentTime + 2.5 < effectiveCurrentTime;
+
+  if (
+    args.isLivePlayback === true &&
+    !incomingIsExplicitControl &&
+    args.currentPlayback.playState === "playing" &&
+    incomingIsStopLike
+  ) {
+    // Live players can emit pause/buffering while they reload manifests or
+    // recover from a local stall. Only explicit controls may turn the shared
+    // live room from playing into stopped.
+    return {
+      decision: "ignore-as-follow",
+      reason: "live-non-explicit-stop",
+    };
+  }
 
   if (
     !incomingIsExplicitControl &&

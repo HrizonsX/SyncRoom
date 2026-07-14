@@ -214,6 +214,44 @@ test("metrics collector aggregates web playback and proxy observability with saf
     providerId: "bilibili",
     bytes: 1024,
   });
+  metrics.recordProxyRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+  });
+  metrics.recordProxyRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+  });
+  metrics.recordProxyUpstreamTraffic({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    bytes: 2048,
+  });
+  metrics.recordProxyUpstreamRequest({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    outcome: "success",
+  });
+  metrics.recordProxyCacheEvent({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    event: "miss",
+  });
+  metrics.recordProxyCacheEvent({
+    roomCode: "ROOM01",
+    providerId: "bilibili",
+    event: "hit",
+  });
+  metrics.recordNginxProxyCacheRequest({
+    status: "hit",
+    bytes: 262144,
+    durationMs: 12,
+  });
+  metrics.recordNginxProxyCacheRequest({
+    status: "miss",
+    bytes: 262144,
+    durationMs: 180,
+  });
 
   const rendered = await metrics.render();
 
@@ -271,7 +309,95 @@ test("metrics collector aggregates web playback and proxy observability with saf
     ),
     true,
   );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_upstream_traffic_bytes_total{provider="bilibili",room_code="ROOM01"} 2048',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_upstream_requests_total{outcome="success",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_cache_events_total{event="miss",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_proxy_cache_events_total{event="hit",provider="bilibili",room_code="ROOM01"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_requests_total{status="hit"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_requests_total{status="miss"} 1',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_bytes_total{status="hit"} 262144',
+    ),
+    true,
+  );
+  assert.equal(
+    rendered.includes(
+      'syncroom_nginx_proxy_cache_request_duration_seconds_count{status="miss"} 1',
+    ),
+    true,
+  );
   assert.equal(rendered.includes("SESSDATA"), false);
   assert.equal(rendered.includes("Authorization"), false);
   assert.equal(rendered.includes("https://cdn.example.com"), false);
+});
+
+test("metrics collector removes per-room proxy series when a room is cleared", async () => {
+  const metrics = createMetricsCollector({
+    runtimeStore: createInMemoryRuntimeStore(() => 0),
+    roomStore: {
+      async countRooms() {
+        return 0;
+      },
+    } as never,
+  });
+  for (const roomCode of ["ROOM01", "ROOM02"]) {
+    metrics.recordProxyTraffic({
+      roomCode,
+      providerId: "bilibili",
+      bytes: 1_024,
+    });
+    metrics.recordProxyRequest({ roomCode, providerId: "bilibili" });
+    metrics.recordProxyUpstreamTraffic({
+      roomCode,
+      providerId: "bilibili",
+      bytes: 1_024,
+    });
+    metrics.recordProxyUpstreamRequest({
+      roomCode,
+      providerId: "bilibili",
+      outcome: "success",
+    });
+    metrics.recordProxyCacheEvent({
+      roomCode,
+      providerId: "bilibili",
+      event: "hit",
+    });
+  }
+
+  metrics.clearProxyRoom("room01");
+  const rendered = await metrics.render();
+
+  assert.equal(rendered.includes('room_code="ROOM01"'), false);
+  assert.equal(rendered.includes('room_code="ROOM02"'), true);
 });

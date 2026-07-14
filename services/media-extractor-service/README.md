@@ -59,8 +59,8 @@ Environment:
 - `MEDIA_EXTRACTOR_HOST`, default `127.0.0.1`
 - `MEDIA_EXTRACTOR_PORT`, default `8790`
 
-The SyncRoom server should point `MEDIA_EXTRACTOR_URL` at this service, for
-example `http://127.0.0.1:8790`.
+The SyncRoom server should point `MEDIA_EXTRACTOR_BASE_URL` at this service,
+for example `http://127.0.0.1:8790`.
 
 ## API
 

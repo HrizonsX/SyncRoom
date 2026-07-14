@@ -196,6 +196,7 @@ test("playback authority does not project live progress when accepting live paus
       updatedAt: 26_000,
       serverTime: 26_000,
       actorId: "guest",
+      syncIntent: "explicit-pause",
     },
     currentTime: 26_000,
     isLivePlayback: true,
@@ -204,6 +205,35 @@ test("playback authority does not project live progress when accepting live paus
   assert.deepEqual(decision, {
     decision: "accept",
     reason: "default",
+  });
+});
+
+test("playback authority ignores non-explicit live pauses while the room is playing", () => {
+  const decision = decidePlaybackAcceptance({
+    currentPlayback: {
+      currentTime: 0,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "owner",
+    },
+    authority: null,
+    incomingPlayback: {
+      currentTime: 0,
+      playState: "paused",
+      playbackRate: 1,
+      updatedAt: 26_000,
+      serverTime: 26_000,
+      actorId: "guest",
+    },
+    currentTime: 26_000,
+    isLivePlayback: true,
+  });
+
+  assert.deepEqual(decision, {
+    decision: "ignore-as-follow",
+    reason: "live-non-explicit-stop",
   });
 });
 
@@ -240,6 +270,35 @@ test("playback authority accepts explicit control even inside another actor's au
   assert.deepEqual(decision, {
     decision: "accept",
     reason: "default",
+  });
+});
+
+test("playback authority ignores an explicit rate request that keeps the current rate", () => {
+  const decision = decidePlaybackAcceptance({
+    currentPlayback: {
+      currentTime: 120,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 1_000,
+      serverTime: 1_000,
+      actorId: "owner",
+    },
+    authority: null,
+    incomingPlayback: {
+      currentTime: 125,
+      playState: "playing",
+      playbackRate: 1,
+      updatedAt: 6_000,
+      serverTime: 6_000,
+      actorId: "guest",
+      syncIntent: "explicit-ratechange",
+    },
+    currentTime: 6_000,
+  });
+
+  assert.deepEqual(decision, {
+    decision: "ignore-as-follow",
+    reason: "unchanged-ratechange",
   });
 });
 

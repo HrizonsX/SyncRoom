@@ -256,9 +256,46 @@ function sanitizeItem(
   return sanitized as unknown as ProviderItemSelection;
 }
 
+const DIRECT_CREDENTIAL_URL_PATTERN =
+  /(?:^|[?&#;/])(?:SESSDATA|bili_jct|DedeUserID(?:__ckMd5)?|csrf|cookie|authorization|refresh_token)=/i;
+
+function decodeForCredentialScan(value: string): string {
+  let decoded = value;
+  for (let index = 0; index < 2; index += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) {
+        break;
+      }
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded;
+}
+
+function assertSafeDirectCandidateUrl(url: string): void {
+  if (
+    !DIRECT_CREDENTIAL_URL_PATTERN.test(url) &&
+    !DIRECT_CREDENTIAL_URL_PATTERN.test(decodeForCredentialScan(url))
+  ) {
+    return;
+  }
+  throw new VideoProviderError(
+    "provider_parse_failed",
+    "Direct playback candidate contains provider credentials.",
+    "unsafe_direct_candidate_url",
+  );
+}
+
 function sanitizeCandidate(
   candidate: ProviderPlaybackCandidate & Record<string, unknown>,
+  policy: PlaybackProxyPolicy,
 ): ProviderPlaybackCandidate {
+  if (!policy.proxy) {
+    assertSafeDirectCandidateUrl(candidate.url);
+  }
   const sanitized: Record<string, unknown> = {
     id: candidate.id,
     sourceType: candidate.sourceType,
@@ -294,7 +331,9 @@ export function createProviderPlaybackDescriptor(
     );
   }
 
-  const candidates = selected.candidates.map(sanitizeCandidate);
+  const candidates = selected.candidates.map((candidate) =>
+    sanitizeCandidate(candidate, selection.policy),
+  );
   const defaultCandidate =
     selected.defaultCandidateId ??
     candidates.find((candidate) => candidate.default)?.id ??

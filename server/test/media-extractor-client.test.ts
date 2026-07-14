@@ -69,7 +69,7 @@ test("media extractor client posts extract requests and validates candidates", a
   });
 });
 
-test("media extractor client maps HTTP failures to provider parse errors", async () => {
+test("media extractor client maps no playable candidates to provider parse errors", async () => {
   const client = createMediaExtractorClient({
     baseUrl: "http://127.0.0.1:8790",
     fetch: async () =>
@@ -86,6 +86,50 @@ test("media extractor client maps HTTP failures to provider parse errors", async
     () =>
       client.extract({
         url: "https://example.com/watch/empty",
+        platform: "generic",
+      }),
+    (error) =>
+      error instanceof VideoProviderError &&
+      error.code === "provider_parse_failed" &&
+      error.reason === "extractor_no_playable_candidates",
+  );
+});
+
+test("media extractor client maps transport failures to provider parse errors", async () => {
+  const client = createMediaExtractorClient({
+    baseUrl: "http://127.0.0.1:8790",
+    fetch: async () => {
+      throw new TypeError("fetch failed");
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      client.extract({
+        url: "https://unsupported.example.test/watch",
+        platform: "generic",
+      }),
+    (error) =>
+      error instanceof VideoProviderError &&
+      error.code === "provider_parse_failed" &&
+      error.reason === "extractor_unavailable",
+  );
+});
+
+test("media extractor client maps non-json HTTP failures to provider parse errors", async () => {
+  const client = createMediaExtractorClient({
+    baseUrl: "http://127.0.0.1:8790",
+    fetch: async () =>
+      new Response("unsupported site", {
+        status: 422,
+        headers: { "content-type": "text/plain" },
+      }),
+  });
+
+  await assert.rejects(
+    () =>
+      client.extract({
+        url: "https://unsupported.example.test/watch",
         platform: "generic",
       }),
     (error) =>

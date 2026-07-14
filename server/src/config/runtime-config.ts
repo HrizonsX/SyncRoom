@@ -94,6 +94,7 @@ export type ServerConfigFile = {
   port?: number;
   globalAdminPort?: number;
   metricsPort?: number;
+  nginxCacheMetricsPort?: number;
   logLevel?: LogLevel;
   security?: SecurityConfigFile;
   persistence?: PersistenceConfigFile;
@@ -106,6 +107,7 @@ export type RuntimeConfig = {
   port: number;
   globalAdminPort: number;
   metricsPort: number | undefined;
+  nginxCacheMetricsPort: number | undefined;
   logLevel: LogLevel;
   securityConfig: SecurityConfig;
   persistenceConfig: PersistenceConfig;
@@ -299,6 +301,10 @@ export async function loadRuntimeConfig(
     metricsPort:
       readTrimmedEnv(mergedEnv, "METRICS_PORT") !== undefined
         ? parseIntegerEnv(mergedEnv, "METRICS_PORT", 0)
+        : undefined,
+    nginxCacheMetricsPort:
+      readTrimmedEnv(mergedEnv, "NGINX_CACHE_METRICS_PORT") !== undefined
+        ? parseIntegerEnv(mergedEnv, "NGINX_CACHE_METRICS_PORT", 0)
         : undefined,
     logLevel: parseConfigEnvFieldValue<LogLevel>(
       LOG_LEVEL_FIELD,

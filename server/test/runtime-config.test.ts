@@ -44,6 +44,7 @@ function readRuntimeValue(
     case "port":
     case "globalAdminPort":
     case "metricsPort":
+    case "nginxCacheMetricsPort":
     case "logLevel":
       return getConfigValue(config as Record<string, unknown>, path);
     case "security":
@@ -88,6 +89,7 @@ test("runtime config falls back to defaults and env when config file is missing"
     assert.equal(config.port, 9001);
     assert.equal(config.globalAdminPort, 9001);
     assert.equal(config.metricsPort, undefined);
+    assert.equal(config.nginxCacheMetricsPort, undefined);
     assert.equal(config.logLevel, "info");
     assert.equal(config.persistenceConfig.provider, "memory");
     assert.equal(config.adminUiConfig.enabled, false);
@@ -176,6 +178,20 @@ test("runtime config keeps metricsPort undefined when METRICS_PORT is blank", as
       { cwd: tempDir },
     );
     assert.equal(config.metricsPort, undefined);
+  });
+});
+
+test("runtime config loads NGINX_CACHE_METRICS_PORT when configured", async () => {
+  await withTempDir(async (tempDir) => {
+    const config = await loadRuntimeConfig(
+      {
+        NGINX_CACHE_METRICS_PORT: "5514",
+        ALLOW_MISSING_ORIGIN_IN_DEV: "true",
+      },
+      { cwd: tempDir },
+    );
+
+    assert.equal(config.nginxCacheMetricsPort, 5514);
   });
 });
 

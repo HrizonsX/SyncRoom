@@ -12,6 +12,7 @@ import type {
 import {
   consumeFixedWindow,
   consumeTokenBucket,
+  createTokenBucket,
   WINDOW_10_SECONDS_MS,
   WINDOW_5_SECONDS_MS,
   WINDOW_MINUTE_MS,
@@ -38,6 +39,8 @@ type RoomEventBusPublishInput<T> = T extends unknown
   : never;
 
 const HOST_DISCONNECT_TRANSFER_GRACE_MS = 5_000;
+const PLAYBACK_BUFFER_REPORTS_PER_SECOND = 4;
+const PLAYBACK_BUFFER_REPORT_BURST = 6;
 
 export function createMessageHandler(options: {
   config: {
@@ -136,7 +139,7 @@ export function createMessageHandler(options: {
         Extract<ClientMessage, { type: "playback:buffer" }>["payload"],
         "memberToken"
       >,
-    ) => Promise<{ room: { code: string } }>;
+    ) => Promise<{ room: { code: string }; changed?: boolean }>;
     setPlaybackSyncStrategyForSession?: (
       session: Session,
       memberToken: string,
@@ -221,11 +224,32 @@ export function createMessageHandler(options: {
   const now = options.now ?? Date.now;
   const metricsCollector = options.metricsCollector;
   const pendingPublishes = new Set<Promise<void>>();
+  const playbackBufferRateLimits = new WeakMap<
+    Session,
+    ReturnType<typeof createTokenBucket>
+  >();
   const maxPendingPublishes = options.maxPendingPublishes ?? 256;
   const backpressureWaitMs = options.backpressureWaitMs ?? 5_000;
   const publishTimeoutMs = options.publishTimeoutMs ?? 5_000;
   const hostDisconnectTransferGraceMs =
     options.hostDisconnectTransferGraceMs ?? HOST_DISCONNECT_TRANSFER_GRACE_MS;
+
+  function consumePlaybackBufferSlot(
+    session: Session,
+    currentTime: number,
+  ): boolean {
+    let bucket = playbackBufferRateLimits.get(session);
+    if (!bucket) {
+      bucket = createTokenBucket(PLAYBACK_BUFFER_REPORT_BURST, currentTime);
+      playbackBufferRateLimits.set(session, bucket);
+    }
+    return consumeTokenBucket(
+      bucket,
+      PLAYBACK_BUFFER_REPORTS_PER_SECOND,
+      PLAYBACK_BUFFER_REPORT_BURST,
+      currentTime,
+    );
+  }
 
   const systemChatSuffix: Record<RoomSystemChatEventType, string> = {
     member_joined: "加入了房间",
@@ -1077,6 +1101,10 @@ export function createMessageHandler(options: {
           return;
         }
         case "playback:buffer": {
+          if (!consumePlaybackBufferSlot(session, currentTime)) {
+            handleRateLimitedMessage(session, message.type);
+            return;
+          }
           await measureMessageHandling("playback:buffer", async () => {
             const serviceResult =
               await roomService.updatePlaybackBufferForSession?.(
@@ -1090,8 +1118,16 @@ export function createMessageHandler(options: {
                     : {
                         bufferAheadSeconds: message.payload.bufferAheadSeconds,
                       }),
+                  ...(message.payload.playbackRevision === undefined
+                    ? {}
+                    : {
+                        playbackRevision: message.payload.playbackRevision,
+                      }),
                 },
               );
+            if (serviceResult?.changed === false) {
+              return;
+            }
             if (serviceResult) {
               await firePublishRoomEvent(
                 {

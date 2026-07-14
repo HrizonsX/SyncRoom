@@ -66,10 +66,10 @@
 
 **Files:**
 
-- Modify: `apps/web-room/src/provider-api-client.ts`
-- Modify: `apps/web-room/src/app-controller.ts`
-- Test: `apps/web-room/test/provider-api-client.test.ts`
-- Test: `apps/web-room/test/app-controller.test.ts`
+- Modify: `apps/web-room/src/providers/provider-api-client.ts`
+- Modify: `apps/web-room/src/room/app-controller.ts`
+- Test: `apps/web-room/test/providers/provider-api-client.test.ts`
+- Test: `apps/web-room/test/room/app-controller.test.ts`
 
 - [ ] Route Bilibili URLs to `/api/providers/bilibili/parse`; route all other URLs to `/api/providers/generic/parse`.
 - [ ] Keep Bilibili auth UI Bilibili-only.

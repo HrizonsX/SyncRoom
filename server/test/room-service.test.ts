@@ -29,7 +29,7 @@ function createSession(id: string): Session {
     connectionState: "attached",
     socket: {} as WebSocket,
     remoteAddress: "127.0.0.1",
-    origin: "chrome-extension://allowed-extension",
+    origin: "https://web-room.example.test",
     roomCode: null,
     memberId: null,
     displayName: `User-${id}`,
@@ -581,7 +581,6 @@ test("room service enforces host-managed member permissions", async () => {
     created.room.joinToken,
     "Bob",
   );
-
   await service.setRoomMemberPermissionForSession(
     owner,
     created.memberToken,
@@ -2014,7 +2013,70 @@ test("room service ignores refreshed movie startup updates that would reset natu
   assert.equal(finalState.playback?.serverTime, 1_000);
 });
 
-test("room service still accepts live pause controls at zero after live playback has elapsed", async () => {
+test("room service ignores non-explicit live pauses while playback is running", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM05D",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const ownerId = owner.memberId ?? owner.id;
+  const liveVideo = createLiveProviderSharedVideo();
+
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    liveVideo,
+    createPlayback(ownerId, {
+      url: liveVideo.url,
+      playState: "playing",
+      currentTime: 0,
+    }),
+  );
+
+  currentTime = 26_000;
+  const paused = await service.updatePlaybackForSession(
+    guest,
+    joined.memberToken,
+    createPlayback(guest.memberId ?? guest.id, {
+      url: liveVideo.url,
+      playState: "paused",
+      currentTime: 0,
+      seq: 2,
+    }),
+  );
+
+  assert.equal(paused.ignored, true);
+  const finalState = await service.getRoomStateForSession(
+    owner,
+    created.memberToken,
+    "sync:request",
+  );
+  assert.equal(finalState.playback?.playState, "playing");
+  assert.equal(finalState.playback?.actorId, ownerId);
+  assert.equal(finalState.playback?.currentTime, 0);
+});
+
+test("room service still accepts explicit live pause controls at zero after live playback has elapsed", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -2061,6 +2123,7 @@ test("room service still accepts live pause controls at zero after live playback
       url: liveVideo.url,
       playState: "paused",
       currentTime: 0,
+      syncIntent: "explicit-pause",
       seq: 2,
     }),
   );
@@ -2218,7 +2281,7 @@ test("room service ignores an older position after a seek authority takes over",
   assert.equal(finalState.playback?.actorId, owner.memberId);
 });
 
-test("room service accepts cross-actor explicit ratechange during another actor's authority window", async () => {
+test("room service accepts a changed rate and ignores a repeated same-rate request", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -2285,12 +2348,29 @@ test("room service accepts cross-actor explicit ratechange during another actor'
 
   assert.equal(guestRatechange.ignored, false);
 
+  currentTime = 2_200;
+  const repeatedRatechange = await service.updatePlaybackForSession(
+    guest,
+    joined.memberToken,
+    createPlayback(guest.memberId ?? guest.id, {
+      playState: "playing",
+      currentTime: 42.2,
+      playbackRate: 1.5,
+      syncIntent: "explicit-ratechange",
+      seq: 4,
+    }),
+  );
+
+  assert.equal(repeatedRatechange.ignored, true);
+
   const finalState = await service.getRoomStateForSession(
     owner,
     created.memberToken,
     "sync:request",
   );
   assert.equal(finalState.playback?.actorId, guest.memberId);
+  assert.equal(finalState.playback?.seq, 3);
+  assert.equal(finalState.playback?.serverTime, 2_100);
   assert.equal(finalState.playback?.playbackRate, 1.5);
   assert.equal(finalState.playback?.syncIntent, "explicit-ratechange");
 });
@@ -4576,11 +4656,13 @@ test("host can enable wait mode and a buffering VOD member holds playback briefl
       seq: 1,
     }),
   );
-  await service.setPlaybackSyncStrategyForSession(
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
     owner,
     created.memberToken,
     "wait",
   );
+  const playbackRevision = waitMode.room.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
 
   currentTime = 3_000;
   const held = await service.updatePlaybackBufferForSession(
@@ -4590,14 +4672,18 @@ test("host can enable wait mode and a buffering VOD member holds playback briefl
       state: "buffering",
       currentTime: 31,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
 
   assert.equal(held.room.playbackSync.strategy, "wait");
   assert.equal(held.room.playbackSync.hold.active, true);
-  assert.equal(held.room.playbackSync.hold.reasonMemberId, guest.memberId);
-  assert.equal(held.room.playbackSync.hold.startedAt, currentTime);
-  assert.equal(held.room.playbackSync.hold.deadlineAt, currentTime + 10_000);
+  assert.equal(held.room.playbackSync.hold.reasonMemberId, owner.memberId);
+  assert.equal(held.room.playbackSync.hold.startedAt, 1_000);
+  assert.equal(held.room.playbackSync.hold.deadlineAt, 31_000);
+  assert.equal(held.changed, false);
+  assert.equal(held.room.playback?.currentTime, 30);
+  assert.equal(held.room.playback?.serverTime, 1_000);
 
   currentTime = 4_000;
   const ready = await service.updatePlaybackBufferForSession(
@@ -4607,11 +4693,323 @@ test("host can enable wait mode and a buffering VOD member holds playback briefl
       state: "ready",
       currentTime: 32,
       bufferAheadSeconds: 6,
+      playbackRevision,
     },
   );
 
-  assert.equal(ready.room.playbackSync.hold.active, false);
-  assert.deepEqual(ready.room.playbackSync.bufferingMemberIds, []);
+  assert.equal(ready.room.playbackSync.hold.active, true);
+  assert.deepEqual(ready.room.playbackSync.bufferingMemberIds, [
+    owner.memberId,
+  ]);
+  assert.equal(ready.changed, true);
+  currentTime = 5_000;
+  const released = await service.updatePlaybackBufferForSession(
+    owner,
+    created.memberToken,
+    {
+      state: "ready",
+      currentTime: 30,
+      bufferAheadSeconds: 6,
+      playbackRevision,
+    },
+  );
+  assert.equal(released.room.playbackSync.hold.active, false);
+  assert.deepEqual(released.room.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.room.playback?.currentTime, 30);
+  assert.equal(released.room.playback?.serverTime, 5_000);
+});
+
+test("wait mode releases its readiness barrier without another buffer report", async () => {
+  let currentTime = 1_000;
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore({ now: () => currentTime }),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM26",
+  });
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createSharedVideo(),
+    createPlayback(owner.memberId ?? owner.id, {
+      currentTime: 30,
+      playState: "playing",
+      updatedAt: currentTime,
+      seq: 1,
+    }),
+  );
+  const waiting = await service.setPlaybackSyncStrategyForSession(
+    owner,
+    created.memberToken,
+    "wait",
+  );
+  const deadline = waiting.room.playbackSync.hold.deadlineAt;
+  assert.equal(deadline, 31_000);
+
+  currentTime = deadline!;
+  const released = await service.releaseExpiredPlaybackHold(
+    created.room.code,
+    deadline!,
+  );
+
+  assert.equal(released.changed, true);
+  assert.equal(released.room?.playbackSync.hold.active, false);
+  assert.deepEqual(released.room?.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.room?.playback?.currentTime, 30);
+  assert.equal(released.room?.playback?.serverTime, deadline);
+});
+
+test("wait mode starts a fresh readiness barrier for explicit play and seek commands", async () => {
+  let currentTime = 1_000;
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore({ now: () => currentTime }),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM25P",
+  });
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const plugin = createSession("plugin");
+  plugin.origin = "chrome-extension://allowed-extension";
+  await service.joinRoomForSession(
+    plugin,
+    created.room.code,
+    created.room.joinToken,
+    "Plugin",
+  );
+  const ownerId = owner.memberId ?? owner.id;
+  const guestId = guest.memberId ?? guest.id;
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createSharedVideo(),
+    createPlayback(ownerId, {
+      currentTime: 30,
+      playState: "paused",
+      updatedAt: currentTime,
+      seq: 1,
+    }),
+  );
+  await service.setPlaybackSyncStrategyForSession(
+    owner,
+    created.memberToken,
+    "wait",
+  );
+
+  currentTime = 2_000;
+  const played = await service.updatePlaybackForSession(
+    owner,
+    created.memberToken,
+    createPlayback(ownerId, {
+      currentTime: 30,
+      playState: "playing",
+      syncIntent: "explicit-play",
+      updatedAt: currentTime,
+      seq: 2,
+    }),
+  );
+  const playRevision = played.room?.playbackSync.hold.playbackRevision;
+  assert.ok(playRevision);
+  assert.equal(played.room?.playbackSync.hold.active, true);
+  assert.deepEqual(
+    new Set(played.room?.playbackSync.bufferingMemberIds),
+    new Set([ownerId, guestId]),
+  );
+  assert.equal(
+    played.room?.playbackSync.bufferingMemberIds.includes(
+      plugin.memberId ?? plugin.id,
+    ),
+    false,
+  );
+
+  currentTime = 3_000;
+  const sought = await service.updatePlaybackForSession(
+    guest,
+    joined.memberToken,
+    createPlayback(guestId, {
+      currentTime: 120,
+      playState: "paused",
+      syncIntent: "explicit-seek",
+      updatedAt: currentTime,
+      seq: 3,
+    }),
+  );
+  assert.equal(sought.ignored, false);
+  assert.equal(sought.room?.playback?.playState, "playing");
+  assert.equal(sought.room?.playbackSync.hold.active, true);
+  assert.notEqual(
+    sought.room?.playbackSync.hold.playbackRevision,
+    playRevision,
+  );
+  assert.deepEqual(
+    new Set(sought.room?.playbackSync.bufferingMemberIds),
+    new Set([ownerId, guestId]),
+  );
+});
+
+test("joining an active wait-mode room freezes playback only for the new member", async () => {
+  let currentTime = 1_000;
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore: createInMemoryRoomStore({ now: () => currentTime }),
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM25J",
+  });
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const ownerId = owner.memberId ?? owner.id;
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createSharedVideo(),
+    createPlayback(ownerId, {
+      currentTime: 30,
+      playState: "playing",
+      updatedAt: currentTime,
+      seq: 1,
+    }),
+  );
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
+    owner,
+    created.memberToken,
+    "wait",
+  );
+  assert.equal(waitMode.room.playbackSync.hold.active, false);
+
+  currentTime = 5_000;
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const guestId = guest.memberId ?? guest.id;
+
+  assert.equal(joined.room.playbackSync.hold.active, true);
+  assert.ok(joined.room.playbackSync.hold.playbackRevision);
+  assert.deepEqual(joined.room.playbackSync.bufferingMemberIds, [guestId]);
+  assert.equal(joined.room.playback?.currentTime, 34);
+  assert.equal(joined.room.playback?.serverTime, currentTime);
+});
+
+test("wait mode releases its frozen timeline when the buffering member leaves", async () => {
+  let currentTime = 1_000;
+  const roomStore = createInMemoryRoomStore({ now: () => currentTime });
+  const service = createRoomService({
+    config: getDefaultSecurityConfig(),
+    persistence: getDefaultPersistenceConfig(),
+    roomStore,
+    activeRooms: createActiveRoomRegistry(),
+    generateToken: (() => {
+      let id = 0;
+      return () => `token-${++id}`.padEnd(16, "x");
+    })(),
+    logEvent: (() => undefined) satisfies LogEvent,
+    now: () => currentTime,
+    createRoomCode: () => "ROOM25L",
+  });
+
+  const owner = createSession("owner");
+  const created = await service.createRoomForSession(owner, "Alice");
+  const guest = createSession("guest");
+  const joined = await service.joinRoomForSession(
+    guest,
+    created.room.code,
+    created.room.joinToken,
+    "Bob",
+  );
+  const ownerId = owner.memberId ?? owner.id;
+  await service.shareVideoForSession(
+    owner,
+    created.memberToken,
+    createSharedVideo(),
+    createPlayback(ownerId, {
+      currentTime: 30,
+      playState: "playing",
+      updatedAt: currentTime,
+      seq: 1,
+    }),
+  );
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
+    owner,
+    created.memberToken,
+    "wait",
+  );
+  const playbackRevision = waitMode.room.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
+
+  currentTime = 2_000;
+  await service.updatePlaybackBufferForSession(owner, created.memberToken, {
+    state: "ready",
+    currentTime: 30,
+    bufferAheadSeconds: 6,
+    playbackRevision,
+  });
+
+  currentTime = 3_000;
+  const held = await service.updatePlaybackBufferForSession(
+    guest,
+    joined.memberToken,
+    {
+      state: "buffering",
+      currentTime: 31,
+      bufferAheadSeconds: 0,
+      playbackRevision,
+    },
+  );
+  assert.equal(held.room.playbackSync.hold.active, true);
+  assert.equal(held.room.playback?.currentTime, 30);
+
+  currentTime = 8_000;
+  await service.leaveRoomForSession(guest);
+  const released = await service.getRoomStateForSession(
+    owner,
+    created.memberToken,
+    "sync:request",
+  );
+
+  assert.equal(released.playbackSync.hold.active, false);
+  assert.deepEqual(released.playbackSync.bufferingMemberIds, []);
+  assert.equal(released.playback?.currentTime, 30);
+  assert.equal(released.playback?.serverTime, 8_000);
 });
 
 test("wait mode keeps holding until ready members have enough buffered media", async () => {
@@ -4652,11 +5050,21 @@ test("wait mode keeps holding until ready members have enough buffered media", a
       seq: 1,
     }),
   );
-  await service.setPlaybackSyncStrategyForSession(
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
     owner,
     created.memberToken,
     "wait",
   );
+  const playbackRevision = waitMode.room.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
+
+  currentTime = 2_000;
+  await service.updatePlaybackBufferForSession(owner, created.memberToken, {
+    state: "ready",
+    currentTime: 30,
+    bufferAheadSeconds: 6,
+    playbackRevision,
+  });
 
   currentTime = 3_000;
   const held = await service.updatePlaybackBufferForSession(
@@ -4666,6 +5074,7 @@ test("wait mode keeps holding until ready members have enough buffered media", a
       state: "buffering",
       currentTime: 31,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
   assert.equal(held.room.playbackSync.hold.active, true);
@@ -4678,10 +5087,12 @@ test("wait mode keeps holding until ready members have enough buffered media", a
       state: "ready",
       currentTime: 32,
       bufferAheadSeconds: 1.5,
+      playbackRevision,
     },
   );
 
   assert.equal(shallowReady.room.playbackSync.hold.active, true);
+  assert.equal(shallowReady.changed, false);
   assert.deepEqual(shallowReady.room.playbackSync.bufferingMemberIds, [
     guest.memberId,
   ]);
@@ -4693,7 +5104,8 @@ test("wait mode keeps holding until ready members have enough buffered media", a
     {
       state: "ready",
       currentTime: 32,
-      bufferAheadSeconds: 3,
+      bufferAheadSeconds: 6,
+      playbackRevision,
     },
   );
 
@@ -4701,7 +5113,7 @@ test("wait mode keeps holding until ready members have enough buffered media", a
   assert.deepEqual(enoughReady.room.playbackSync.bufferingMemberIds, []);
 });
 
-test("wait mode does not restart an expired hold for the same buffering member", async () => {
+test("wait mode keeps holding a buffering member until it becomes ready", async () => {
   let currentTime = 1_000;
   const roomStore = createInMemoryRoomStore({ now: () => currentTime });
   const service = createRoomService({
@@ -4739,11 +5151,21 @@ test("wait mode does not restart an expired hold for the same buffering member",
       seq: 1,
     }),
   );
-  await service.setPlaybackSyncStrategyForSession(
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
     owner,
     created.memberToken,
     "wait",
   );
+  const playbackRevision = waitMode.room.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
+
+  currentTime = 2_000;
+  await service.updatePlaybackBufferForSession(owner, created.memberToken, {
+    state: "ready",
+    currentTime: 30,
+    bufferAheadSeconds: 6,
+    playbackRevision,
+  });
 
   currentTime = 3_000;
   const held = await service.updatePlaybackBufferForSession(
@@ -4753,6 +5175,7 @@ test("wait mode does not restart an expired hold for the same buffering member",
       state: "buffering",
       currentTime: 31,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
   assert.equal(held.room.playbackSync.hold.active, true);
@@ -4765,10 +5188,11 @@ test("wait mode does not restart an expired hold for the same buffering member",
       state: "buffering",
       currentTime: 31,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
 
-  assert.equal(repeatedBuffering.room.playbackSync.hold.active, false);
+  assert.equal(repeatedBuffering.room.playbackSync.hold.active, true);
   assert.deepEqual(repeatedBuffering.room.playbackSync.bufferingMemberIds, [
     guest.memberId,
   ]);
@@ -4812,11 +5236,21 @@ test("room service ignores hold-induced non-explicit pauses so wait mode can res
       seq: 1,
     }),
   );
-  await service.setPlaybackSyncStrategyForSession(
+  const waitMode = await service.setPlaybackSyncStrategyForSession(
     owner,
     created.memberToken,
     "wait",
   );
+  const playbackRevision = waitMode.room.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
+
+  currentTime = 2_000;
+  await service.updatePlaybackBufferForSession(owner, created.memberToken, {
+    state: "ready",
+    currentTime: 40,
+    bufferAheadSeconds: 6,
+    playbackRevision,
+  });
 
   currentTime = 3_000;
   const held = await service.updatePlaybackBufferForSession(
@@ -4826,6 +5260,7 @@ test("room service ignores hold-induced non-explicit pauses so wait mode can res
       state: "buffering",
       currentTime: 42,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
   assert.equal(held.room.playbackSync.hold.active, true);
@@ -4851,6 +5286,7 @@ test("room service ignores hold-induced non-explicit pauses so wait mode can res
       state: "ready",
       currentTime: 42,
       bufferAheadSeconds: 6,
+      playbackRevision,
     },
   );
 
@@ -4920,6 +5356,8 @@ test("room service preserves playing intent when a wait-mode seek reports paused
   assert.equal(seek.ignored, false);
   assert.equal(seek.room?.playback?.currentTime, 120);
   assert.equal(seek.room?.playback?.playState, "playing");
+  const playbackRevision = seek.room?.playbackSync.hold.playbackRevision;
+  assert.ok(playbackRevision);
 
   const held = await service.updatePlaybackBufferForSession(
     owner,
@@ -4928,6 +5366,7 @@ test("room service preserves playing intent when a wait-mode seek reports paused
       state: "buffering",
       currentTime: 120,
       bufferAheadSeconds: 0,
+      playbackRevision,
     },
   );
   assert.equal(held.room.playbackSync.hold.active, true);
@@ -4940,12 +5379,28 @@ test("room service preserves playing intent when a wait-mode seek reports paused
       state: "ready",
       currentTime: 120,
       bufferAheadSeconds: 6,
+      playbackRevision,
     },
   );
 
-  assert.equal(ready.room.playbackSync.hold.active, false);
-  assert.equal(ready.room.playback?.playState, "playing");
-  assert.equal(ready.room.playback?.actorId, guestId);
+  assert.equal(ready.room.playbackSync.hold.active, true);
+  assert.deepEqual(ready.room.playbackSync.bufferingMemberIds, [guestId]);
+
+  currentTime = 5_000;
+  const released = await service.updatePlaybackBufferForSession(
+    guest,
+    joined.memberToken,
+    {
+      state: "ready",
+      currentTime: 120,
+      bufferAheadSeconds: 6,
+      playbackRevision,
+    },
+  );
+
+  assert.equal(released.room.playbackSync.hold.active, false);
+  assert.equal(released.room.playback?.playState, "playing");
+  assert.equal(released.room.playback?.actorId, guestId);
 });
 
 test("room service ignores new-member startup stop updates behind current VOD progress", async () => {

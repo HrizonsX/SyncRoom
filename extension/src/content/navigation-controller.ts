@@ -2,6 +2,7 @@ import {
   resetUserGestureState,
   type ContentRuntimeState,
 } from "./runtime-state";
+import { beginInitialRoomStateHydration } from "./hydration-runtime-state";
 
 export interface NavigationController {
   start(): void;
@@ -59,8 +60,7 @@ export function createNavigationController(args: {
       return;
     }
 
-    args.runtimeState.hasReceivedInitialRoomState = false;
-    args.runtimeState.pendingRoomStateHydration = true;
+    beginInitialRoomStateHydration(args.runtimeState);
     args.runtimeState.intendedPlayState = "paused";
     // Anchor the previous shared URL so that broadcasts stay suppressed until
     // the page bridge resolves the new page to a different normalized URL or

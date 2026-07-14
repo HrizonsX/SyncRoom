@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
-import type { PlaybackProxyPolicy } from "@syncroom/protocol";
+import type {
+  PlaybackProxyPolicy,
+  ProviderPlaybackDescriptor,
+} from "@syncroom/protocol";
 import { createPlaybackProxyController } from "../src/playback-proxy/controller.js";
 import { createPlaybackProxyRouter } from "../src/playback-proxy/router.js";
 import { createPlaybackProxyService } from "../src/playback-proxy/service.js";
@@ -98,6 +101,7 @@ async function createRoomFixture() {
 
 function createProviderFixture(
   options: {
+    matchUrl?: VideoProviderAdapter["matchUrl"];
     parse?: VideoProviderAdapter["parse"];
   } = {},
 ) {
@@ -159,7 +163,10 @@ function createProviderFixture(
         });
       },
     },
-    matchUrl() {
+    matchUrl(input) {
+      if (options.matchUrl) {
+        return options.matchUrl(input);
+      }
       return {
         providerId: "bilibili",
         kind: "ugc",
@@ -543,6 +550,367 @@ test("video provider router returns proxied descriptors without leaking credenti
         `${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/proxy/segment/proxied-mp4`,
       ),
     );
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router auto-proxies private Bilibili preview MP4 when direct mode was requested", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture({
+    matchUrl: () => ({
+      providerId: "bilibili",
+      kind: "pgc",
+      rawId: "ep399856",
+      page: null,
+      normalizedUrl: "https://www.bilibili.com/bangumi/play/ep399856",
+      requiresResolution: false,
+    }),
+    parse: async (input) => {
+      parseInputs.push(input);
+      return {
+        providerId: "bilibili",
+        sourceId: "ep399856",
+        sourceUrl: "https://www.bilibili.com/bangumi/play/ep399856",
+        title: "Bilibili Preview",
+        items: [
+          {
+            item: {
+              itemId: "ep-399856",
+              title: "Preview",
+              kind: "episode",
+              epId: "399856",
+              cid: "123456",
+            },
+            candidates: [
+              {
+                id: "mp4-32-1",
+                sourceType: "mp4",
+                url: "https://upos.example.test/preview.mp4",
+                mimeType: "video/mp4",
+                qualityLabel: "480P",
+                upstreamHeaders: {
+                  Cookie: "buvid3=preview-buvid-3; buvid4=preview-buvid-4",
+                },
+                default: true,
+              },
+            ],
+            defaultCandidateId: "mp4-32-1",
+            requiresProxy: true,
+          },
+        ],
+      };
+    },
+  });
+  const upstreamRequests: Array<{
+    url: string;
+    headers: Record<string, string>;
+  }> = [];
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "preview-mp4",
+    now: () => 1_000,
+    resolveHostname: async () => ["93.184.216.34"],
+    fetch: async (url, init) => {
+      upstreamRequests.push({
+        url: String(url),
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+      });
+      return new Response("preview-bytes", {
+        status: 206,
+        headers: {
+          "content-type": "video/mp4",
+          "content-range": "bytes 0-12/100",
+          "content-length": "13",
+          "accept-ranges": "bytes",
+        },
+      });
+    },
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const proxyRouter = createPlaybackProxyRouter({
+    controller: createPlaybackProxyController({ service: proxyService }),
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    if (await proxyRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.bilibili.com/bangumi/play/ep399856",
+      policy: { proxy: false, shared: false },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(parseInputs[0]?.credentials, null);
+    const data = result.body.data as {
+      items?: Array<{ providerDescriptor?: ProviderPlaybackDescriptor }>;
+    };
+    assert.deepEqual(data.items?.[0]?.providerDescriptor?.policy, {
+      proxy: true,
+      shared: false,
+    });
+    const serialized = JSON.stringify(result.body);
+    assert.match(serialized, /\/proxy\/segment\/preview-mp4/);
+    assert.doesNotMatch(
+      serialized,
+      /upos\.example|preview-buvid|requiresProxy/i,
+    );
+
+    const segmentResponse = await fetch(
+      `${baseUrl}/proxy/segment/preview-mp4`,
+      {
+        headers: { Range: "bytes=0-12" },
+      },
+    );
+    assert.equal(segmentResponse.status, 206);
+    assert.equal(segmentResponse.headers.get("content-type"), "video/mp4");
+    assert.equal(await segmentResponse.text(), "preview-bytes");
+    assert.deepEqual(upstreamRequests, [
+      {
+        url: "https://upos.example.test/preview.mp4",
+        headers: {
+          cookie: "buvid3=preview-buvid-3; buvid4=preview-buvid-4",
+          range: "bytes=0-12",
+          referer: "https://www.bilibili.com",
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+        },
+      },
+    ]);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router returns parsed provider items without playback candidates", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, registry } = createProviderFixture({
+    parse: async () => ({
+      providerId: "bilibili",
+      sourceId: "ep399856",
+      sourceUrl: "https://www.bilibili.com/bangumi/play/ep399856",
+      title: "Bilibili Bangumi",
+      items: [
+        {
+          item: {
+            itemId: "ep-399856",
+            title: "Episode 1",
+            kind: "episode",
+            epId: "399856",
+            cid: "123456",
+          },
+          candidates: [],
+          unavailableReason: "pgc_preview_playurl",
+          message:
+            "已解析到剧集信息，但未获取到完整播放源；请确认 Bilibili 会员授权有效。",
+        },
+      ],
+    }),
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: createPlaybackProxyService(),
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.bilibili.com/bangumi/play/ep399856",
+      policy: { proxy: true, shared: false },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    const data = result.body.data as {
+      items?: Array<{
+        itemId?: string;
+        title?: string;
+        kind?: string;
+        providerDescriptor?: unknown;
+        unavailableReason?: string;
+        message?: string;
+      }>;
+    };
+    assert.deepEqual(data.items, [
+      {
+        itemId: "ep-399856",
+        title: "Episode 1",
+        kind: "episode",
+        unavailableReason: "pgc_preview_playurl",
+        message:
+          "已解析到剧集信息，但未获取到完整播放源；请确认 Bilibili 会员授权有效。",
+      },
+    ]);
+    assert.equal(data.items?.[0]?.providerDescriptor, undefined);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router rejects direct shared candidates that expose credentials", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture();
+  await authService.authorize({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    ownerMemberId: "owner-1",
+    profile: { id: "mid-1", displayName: "Alice B" },
+    credentials: {
+      cookies: "SESSDATA=secret-cookie; bili_jct=csrf-secret",
+    },
+  });
+  const proxyService = createPlaybackProxyService({
+    createResourceId: () => "direct-credential-url",
+    now: () => 1_000,
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.bilibili.com/video/BV1TEST",
+      policy: { proxy: false, shared: true },
+    });
+
+    assert.equal(result.status, 400);
+    assert.equal(result.body.ok, false);
+    assert.equal(result.body.error.code, "provider_parse_failed");
+    assert.equal(result.body.error.reason, "unsafe_direct_candidate_url");
+    assert.equal(
+      parseInputs[0]?.credentials?.cookies,
+      "SESSDATA=secret-cookie; bili_jct=csrf-secret",
+    );
+    assert.doesNotMatch(
+      JSON.stringify(result.body),
+      /SESSDATA|secret-cookie|upos\.example/i,
+    );
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router returns Bilibili direct shared urls without headers", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture({
+    parse: async () => ({
+      providerId: "bilibili",
+      sourceId: "BV1TEST",
+      sourceUrl: "https://www.bilibili.com/video/BV1TEST",
+      title: "Bilibili Test",
+      items: [
+        {
+          item: {
+            itemId: "BV1TEST:cid-1",
+            title: "Part 1",
+            kind: "part",
+            bvid: "BV1TEST",
+            cid: "cid-1",
+          },
+          candidates: [
+            {
+              id: "dash-1080p",
+              sourceType: "mpd",
+              url: "https://upos.example.test/video.mpd?deadline=123&sign=abc",
+              mimeType: "application/dash+xml",
+              qualityLabel: "1080P",
+              default: true,
+              upstreamHeaders: {
+                Cookie: "SESSDATA=secret-cookie; bili_jct=csrf-secret",
+              },
+            },
+          ],
+          defaultCandidateId: "dash-1080p",
+        },
+      ],
+    }),
+  });
+  await authService.authorize({
+    roomCode: "ABC123",
+    providerId: "bilibili",
+    ownerMemberId: "owner-1",
+    profile: { id: "mid-1", displayName: "Alice B" },
+    credentials: {
+      cookies: "SESSDATA=secret-cookie; bili_jct=csrf-secret",
+    },
+  });
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: createPlaybackProxyService(),
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "https://www.bilibili.com/video/BV1TEST",
+      policy: { proxy: false, shared: true },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.ok, true);
+    assert.equal(
+      parseInputs[0]?.credentials?.cookies,
+      "SESSDATA=secret-cookie; bili_jct=csrf-secret",
+    );
+    const serialized = JSON.stringify(result.body);
+    assert.match(serialized, /https:\/\/upos\.example\.test\/video\.mpd/);
+    assert.doesNotMatch(serialized, /\/proxy\/(?:manifest|segment)\//);
+    assert.doesNotMatch(serialized, /SESSDATA|secret-cookie|Cookie/i);
   } finally {
     await close(server);
   }
@@ -973,6 +1341,52 @@ test("video provider router requires owner authorization for shared playback par
       error: {
         code: "provider_auth_required",
         message: "Bilibili authorization is required.",
+      },
+    });
+    assert.equal(parseInputs.length, 0);
+  } finally {
+    await close(server);
+  }
+});
+
+test("video provider router treats malformed parse urls as unsupported source", async () => {
+  const { roomStore, runtimeStore } = await createRoomFixture();
+  const { authService, parseInputs, registry } = createProviderFixture({
+    matchUrl() {
+      throw new TypeError("Invalid URL");
+    },
+  });
+  const proxyService = createPlaybackProxyService();
+  const providerRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: registry,
+    authService,
+    playbackProxyService: proxyService,
+  });
+  const server = createServer(async (request, response) => {
+    if (await providerRouter.handle(request, response)) {
+      return;
+    }
+    response.writeHead(418);
+    response.end();
+  });
+  const baseUrl = await listen(server);
+
+  try {
+    const result = await postJson(baseUrl, "/api/providers/bilibili/parse", {
+      roomCode: "ABC123",
+      memberToken: "owner-token",
+      url: "http://[::1",
+      policy: { proxy: false, shared: false },
+    });
+
+    assert.equal(result.status, 400);
+    assert.deepEqual(result.body, {
+      ok: false,
+      error: {
+        code: "unsupported_source",
+        message: "Provider source is unsupported.",
       },
     });
     assert.equal(parseInputs.length, 0);

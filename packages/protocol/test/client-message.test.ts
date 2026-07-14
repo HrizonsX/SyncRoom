@@ -448,6 +448,7 @@ test("accepts playback buffer coordination messages", () => {
         state: "buffering",
         currentTime: 42,
         bufferAheadSeconds: 0.25,
+        playbackRevision: '["video","member-1",7,1000]',
       },
     }),
     true,
@@ -465,6 +466,18 @@ test("accepts playback buffer coordination messages", () => {
 });
 
 test("rejects malformed playback buffer coordination messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "ready",
+        currentTime: 42,
+        playbackRevision: "x".repeat(1_025),
+      },
+    }),
+    false,
+  );
   assert.equal(
     isClientMessage({
       type: "playback:buffer",

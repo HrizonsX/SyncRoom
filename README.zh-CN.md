@@ -18,6 +18,20 @@ ws://8.163.88.33:8787
 
 ![syncRoom 浏览器扩展截图](./docs/assets/syncroom-extension-popup.png)
 
+## Docker 镜像
+
+服务端、网页房间、Nginx、Redis、LiveKit 和媒体解析服务可以作为单镜像运行：
+
+```bash
+docker run --rm --name syncroom \
+  -p 8787:8787 \
+  -p 7881:7881 \
+  -p 50000-60000:50000-60000/udp \
+  benxl/syncroom-server:1.0.3
+```
+
+网页房间入口为 `http://localhost:8787/room/`，扩展或网页房间中的服务端地址填写 `ws://localhost:8787`。生产部署时应显式设置 `ALLOWED_ORIGINS`、Admin 密钥和 `LIVEKIT_URL`；完整环境变量和外层 TLS 反代说明见 [Docker 单镜像部署](./docs/operations/docker-single-image.zh-CN.md)。
+
 ## 核心能力
 
 | 能力              | 简述                                                                              | 详细文档                                                           |

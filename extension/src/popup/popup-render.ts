@@ -359,9 +359,10 @@ function formatRetryProgress(args: {
   if (args.retryAttempt <= 0 || args.retryAttemptMax <= 0) {
     return "";
   }
-  return /^en\b/i.test(getUiLanguage())
-    ? `(${args.retryAttempt}/${args.retryAttemptMax})`
-    : `（${args.retryAttempt}/${args.retryAttemptMax}）`;
+  return t("retryProgressValue", {
+    attempt: args.retryAttempt,
+    max: args.retryAttemptMax,
+  });
 }
 
 function formatVideoMeta(url: string | null): string {

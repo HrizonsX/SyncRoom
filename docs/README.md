@@ -25,6 +25,8 @@ The web room docs cover the standalone room workspace, playback-engine routing f
 
 - [Server and deployment operations](./operations/server-operations.md)
 - [服务端与部署运维](./operations/server-operations.zh-CN.md)
+- [Docker single-image deployment](./operations/docker-single-image.md)
+- [Docker 单镜像部署](./operations/docker-single-image.zh-CN.md)
 - [Web room Bilibili proxy playback operations](./operations/web-room-bilibili-proxy.md)
 - [网页房间 Bilibili 代理播放运维说明](./operations/web-room-bilibili-proxy.zh-CN.md)
 - [LiveKit voice chat operations](./operations/livekit-voice-chat.md)

@@ -18,6 +18,20 @@ Use this server URL in the extension advanced settings or the web room entry scr
 
 ![syncRoom browser extension screenshot](./docs/assets/syncroom-extension-popup.png)
 
+## Docker Image
+
+The server, web room, Nginx, Redis, LiveKit, and media extractor can run as a single image:
+
+```bash
+docker run --rm --name syncroom \
+  -p 8787:8787 \
+  -p 7881:7881 \
+  -p 50000-60000:50000-60000/udp \
+  benxl/syncroom-server:1.0.3
+```
+
+Open `http://localhost:8787/room/` for the web room, and use `ws://localhost:8787` as the server URL in the extension or web room. For production, set `ALLOWED_ORIGINS`, Admin secrets, and `LIVEKIT_URL` explicitly. See [Docker single-image deployment](./docs/operations/docker-single-image.md) for the full environment variable surface and outer TLS proxy notes.
+
 ## Core Capabilities
 
 | Capability              | Summary                                                                                               | Details                                                             |

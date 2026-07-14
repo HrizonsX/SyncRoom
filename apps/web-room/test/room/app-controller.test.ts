@@ -1623,6 +1623,83 @@ test("keeps a typed provider URL when playback policy changes before parsing", (
   assert.equal(state.providerPicker?.url, "");
 });
 
+test("keeps the latest provider parse result when policy requests finish out of order", async () => {
+  type ParseResult = Awaited<ReturnType<ProviderApiClient["parse"]>>;
+  const parseResolvers: Array<(result: ParseResult) => void> = [];
+  const { controller } = createJoinedHostController({
+    providerApiClientFactory: () => ({
+      startAuth: async () => ({
+        providerId: "bilibili",
+        method: "qr",
+        flowId: "flow-1",
+        status: "pending",
+        expiresAt: 1,
+      }),
+      pollAuth: async () => ({ status: "pending" }),
+      getAuthStatus: async () => ({ authorized: false, profile: null }),
+      logoutAuth: async () => ({ loggedOut: true }),
+      parse: () =>
+        new Promise<ParseResult>((resolve) => {
+          parseResolvers.push(resolve);
+        }),
+    }),
+  });
+
+  const firstParse = controller.parseBilibiliUrl({
+    url: "https://www.bilibili.com/video/BV1TEST",
+    proxy: false,
+    shared: false,
+  });
+  const latestParse = controller.parseBilibiliUrl({
+    url: "https://www.bilibili.com/video/BV1TEST",
+    proxy: true,
+    shared: true,
+  });
+
+  parseResolvers[1]?.({
+    providerId: "bilibili",
+    sourceId: "BV1TEST",
+    sourceUrl: "https://www.bilibili.com/video/BV1TEST",
+    title: "Latest result",
+    items: [
+      {
+        itemId: "latest-item",
+        title: "Latest item",
+        kind: "part",
+        qualityLabel: "1080P",
+        sourceType: "mp4",
+      },
+    ],
+  });
+  await latestParse;
+  parseResolvers[0]?.({
+    providerId: "bilibili",
+    sourceId: "BV1TEST",
+    sourceUrl: "https://www.bilibili.com/video/BV1TEST",
+    title: "Stale result",
+    items: [
+      {
+        itemId: "stale-item",
+        title: "Stale item",
+        kind: "part",
+        qualityLabel: "720P",
+        sourceType: "mp4",
+      },
+    ],
+  });
+  await firstParse;
+
+  const state = controller.getState();
+  assert.equal(state.view, "joined");
+  if (state.view !== "joined") {
+    throw new Error("Expected joined state.");
+  }
+  assert.equal(state.providerPicker?.message, "Latest result");
+  assert.equal(state.providerPicker?.selectedItemId, "latest-item");
+  assert.equal(state.providerPicker?.proxy, true);
+  assert.equal(state.providerPicker?.shared, true);
+});
+
 test("loads Bilibili parse results from the provider API", async () => {
   const recorder = createSocketRecorder();
   const calls: unknown[] = [];

@@ -441,11 +441,16 @@ export function bindWebRoomDomEvents({
     ) {
       return;
     }
-    controller.setProviderPlaybackPolicy({
+    const policy = {
       proxy: getInputChecked(root, "providerProxy"),
       shared: getInputChecked(root, "providerShared"),
       url: getInputValue(root, "bilibiliUrl"),
-    });
+    };
+    if (policy.url.trim()) {
+      void controller.parseBilibiliUrl(policy);
+      return;
+    }
+    controller.setProviderPlaybackPolicy(policy);
   });
 
   root.addEventListener("paste", (event) => {

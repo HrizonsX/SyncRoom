@@ -7,6 +7,7 @@ import {
 import type { WebRoomAppController } from "../../src/room/app-controller.js";
 
 type ClickListener = (event: Event) => void;
+type ChangeListener = (event: Event) => void;
 
 class FakeElement {
   dataset: Record<string, string> = {};
@@ -30,6 +31,7 @@ class FakeInput {
   disabled = false;
   focused = false;
   dispatchedEvents: Event[] = [];
+  checked = false;
 
   constructor(
     readonly name: string,
@@ -48,18 +50,114 @@ class FakeInput {
 
 class FakeRoot {
   clickListener: ClickListener | null = null;
+  changeListener: ChangeListener | null = null;
   input: FakeInput | null = null;
+  inputs = new Map<string, FakeInput>();
 
   addEventListener(type: string, listener: EventListener): void {
     if (type === "click") {
       this.clickListener = listener as ClickListener;
     }
+    if (type === "change") {
+      this.changeListener = listener as ChangeListener;
+    }
   }
 
   querySelector(selector: string): FakeInput | null {
-    return selector === 'input[name="bilibiliUrl"]' ? this.input : null;
+    const name = selector.match(/^input\[name="([^"]+)"\]$/)?.[1];
+    if (!name) {
+      return null;
+    }
+    return (
+      this.inputs.get(name) ?? (name === "bilibiliUrl" ? this.input : null)
+    );
   }
 }
+
+test("automatically parses the current URL when proxy or shared changes", () => {
+  const urlInput = new FakeInput(
+    "bilibiliUrl",
+    "https://www.bilibili.com/video/BV1test",
+  );
+  const proxyInput = new FakeInput("providerProxy", "");
+  const sharedInput = new FakeInput("providerShared", "");
+  proxyInput.checked = true;
+  const root = new FakeRoot();
+  root.inputs.set(urlInput.name, urlInput);
+  root.inputs.set(proxyInput.name, proxyInput);
+  root.inputs.set(sharedInput.name, sharedInput);
+  const parsedPolicies: Array<{
+    url: string;
+    proxy: boolean;
+    shared: boolean;
+  }> = [];
+
+  bindWebRoomDomEvents({
+    root: root as unknown as HTMLElement,
+    controller: {
+      async parseBilibiliUrl(policy) {
+        parsedPolicies.push(policy);
+      },
+    } as WebRoomAppController,
+  });
+
+  root.changeListener?.({ target: proxyInput } as unknown as Event);
+  sharedInput.checked = true;
+  root.changeListener?.({ target: sharedInput } as unknown as Event);
+
+  assert.deepEqual(parsedPolicies, [
+    {
+      url: "https://www.bilibili.com/video/BV1test",
+      proxy: true,
+      shared: false,
+    },
+    {
+      url: "https://www.bilibili.com/video/BV1test",
+      proxy: true,
+      shared: true,
+    },
+  ]);
+});
+
+test("keeps policy changes local when the provider URL is empty", () => {
+  const urlInput = new FakeInput("bilibiliUrl", "   ");
+  const proxyInput = new FakeInput("providerProxy", "");
+  const sharedInput = new FakeInput("providerShared", "");
+  sharedInput.checked = true;
+  const root = new FakeRoot();
+  root.inputs.set(urlInput.name, urlInput);
+  root.inputs.set(proxyInput.name, proxyInput);
+  root.inputs.set(sharedInput.name, sharedInput);
+  const parsedPolicies: unknown[] = [];
+  const savedPolicies: Array<{
+    url?: string;
+    proxy?: boolean;
+    shared?: boolean;
+  }> = [];
+
+  bindWebRoomDomEvents({
+    root: root as unknown as HTMLElement,
+    controller: {
+      async parseBilibiliUrl(policy) {
+        parsedPolicies.push(policy);
+      },
+      setProviderPlaybackPolicy(policy) {
+        savedPolicies.push(policy);
+      },
+    } as WebRoomAppController,
+  });
+
+  root.changeListener?.({ target: sharedInput } as unknown as Event);
+
+  assert.deepEqual(parsedPolicies, []);
+  assert.deepEqual(savedPolicies, [
+    {
+      url: "   ",
+      proxy: false,
+      shared: true,
+    },
+  ]);
+});
 
 test("clears a provider URL and persists the empty value in controller state", () => {
   const previousElement = globalThis.Element;

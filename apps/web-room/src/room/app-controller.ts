@@ -307,6 +307,7 @@ export function createWebRoomAppController(
   let toastTimer: AuthPollTimeoutHandle | null = null;
   let toastTimerId: number | null = null;
   let toastSequence = 0;
+  let providerParseGeneration = 0;
   let providerPlaybackRefreshKey: string | null = null;
   let reconnectTimer: ReconnectTimeoutHandle | null = null;
   let reconnectAttempt = 0;
@@ -2211,6 +2212,7 @@ export function createWebRoomAppController(
       proxy: input.proxy,
       shared: providerId === "bilibili" ? input.shared : false,
     };
+    const parseGeneration = ++providerParseGeneration;
     emit({
       ...state,
       providerPicker: {
@@ -2237,7 +2239,10 @@ export function createWebRoomAppController(
         url,
         policy,
       });
-      if (state.view !== "joined") {
+      if (
+        state.view !== "joined" ||
+        parseGeneration !== providerParseGeneration
+      ) {
         return;
       }
       const resultPolicy = getProviderResultPolicy(result.items, policy);
@@ -2258,6 +2263,12 @@ export function createWebRoomAppController(
         },
       });
     } catch (error) {
+      if (
+        state.view !== "joined" ||
+        parseGeneration !== providerParseGeneration
+      ) {
+        return;
+      }
       applyProviderApiFailure({
         panel: "picker",
         diagnostic: getProviderApiFailureDiagnostic(error, "picker"),

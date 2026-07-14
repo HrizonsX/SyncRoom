@@ -44,6 +44,7 @@ function readRuntimeValue(
     case "port":
     case "globalAdminPort":
     case "metricsPort":
+    case "nginxCacheMetricsPort":
     case "logLevel":
       return getConfigValue(config as Record<string, unknown>, path);
     case "security":
@@ -66,6 +67,11 @@ function readRuntimeValue(
         config.voiceConfig as Record<string, unknown>,
         path.slice(1),
       );
+    case "mediaExtractor":
+      return getConfigValue(
+        config.mediaExtractorConfig as Record<string, unknown>,
+        path.slice(1),
+      );
   }
 }
 
@@ -83,10 +89,58 @@ test("runtime config falls back to defaults and env when config file is missing"
     assert.equal(config.port, 9001);
     assert.equal(config.globalAdminPort, 9001);
     assert.equal(config.metricsPort, undefined);
+    assert.equal(config.nginxCacheMetricsPort, undefined);
     assert.equal(config.logLevel, "info");
     assert.equal(config.persistenceConfig.provider, "memory");
     assert.equal(config.adminUiConfig.enabled, false);
+    assert.equal(config.mediaExtractorConfig.baseUrl, "http://127.0.0.1:8790");
     assert.equal(config.adminConfig, null);
+  });
+});
+
+test("runtime config loads MEDIA_EXTRACTOR_BASE_URL from env and config file", async () => {
+  await withTempDir(async (tempDir) => {
+    const envConfig = await loadRuntimeConfig(
+      {
+        MEDIA_EXTRACTOR_BASE_URL: " http://extractor.env.local:8790 ",
+        ALLOW_MISSING_ORIGIN_IN_DEV: "true",
+      },
+      { cwd: tempDir },
+    );
+    assert.equal(
+      envConfig.mediaExtractorConfig.baseUrl,
+      "http://extractor.env.local:8790",
+    );
+
+    await writeFile(
+      join(tempDir, "server.config.json"),
+      JSON.stringify({
+        mediaExtractor: {
+          baseUrl: "http://extractor.file.local:8790",
+        },
+      }),
+      "utf8",
+    );
+    const fileConfig = await loadRuntimeConfig(
+      { ALLOW_MISSING_ORIGIN_IN_DEV: "true" },
+      { cwd: tempDir },
+    );
+    assert.equal(
+      fileConfig.mediaExtractorConfig.baseUrl,
+      "http://extractor.file.local:8790",
+    );
+
+    const envOverride = await loadRuntimeConfig(
+      {
+        MEDIA_EXTRACTOR_BASE_URL: "http://extractor.override.local:8790",
+        ALLOW_MISSING_ORIGIN_IN_DEV: "true",
+      },
+      { cwd: tempDir },
+    );
+    assert.equal(
+      envOverride.mediaExtractorConfig.baseUrl,
+      "http://extractor.override.local:8790",
+    );
   });
 });
 
@@ -127,6 +181,20 @@ test("runtime config keeps metricsPort undefined when METRICS_PORT is blank", as
   });
 });
 
+test("runtime config loads NGINX_CACHE_METRICS_PORT when configured", async () => {
+  await withTempDir(async (tempDir) => {
+    const config = await loadRuntimeConfig(
+      {
+        NGINX_CACHE_METRICS_PORT: "5514",
+        ALLOW_MISSING_ORIGIN_IN_DEV: "true",
+      },
+      { cwd: tempDir },
+    );
+
+    assert.equal(config.nginxCacheMetricsPort, 5514);
+  });
+});
+
 test("assertMetricsPortDoesNotCollide rejects configs where metrics matches the main port", () => {
   assert.throws(
     () => assertMetricsPortDoesNotCollide(8787, 8787, "PORT"),
@@ -160,6 +228,7 @@ test("runtime config maps JSON file values through existing loaders", async () =
           trustedProxyAddresses: ["127.0.0.1", "198.51.100.7"],
           rateLimits: {
             syncPingBurst: 5,
+            danmakuMessagePer5Seconds: 12,
           },
         },
         persistence: {
@@ -185,6 +254,9 @@ test("runtime config maps JSON file values through existing loaders", async () =
           tokenTtlSeconds: 600,
           maxMembers: 6,
         },
+        mediaExtractor: {
+          baseUrl: "http://extractor.example.com",
+        },
       }),
       "utf8",
     );
@@ -202,6 +274,10 @@ test("runtime config maps JSON file values through existing loaders", async () =
       "198.51.100.7",
     ]);
     assert.equal(config.securityConfig.rateLimits.syncPingBurst, 5);
+    assert.equal(
+      config.securityConfig.rateLimits.danmakuMessagePer5Seconds,
+      12,
+    );
     assert.equal(config.persistenceConfig.provider, "redis");
     assert.equal(config.persistenceConfig.runtimeStoreProvider, "redis");
     assert.equal(config.persistenceConfig.roomEventBusProvider, "redis");
@@ -227,6 +303,9 @@ test("runtime config maps JSON file values through existing loaders", async () =
       apiSecret: undefined,
       tokenTtlSeconds: 600,
       maxMembers: 4,
+    });
+    assert.deepEqual(config.mediaExtractorConfig, {
+      baseUrl: "http://extractor.example.com",
     });
   });
 });

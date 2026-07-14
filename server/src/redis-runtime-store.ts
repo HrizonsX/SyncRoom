@@ -116,6 +116,7 @@ const RUNTIME_STORE_METHOD_NAMES = [
   "acquireRoomLock",
   "releaseRoomLock",
   "removeMember",
+  "removeMemberToken",
   "deleteRoom",
   "heartbeatNode",
   "listNodeStatuses",
@@ -247,6 +248,8 @@ function deserializeSession(fields: Record<string, string>): Session | null {
       videoShare: { windowStart: 0, count: 0 },
       playbackUpdate: { tokens: 0, lastRefillAt: 0 },
       syncRequest: { windowStart: 0, count: 0 },
+      chatMessage: { windowStart: 0, count: 0 },
+      danmakuMessage: { windowStart: 0, count: 0 },
       syncPing: { tokens: 0, lastRefillAt: 0 },
     },
   };
@@ -476,10 +479,6 @@ export async function createRedisRuntimeStore(
           if (currentSessionId === session.id) {
             transaction.hdel(
               roomMembersKey(keyPrefix, session.roomCode),
-              session.memberId,
-            );
-            transaction.hdel(
-              roomMemberTokensKey(keyPrefix, session.roomCode),
               session.memberId,
             );
           }
@@ -784,12 +783,31 @@ export async function createRedisRuntimeStore(
             await redis
               .multi()
               .hdel(roomMembersKey(keyPrefix, code), memberId)
-              .hdel(roomMemberTokensKey(keyPrefix, code), memberId)
               .exec();
           }
         })(),
       );
       return removal;
+    },
+    removeMemberToken(code: string, memberId: string, memberToken?: string) {
+      ensurePendingCapacity("remove_member_token");
+      const removed = localRuntimeStore.removeMemberToken(
+        code,
+        memberId,
+        memberToken,
+      );
+      void trackOperation(
+        "remove_member_token",
+        (async () => {
+          const tokenKey = roomMemberTokensKey(keyPrefix, code);
+          const currentToken = await redis.hget(tokenKey, memberId);
+          if (!currentToken || (memberToken && currentToken !== memberToken)) {
+            return;
+          }
+          await redis.multi().hdel(tokenKey, memberId).exec();
+        })(),
+      );
+      return removed;
     },
     deleteRoom(code: string) {
       ensurePendingCapacity("delete_room");

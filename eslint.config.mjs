@@ -10,6 +10,7 @@ const ignores = [
   "**/dist-firefox/**",
   "**/release/**",
   "**/.tmp/**",
+  "**/logs/**",
   "**/coverage/**",
   "**/*.d.ts",
 ];

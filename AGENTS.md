@@ -81,6 +81,17 @@ npm run format:check && npm run lint && npm run typecheck && npm run build && np
 
 The `background/index.ts` entry file only bootstraps and wires controllers — keep it thin.
 
+### Web Room (`apps/web-room/src/`)
+
+- `index.ts` is the browser entry point and should stay limited to bootstrap, render wiring, and dependency assembly.
+- `room/` owns room orchestration, WebSocket/session persistence, member permissions, room-state adaptation, invite actions, and browser-local web-room preferences. Keep `room/app-controller.ts` focused on orchestration; keep entry-page state helpers in `room/entry-state.ts`, page/server URL normalization in `room/server-url.ts`, chat history/system-message helpers in `room/chat-state.ts`, pure room-state adaptation in `room/state.ts`, and browser-local identity/theme persistence in `room/web-room-preferences.ts`.
+- `playback/` owns media engine selection, playback element reuse, playback sync controls, buffer reporting, keyboard shortcuts, fullscreen target wiring, and playback error mapping. Keep engine-specific details in focused modules such as `shaka-engine.ts`, `mpegts-engine.ts`, and `native-engine.ts`; keep source loading and element reuse in `playback-element-controller.ts`; keep autoplay/play-retry recovery in `playback-play-retry.ts`; keep `playback-controller.ts` focused on orchestration.
+- `providers/` owns provider API transport, provider host routing, provider authorization copy, and provider-facing metadata. Add new platform routing and copy in `providers/provider-metadata.ts`; keep HTTP/API calls in `providers/provider-api-client.ts`.
+- `ui/` owns render-only HTML generation, DOM event delegation, disclosure state, and theme tokens. Keep product state changes out of `ui/render.ts`; keep render-facing state types in `ui/render-types.ts`; route user events through `ui/dom-event-bindings.ts` into the room controller.
+- `chat/`, `danmaku/`, and `voice/` own their feature-specific browser state and runtime helpers. Cross-render preservation for chat drafts, chat scroll, danmaku animation, and voice runtime behavior should stay in those feature folders.
+- `styles.css` intentionally remains at `apps/web-room/src/styles.css` because the web-room build script copies it as a static asset.
+- `apps/web-room/test/` mirrors the same feature folders so tests live next to the feature boundary they protect.
+
 ### Server (`server/src/`)
 
 - `app.ts` — HTTP/WebSocket setup and message routing
@@ -98,6 +109,8 @@ Single source of truth for `ClientMessage`, `ServerMessage`, domain types (`Room
 - `index.ts` files: bootstrap and wiring only; extract logic to controllers/helpers/stores.
 - Do not combine templates, DOM updates, business rules, and message dispatch in one file.
 - Separate popup rendering, actions, and state management.
+- When refactoring a large feature, split it into cohesive components that jointly implement the larger behavior. Each component should own a closed set of state and rules, expose an explicit interface, and avoid reaching into another component's internals.
+- Prefer practical abstractions that match current behavior and credible near-term extensions. Do not create generic frameworks without an immediate maintenance benefit.
 - URL normalization must stay centralized (`normalizeSharedVideoUrl`).
 - Protocol types/guards must stay in `@syncroom/protocol`.
 - Server env parsing must stay in the server config layer.
@@ -106,6 +119,8 @@ Single source of truth for `ClientMessage`, `ServerMessage`, domain types (`Room
 
 - Repository-wide contribution and refactoring constraints are defined in [CONTRIBUTING.md](./CONTRIBUTING.md).
 - When working on structural changes, follow `CONTRIBUTING.md` as the primary source of truth for workflow, module boundary, shared source, and regression test expectations.
+- Add code comments for important or non-obvious logic during refactors. Comments should explain why the logic exists, what boundary or invariant it protects, or what regression it prevents; avoid line-by-line comments that merely restate the code.
+- Before extracting an abstraction, identify the concrete responsibility it owns, the inputs and outputs it exchanges with neighboring modules, and the tests that prove the behavior stayed intact.
 
 ## Git Constraints
 
@@ -141,6 +156,10 @@ Refactors touching these areas require regression coverage:
 - Server config loading
 - Protocol validation (type guards)
 - Server room lifecycle and admin routing
+- Web-room media-chrome playback sync changes must cover control-bar requests, video-surface requests, keyboard seeks, rapid opposite toggles, new-member/refresh hydration, and delayed native media play/pause/seek/rate echoes; only semantic request events are authoritative user intent, while native hydration echoes must remain non-explicit.
+- Web-room VOD playback revisions are command boundaries: member, chat, permission, and buffer-only `room:state` updates must not re-project and re-seek the same playback revision. Regression tests must prove that a new playback revision still applies.
+- Web-room wait-mode changes must cover false `waiting` events with sufficient buffer, player-chrome rerenders without buffer-reporter resets, frozen playback timeline rebasing on hold/release, no-op buffer reports without room broadcasts, strategy changes, and buffering-member departure.
+- Provider parse and picker-error changes must cover unsupported URLs, no playable candidates, auth-required responses, transport/non-JSON failures, and must not leak raw backend or English provider errors into user-facing picker copy.
 
 ## Agent Execution Rules
 
@@ -151,4 +170,6 @@ Refactors touching these areas require regression coverage:
 - Do not claim a change was verified if the relevant checks were not actually run.
 - Keep changes scoped to the task. Avoid opportunistic edits in unrelated files.
 - When code changes affect developer workflow, architecture, or shared rules, update the relevant documentation files in the same change.
+- When refactors change or invalidate existing documentation, update the affected docs in the same change. Do not add new documentation churn when no old wording exists or the behavior is unchanged.
+- When repo-specific agent memory, constraints, or proven workflows should carry into future conversations, update this file with concise reusable rules instead of leaving them only in chat history.
 - When reviewing code, report findings first, with concrete file references and impact, before giving summary commentary.

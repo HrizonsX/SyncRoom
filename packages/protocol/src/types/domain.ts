@@ -3,12 +3,88 @@ import type { PlaybackPlayState, RoomCode } from "./common.js";
 export const PLAYBACK_SYNC_INTENTS = [
   "explicit-seek",
   "explicit-ratechange",
+  "explicit-play",
+  "explicit-pause",
 ] as const;
 
 export type PlaybackSyncIntent = (typeof PLAYBACK_SYNC_INTENTS)[number];
+export const VIDEO_PROVIDER_IDS = [
+  "bilibili",
+  "generic",
+  "iqiyi",
+  "huya",
+] as const;
+export type VideoProviderId = (typeof VIDEO_PROVIDER_IDS)[number];
+export const PLAYBACK_SOURCE_TYPES = [
+  "mpd",
+  "m3u8",
+  "mp4",
+  "flv",
+  "ts",
+] as const;
+export type PlaybackSourceType = (typeof PLAYBACK_SOURCE_TYPES)[number];
+export const PROVIDER_ITEM_KINDS = ["part", "episode", "live"] as const;
+export type ProviderItemKind = (typeof PROVIDER_ITEM_KINDS)[number];
+export const WEB_PLAYER_ERROR_STAGES = [
+  "manifest",
+  "segment",
+  "decode",
+  "network",
+  "unknown",
+] as const;
+export type WebPlayerErrorStage = (typeof WEB_PLAYER_ERROR_STAGES)[number];
+export const WEB_PLAYBACK_REPORT_EVENTS = [
+  "startup_failure",
+  "direct_link_success",
+  "direct_link_failure",
+  "proxy_fallback",
+  "player_error",
+] as const;
+export type WebPlaybackReportEvent =
+  (typeof WEB_PLAYBACK_REPORT_EVENTS)[number];
+export const WEB_PLAYBACK_BROWSER_LABELS = [
+  "chrome",
+  "edge",
+  "firefox",
+  "safari",
+  "other",
+  "unknown",
+] as const;
+export type WebPlaybackBrowserLabel =
+  (typeof WEB_PLAYBACK_BROWSER_LABELS)[number];
+export const WEB_PLAYBACK_SYSTEM_LABELS = [
+  "windows",
+  "macos",
+  "linux",
+  "android",
+  "ios",
+  "other",
+  "unknown",
+] as const;
+export type WebPlaybackSystemLabel =
+  (typeof WEB_PLAYBACK_SYSTEM_LABELS)[number];
+export const PLAYBACK_BUFFER_STATES = ["ready", "buffering"] as const;
+export type PlaybackBufferState = (typeof PLAYBACK_BUFFER_STATES)[number];
+export const PLAYBACK_SYNC_STRATEGIES = ["smooth", "wait"] as const;
+export type PlaybackSyncStrategy = (typeof PLAYBACK_SYNC_STRATEGIES)[number];
 export const MAX_ANNOUNCEMENT_ITEMS = 8;
 export const ANNOUNCEMENT_TEXT_MAX_LENGTH = 160;
 export const ANNOUNCEMENT_ID_MAX_LENGTH = 64;
+export const CHAT_MESSAGE_MAX_LENGTH = 500;
+export const ROOM_CHAT_HISTORY_LIMIT = 200;
+export const ROOM_CHAT_MESSAGE_KINDS = ["user", "system"] as const;
+export type RoomChatMessageKind = (typeof ROOM_CHAT_MESSAGE_KINDS)[number];
+export const ROOM_SYSTEM_CHAT_EVENT_TYPES = [
+  "member_joined",
+  "member_left",
+  "voice_unmuted",
+  "voice_muted",
+] as const;
+export type RoomSystemChatEventType =
+  (typeof ROOM_SYSTEM_CHAT_EVENT_TYPES)[number];
+export const DANMAKU_MESSAGE_MAX_LENGTH = 120;
+export const DANMAKU_MODES = ["scroll", "top", "bottom"] as const;
+export type DanmakuMode = (typeof DANMAKU_MODES)[number];
 
 export function isPlaybackSyncIntent(
   value: unknown,
@@ -22,7 +98,49 @@ export function isPlaybackSyncIntent(
 export function isExplicitControlSyncIntent(
   syncIntent: PlaybackSyncIntent | null | undefined,
 ): boolean {
-  return syncIntent === "explicit-seek" || syncIntent === "explicit-ratechange";
+  return isPlaybackSyncIntent(syncIntent);
+}
+
+export interface PlaybackProxyPolicy {
+  proxy: boolean;
+  shared: boolean;
+}
+
+export interface ProviderItemSelection {
+  itemId: string;
+  title: string;
+  kind: ProviderItemKind;
+  aid?: string;
+  bvid?: string;
+  cid?: string;
+  epId?: string;
+  seasonId?: string;
+  roomId?: string;
+  durationSeconds?: number;
+}
+
+export interface ProviderPlaybackCandidate {
+  id: string;
+  sourceType: PlaybackSourceType;
+  url: string;
+  mimeType?: string;
+  codecs?: string;
+  qualityLabel?: string;
+  width?: number;
+  height?: number;
+  bandwidth?: number;
+  default?: boolean;
+}
+
+export interface ProviderPlaybackDescriptor {
+  providerId: VideoProviderId;
+  sourceId: string;
+  sourceUrl: string;
+  title: string;
+  item: ProviderItemSelection;
+  policy: PlaybackProxyPolicy;
+  candidates: ProviderPlaybackCandidate[];
+  defaultCandidateId?: string;
 }
 
 export interface SharedVideo {
@@ -31,6 +149,7 @@ export interface SharedVideo {
   title: string;
   sharedByMemberId?: string;
   sharedByDisplayName?: string;
+  provider?: ProviderPlaybackDescriptor;
 }
 
 export interface PlaybackState {
@@ -53,16 +172,85 @@ export interface PlaybackState {
   seq: number;
 }
 
+export interface PlaybackBufferReport {
+  state: PlaybackBufferState;
+  currentTime: number;
+  bufferAheadSeconds?: number;
+  playbackRevision?: string;
+}
+
+export const PLAYBACK_READY_BUFFER_AHEAD_SECONDS = 3;
+export const PLAYBACK_BARRIER_READY_BUFFER_AHEAD_SECONDS = 6;
+
+export function createPlaybackRevision(playback: PlaybackState): string {
+  return JSON.stringify([
+    playback.url,
+    playback.actorId,
+    playback.seq,
+    playback.serverTime,
+  ]);
+}
+
+export interface PlaybackBufferHoldState {
+  active: boolean;
+  reasonMemberId?: string;
+  startedAt?: number;
+  deadlineAt?: number;
+  playbackRevision?: string;
+}
+
+export interface PlaybackSyncState {
+  strategy: PlaybackSyncStrategy;
+  hold: PlaybackBufferHoldState;
+  bufferingMemberIds: string[];
+}
+
 export interface RoomMember {
   id: string;
   name: string;
+  permissions?: RoomMemberPermissions;
+}
+
+export const ROOM_MEMBER_PERMISSION_NAMES = [
+  "voice",
+  "playbackControl",
+  "chat",
+  "danmaku",
+] as const;
+
+export type RoomMemberPermissionName =
+  (typeof ROOM_MEMBER_PERMISSION_NAMES)[number];
+
+export type RoomMemberPermissions = Record<RoomMemberPermissionName, boolean>;
+
+export const DEFAULT_ROOM_MEMBER_PERMISSIONS: RoomMemberPermissions = {
+  voice: true,
+  playbackControl: true,
+  chat: true,
+  danmaku: true,
+};
+
+export function createDefaultRoomMemberPermissions(): RoomMemberPermissions {
+  return { ...DEFAULT_ROOM_MEMBER_PERMISSIONS };
+}
+
+export interface RoomChatMessage {
+  kind?: RoomChatMessageKind;
+  systemEventType?: RoomSystemChatEventType;
+  memberId: string;
+  displayName: string;
+  content: string;
+  timestamp: number;
 }
 
 export interface RoomState {
   roomCode: RoomCode;
+  hostMemberId?: string;
   sharedVideo: SharedVideo | null;
   playback: PlaybackState | null;
+  playbackSync?: PlaybackSyncState;
   members: RoomMember[];
+  chatMessages?: RoomChatMessage[];
 }
 
 export interface AnnouncementItem {

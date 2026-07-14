@@ -124,6 +124,189 @@ function createFakeRedisClient(execPromises: Promise<unknown>[]) {
   };
 }
 
+function createStatefulFakeRedisClient() {
+  const sets = new Map<string, Set<string>>();
+  const hashes = new Map<string, Map<string, string>>();
+  const sortedSets = new Map<string, Map<string, number>>();
+  const strings = new Map<string, string>();
+
+  function getSet(key: string): Set<string> {
+    const existing = sets.get(key);
+    if (existing) {
+      return existing;
+    }
+    const next = new Set<string>();
+    sets.set(key, next);
+    return next;
+  }
+
+  function getHash(key: string): Map<string, string> {
+    const existing = hashes.get(key);
+    if (existing) {
+      return existing;
+    }
+    const next = new Map<string, string>();
+    hashes.set(key, next);
+    return next;
+  }
+
+  function hset(key: string, ...args: unknown[]): void {
+    const hash = getHash(key);
+    if (args.length === 1 && typeof args[0] === "object" && args[0] !== null) {
+      for (const [field, value] of Object.entries(
+        args[0] as Record<string, unknown>,
+      )) {
+        hash.set(field, String(value));
+      }
+      return;
+    }
+    for (let index = 0; index < args.length; index += 2) {
+      const field = args[index];
+      const value = args[index + 1];
+      if (typeof field === "string") {
+        hash.set(field, String(value ?? ""));
+      }
+    }
+  }
+
+  function hdel(key: string, ...fields: string[]): void {
+    const hash = hashes.get(key);
+    for (const field of fields) {
+      hash?.delete(field);
+    }
+    if (hash?.size === 0) {
+      hashes.delete(key);
+    }
+  }
+
+  function del(...keys: string[]): void {
+    for (const key of keys) {
+      sets.delete(key);
+      hashes.delete(key);
+      sortedSets.delete(key);
+      strings.delete(key);
+    }
+  }
+
+  return {
+    async connect() {},
+    async quit() {},
+    multi() {
+      const operations: Array<() => void> = [];
+      return {
+        sadd(key: string, ...members: string[]) {
+          operations.push(() => {
+            const set = getSet(key);
+            for (const member of members) {
+              set.add(member);
+            }
+          });
+          return this;
+        },
+        srem(key: string, ...members: string[]) {
+          operations.push(() => {
+            const set = sets.get(key);
+            for (const member of members) {
+              set?.delete(member);
+            }
+            if (set?.size === 0) {
+              sets.delete(key);
+            }
+          });
+          return this;
+        },
+        del(...keys: string[]) {
+          operations.push(() => del(...keys));
+          return this;
+        },
+        hset(key: string, ...args: unknown[]) {
+          operations.push(() => hset(key, ...args));
+          return this;
+        },
+        hdel(key: string, ...fields: string[]) {
+          operations.push(() => hdel(key, ...fields));
+          return this;
+        },
+        async exec() {
+          for (const operation of operations) {
+            operation();
+          }
+          return null;
+        },
+      };
+    },
+    async hgetall(key: string) {
+      return Object.fromEntries(hashes.get(key)?.entries() ?? []);
+    },
+    async hget(key: string, field: string) {
+      return hashes.get(key)?.get(field) ?? null;
+    },
+    async smembers(key: string) {
+      return Array.from(sets.get(key) ?? []);
+    },
+    async scard(key: string) {
+      return sets.get(key)?.size ?? 0;
+    },
+    async sadd(key: string, ...members: string[]) {
+      const set = getSet(key);
+      for (const member of members) {
+        set.add(member);
+      }
+      return null;
+    },
+    async srem(key: string, ...members: string[]) {
+      const set = sets.get(key);
+      for (const member of members) {
+        set?.delete(member);
+      }
+      if (set?.size === 0) {
+        sets.delete(key);
+      }
+      return null;
+    },
+    async zadd(key: string, score: string, member: string) {
+      const zset = sortedSets.get(key) ?? new Map<string, number>();
+      zset.set(member, Number(score));
+      sortedSets.set(key, zset);
+      return null;
+    },
+    async zremrangebyscore(key: string, min: number, max: number) {
+      const zset = sortedSets.get(key);
+      for (const [member, score] of zset?.entries() ?? []) {
+        if (score >= min && score <= max) {
+          zset?.delete(member);
+        }
+      }
+      return null;
+    },
+    async zrange(key: string) {
+      return Array.from(sortedSets.get(key)?.keys() ?? []);
+    },
+    async zrem(key: string, ...members: string[]) {
+      const zset = sortedSets.get(key);
+      for (const member of members) {
+        zset?.delete(member);
+      }
+      return null;
+    },
+    async zscore(key: string, member: string) {
+      const score = sortedSets.get(key)?.get(member);
+      return score === undefined ? null : String(score);
+    },
+    async set(key: string, value: string) {
+      strings.set(key, value);
+      return "OK";
+    },
+    async eval() {
+      return 1;
+    },
+    async del(...keys: string[]) {
+      del(...keys);
+      return null;
+    },
+  };
+}
+
 test("redis runtime store shares room sessions and member token state across instances", async (t) => {
   if (!REDIS_URL) {
     t.skip("REDIS_URL is not configured.");
@@ -305,6 +488,51 @@ test("redis runtime store can purge stale sessions for a restarted instance", as
     assert.deepEqual(await observer.listClusterSessionsByRoom("ROOMRS"), []);
     const room = await observer.getRoom("ROOMRS");
     assert.equal(room?.members.size ?? 0, 0);
+  } finally {
+    await store.close();
+    await observer.close();
+  }
+});
+
+test("redis runtime store preserves member tokens when purging restarted instance sessions", async () => {
+  const fakeRedis = createStatefulFakeRedisClient();
+  const keyPrefix = "bsp:test:runtime:restart:";
+  const store = await createRedisRuntimeStore("redis://unused", {
+    redisClient: fakeRedis,
+    keyPrefix,
+  });
+  const observer = await createRedisRuntimeStore("redis://unused", {
+    redisClient: fakeRedis,
+    keyPrefix,
+  });
+  const session = createSession("session-restart");
+  session.instanceId = "room-node-a";
+  session.roomCode = "ROOMRS";
+  session.memberId = "member-restart";
+  session.memberToken = "token-restart";
+  session.joinedAt = 1_000;
+
+  try {
+    store.registerSession(session);
+    store.markSessionJoinedRoom(session.id, "ROOMRS");
+    store.addMember("ROOMRS", session.memberId, session, session.memberToken);
+    await store.flush?.();
+
+    assert.equal(
+      await observer.findMemberIdByToken("ROOMRS", "token-restart"),
+      "member-restart",
+    );
+
+    assert.equal(await store.purgeSessionsByInstance?.("room-node-a"), 1);
+    await store.flush?.();
+
+    const room = await observer.getRoom("ROOMRS");
+    assert.equal(room?.members.size ?? 0, 0);
+    assert.equal(room?.memberTokens.get("member-restart"), "token-restart");
+    assert.equal(
+      await observer.findMemberIdByToken("ROOMRS", "token-restart"),
+      "member-restart",
+    );
   } finally {
     await store.close();
     await observer.close();

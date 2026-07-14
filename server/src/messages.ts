@@ -3,7 +3,15 @@ export const INVALID_CLIENT_MESSAGE_MESSAGE = "Invalid client message payload.";
 export const INTERNAL_SERVER_ERROR_MESSAGE = "Internal server error.";
 export const INVALID_JSON_REQUEST_BODY_MESSAGE = "Invalid JSON request body.";
 export const RATE_LIMITED_MESSAGE = "Too many requests.";
+export const CHAT_RATE_LIMITED_MESSAGE =
+  "Chat messages are limited to one message every 5 seconds.";
+export const DANMAKU_RATE_LIMITED_MESSAGE =
+  "Danmaku messages are limited to one message every second.";
 export const MEMBER_TOKEN_INVALID_MESSAGE = "Member token is invalid.";
+export const MEMBER_PERMISSION_DENIED_MESSAGE =
+  "This room action is disabled by the host.";
+export const MEMBER_KICKED_MESSAGE =
+  "You were removed from the room by the host.";
 export const NOT_IN_ROOM_MESSAGE = "Join a room first.";
 export const ROOM_NOT_FOUND_MESSAGE = "Room not found.";
 export const JOIN_TOKEN_INVALID_MESSAGE = "Join token is invalid.";

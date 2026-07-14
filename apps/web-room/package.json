@@ -1,0 +1,26 @@
+{
+  "name": "@syncroom/web-room",
+  "version": "0.3.1",
+  "private": true,
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "prebuild": "node scripts/clean-dist.mjs",
+    "build": "tsc -p tsconfig.build.json --emitDeclarationOnly && node scripts/build.mjs && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
+    "coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@syncroom/protocol": "0.3.1",
+    "livekit-client": "^2.19.1",
+    "media-chrome": "^4.19.2",
+    "mpegts.js": "^1.8.0",
+    "shaka-player": "^5.1.9"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.3"
+  }
+}

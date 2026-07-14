@@ -15,10 +15,29 @@ import { createAdminCommandConsumer } from "./admin-command-consumer.js";
 import { createRuntimeLimitsService } from "./admin/runtime-limits-service.js";
 import { createMessageHandler } from "./message-handler.js";
 import { createNodeHeartbeat } from "./node-heartbeat.js";
+import { createPlaybackHoldExpiryScheduler } from "./playback-hold-expiry-scheduler.js";
+import {
+  createNginxCacheMetricsListener,
+  type NginxCacheMetricsListener,
+} from "./nginx-cache-metrics-listener.js";
 import { createRoomEventConsumer } from "./room-event-consumer.js";
 import { type RoomStore } from "./room-store.js";
 import { createRoomReaper } from "./room-reaper.js";
 import { createRoomService } from "./room-service.js";
+import { createPlaybackProxyController } from "./playback-proxy/controller.js";
+import { createPlaybackProxyRouter } from "./playback-proxy/router.js";
+import { createPlaybackProxyService } from "./playback-proxy/service.js";
+import { createBilibiliProvider } from "./providers/bilibili-provider.js";
+import { createGenericProvider } from "./providers/generic-provider.js";
+import { createHuyaProvider } from "./providers/huya-provider.js";
+import { createIqiyiProvider } from "./providers/iqiyi-provider.js";
+import {
+  createMediaExtractorClient,
+  type MediaExtractorClient,
+} from "./providers/media-extractor-client.js";
+import { createVideoProviderRegistry } from "./providers/video-provider.js";
+import { createVideoProviderRouter } from "./providers/video-provider-router.js";
+import { getDefaultMediaExtractorConfig } from "./config/media-extractor-config.js";
 import { getDefaultVoiceConfig } from "./config/voice-config.js";
 import { createLiveKitTokenSigner } from "./livekit-token.js";
 import { applyVoiceRoomCapacity } from "./voice-capacity.js";
@@ -26,6 +45,11 @@ import {
   createVoiceAccessService,
   type LiveKitTokenSigner,
 } from "./voice-service.js";
+import type { VideoAuthSessionStore } from "./video-auth-session.js";
+import {
+  DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS,
+  createVideoAuthSessionService,
+} from "./video-auth-session.js";
 import type { RoomEventBusMessage } from "./room-event-bus.js";
 import { type RuntimeStore } from "./runtime-store.js";
 import { hasAttachedSocket } from "./types.js";
@@ -42,6 +66,7 @@ import type {
   AdminUiConfig,
   LogEvent,
   LogLevel,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -49,6 +74,7 @@ import type {
 export type {
   AdminConfig,
   AdminUiConfig,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -85,9 +111,14 @@ export type SyncServerDependencies = {
   logLevel?: LogLevel;
   logSampling?: Record<string, number>;
   metricsPort?: number;
+  nginxCacheMetricsPort?: number;
   adminSessionStoreOverride?: AdminSessionStore;
+  videoAuthSessionStore?: VideoAuthSessionStore;
   voiceConfig?: VoiceConfig;
   voiceTokenSigner?: LiveKitTokenSigner;
+  mediaExtractorConfig?: MediaExtractorConfig;
+  mediaExtractorClient?: MediaExtractorClient;
+  fetch?: typeof fetch;
 };
 
 export async function createSyncServer(
@@ -97,6 +128,8 @@ export async function createSyncServer(
 ): Promise<SyncServer> {
   const { now, generateToken } = resolveServerRuntimeDependencies(dependencies);
   const voiceConfig = dependencies.voiceConfig ?? getDefaultVoiceConfig();
+  const mediaExtractorConfig =
+    dependencies.mediaExtractorConfig ?? getDefaultMediaExtractorConfig();
   const roomSecurityConfig = applyVoiceRoomCapacity(
     securityConfig,
     voiceConfig,
@@ -110,6 +143,7 @@ export async function createSyncServer(
     adminCommandBus,
     roomEventBus,
     eventStore,
+    videoAuthSessionStore,
     logEvent,
     metricsCollector,
   } = await createServerBootstrapContext(persistenceConfig, dependencies, {
@@ -156,6 +190,20 @@ export async function createSyncServer(
       },
     },
   });
+  const videoAuthService = createVideoAuthSessionService({
+    store: videoAuthSessionStore,
+    defaultTtlMs: DEFAULT_VIDEO_AUTH_OWNER_OFFLINE_TTL_MS,
+    now,
+  });
+  const playbackProxyService = createPlaybackProxyService({
+    metricsCollector,
+    logEvent,
+  });
+  const playbackProxyRouter = createPlaybackProxyRouter({
+    controller: createPlaybackProxyController({
+      service: playbackProxyService,
+    }),
+  });
 
   const runtimeLimitsService = createRuntimeLimitsService();
   const roomService = createRoomService({
@@ -182,6 +230,15 @@ export async function createSyncServer(
     generateToken,
     logEvent,
     now,
+    videoAuthLifecycle: {
+      clearRoom: videoAuthService.clearRoom,
+      clearOwner: videoAuthService.clearOwner,
+      pruneExpired: videoAuthService.pruneExpired,
+    },
+    playbackProxyLifecycle: {
+      clearRoom: playbackProxyService.clearRoom,
+      cleanupExpired: playbackProxyService.cleanupExpired,
+    },
   });
   const voiceService = createVoiceAccessService({
     config: voiceConfig,
@@ -191,6 +248,40 @@ export async function createSyncServer(
     now,
   });
   const announcementStore = createInMemoryAnnouncementStore({ now });
+  const mediaExtractorClient =
+    dependencies.mediaExtractorClient ??
+    createMediaExtractorClient({
+      baseUrl: mediaExtractorConfig.baseUrl,
+      fetch: dependencies.fetch,
+    });
+  const videoProviderRouter = createVideoProviderRouter({
+    roomStore,
+    runtimeStore,
+    providers: createVideoProviderRegistry([
+      createBilibiliProvider({
+        authSessions: videoAuthService,
+        logEvent,
+        now,
+      }),
+      createIqiyiProvider({
+        authSessions: videoAuthService,
+        extractorClient: mediaExtractorClient,
+        fetch: dependencies.fetch,
+        now,
+      }),
+      createHuyaProvider({
+        authSessions: videoAuthService,
+        fetch: dependencies.fetch,
+        now,
+      }),
+      createGenericProvider({
+        extractorClient: mediaExtractorClient,
+      }),
+    ]),
+    authService: videoAuthService,
+    playbackProxyService,
+    fetch: dependencies.fetch,
+  });
 
   async function publishRoomEvent(message: RoomEventBusMessage): Promise<void> {
     try {
@@ -215,6 +306,20 @@ export async function createSyncServer(
     }
   }
 
+  const playbackHoldExpiryScheduler = createPlaybackHoldExpiryScheduler({
+    releaseExpiredHold: (roomCode, expectedDeadline) =>
+      roomService.releaseExpiredPlaybackHold(roomCode, expectedDeadline),
+    publishRoomStateUpdated: (roomCode) =>
+      publishRoomEvent({
+        type: "room_state_updated",
+        roomCode,
+        sourceInstanceId: persistenceConfig.instanceId,
+        emittedAt: now(),
+      }),
+    logEvent,
+    now,
+  });
+
   const roomEventConsumer = await createRoomEventConsumer({
     roomEventBus,
     getRoomStateByCode: (roomCode) => roomService.getRoomStateByCode(roomCode),
@@ -223,6 +328,11 @@ export async function createSyncServer(
     send,
     instanceId: persistenceConfig.instanceId,
     logEvent,
+    onRoomStateObserved: playbackHoldExpiryScheduler.observeRoom,
+    onRoomDeleted: (roomCode) => {
+      playbackHoldExpiryScheduler.forgetRoom(roomCode);
+      playbackProxyService.clearRoom(roomCode);
+    },
   });
   const adminCommandConsumer = await createAdminCommandConsumer({
     instanceId: persistenceConfig.instanceId,
@@ -318,6 +428,8 @@ export async function createSyncServer(
     now,
     adminConfig: dependencies.adminConfig,
     adminUiConfig: dependencies.adminUiConfig,
+    playbackProxyRouter,
+    videoProviderRouter,
     serviceVersion,
     metricsPort: dependencies.metricsPort,
     adminSessionStoreOverride: dependencies.adminSessionStoreOverride,
@@ -346,6 +458,29 @@ export async function createSyncServer(
       pendingSessionCleanup,
     }),
   );
+
+  let nginxCacheMetricsListener: NginxCacheMetricsListener | null = null;
+  if (
+    dependencies.nginxCacheMetricsPort !== undefined &&
+    dependencies.nginxCacheMetricsPort > 0
+  ) {
+    try {
+      nginxCacheMetricsListener = await createNginxCacheMetricsListener({
+        port: dependencies.nginxCacheMetricsPort,
+        metricsCollector,
+        logEvent,
+      });
+    } catch (error) {
+      // Telemetry must degrade independently; a local UDP bind conflict must
+      // never prevent room and playback traffic from starting.
+      logEvent("nginx_cache_metrics_listener_start_failed", {
+        host: "127.0.0.1",
+        port: dependencies.nginxCacheMetricsPort,
+        result: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   return {
     httpServer,
@@ -390,9 +525,21 @@ export async function createSyncServer(
             },
           },
           {
+            name: "stop_playback_hold_expiry_scheduler",
+            run: () => playbackHoldExpiryScheduler.stop(),
+          },
+          {
             name: "stop_node_heartbeat",
             run: () => nodeHeartbeat.stop(),
           },
+          ...(nginxCacheMetricsListener
+            ? [
+                {
+                  name: "close_nginx_cache_metrics_listener",
+                  run: () => nginxCacheMetricsListener.close(),
+                },
+              ]
+            : []),
           {
             name: "stop_runtime_index_reaper",
             run: () => runtimeIndexReaper.stop(),
@@ -471,6 +618,7 @@ export async function createSyncServer(
             eventStore,
             runtimeStore: maybeClosableRuntimeStore,
             runtimeStoreStepName: "close_shared_runtime_store",
+            videoAuthSessionStore,
             adminCommandBus,
             roomEventBus,
             closeAdminServices,

@@ -73,6 +73,10 @@ export async function createRoomEventConsumer(options: {
   send: SendMessage;
   instanceId?: string;
   logEvent?: import("./types.js").LogEvent;
+  onRoomStateObserved?: (
+    state: import("./types.js").RoomStoreRoomState,
+  ) => void;
+  onRoomDeleted?: (roomCode: string) => void;
 }): Promise<{ close: () => Promise<void> }> {
   const unsubscribe = await options.roomEventBus.subscribe(async (message) => {
     try {
@@ -118,6 +122,13 @@ export async function createRoomEventConsumer(options: {
           });
         }
 
+        if (options.onRoomStateObserved) {
+          const roomState = await getLegacyRoomState();
+          if (roomState) {
+            options.onRoomStateObserved(roomState);
+          }
+        }
+
         options.logEvent?.("room_event_consumed", {
           roomCode: message.roomCode,
           eventType: message.type,
@@ -159,6 +170,68 @@ export async function createRoomEventConsumer(options: {
         return;
       }
 
+      if (message.type === "room_chat_message") {
+        for (const session of localSessions) {
+          if (!isRoomEventRecipient(session, message.roomCode)) {
+            continue;
+          }
+          options.send(session.socket, {
+            type: "chat:message",
+            payload: {
+              roomCode: message.roomCode,
+              memberId: message.memberId,
+              displayName: message.displayName,
+              content: message.content,
+              timestamp: message.timestamp,
+            },
+          });
+        }
+
+        options.logEvent?.("room_event_consumed", {
+          roomCode: message.roomCode,
+          eventType: message.type,
+          sourceInstanceId: message.sourceInstanceId,
+          instanceId: options.instanceId ?? null,
+          localSessionCount: localSessions.length,
+          result: "ok",
+        });
+        return;
+      }
+
+      if (message.type === "room_danmaku_message") {
+        for (const session of localSessions) {
+          if (!isRoomEventRecipient(session, message.roomCode)) {
+            continue;
+          }
+          options.send(session.socket, {
+            type: "danmaku:message",
+            payload: {
+              roomCode: message.roomCode,
+              memberId: message.memberId,
+              displayName: message.displayName,
+              content: message.content,
+              videoTime: message.videoTime,
+              mode: message.mode,
+              color: message.color,
+              timestamp: message.timestamp,
+            },
+          });
+        }
+
+        options.logEvent?.("room_event_consumed", {
+          roomCode: message.roomCode,
+          eventType: message.type,
+          sourceInstanceId: message.sourceInstanceId,
+          instanceId: options.instanceId ?? null,
+          localSessionCount: localSessions.length,
+          result: "ok",
+        });
+        return;
+      }
+
+      if (message.type === "room_deleted") {
+        options.onRoomDeleted?.(message.roomCode);
+      }
       const state =
         message.type === "room_deleted"
           ? {
@@ -170,6 +243,9 @@ export async function createRoomEventConsumer(options: {
           : await options.getRoomStateByCode(message.roomCode);
       if (!state) {
         return;
+      }
+      if (message.type !== "room_deleted") {
+        options.onRoomStateObserved?.(state);
       }
 
       for (const session of localSessions) {

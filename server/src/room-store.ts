@@ -1,8 +1,16 @@
-import type { PlaybackState, SharedVideo } from "@syncroom/protocol";
+import type {
+  PlaybackState,
+  PlaybackSyncState,
+  PlaybackSyncStrategy,
+  RoomChatMessage,
+  RoomMemberPermissions,
+  SharedVideo,
+} from "@syncroom/protocol";
 import type { RoomListQuery } from "./admin/types.js";
 import type { ActiveRoom, PersistedRoom, RoomStoreRoomState } from "./types.js";
 
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const ROOM_CHAT_HISTORY_LIMIT = 200;
 
 export type CreatePersistedRoomInput = {
   code: string;
@@ -13,9 +21,13 @@ export type CreatePersistedRoomInput = {
 };
 
 export type PersistedRoomPatch = {
+  ownerMemberId?: string | null;
   ownerDisplayName?: string | null;
+  memberPermissions?: Record<string, RoomMemberPermissions>;
   sharedVideo?: SharedVideo | null;
   playback?: PlaybackState | null;
+  playbackSync?: PlaybackSyncState;
+  chatMessages?: RoomChatMessage[];
   lastActiveAt?: number;
   expiresAt?: number | null;
 };
@@ -23,6 +35,11 @@ export type PersistedRoomPatch = {
 export type RoomUpdateResult =
   | { ok: true; room: PersistedRoom }
   | { ok: false; reason: "not_found" | "version_conflict" };
+
+export type ExpiredRoomsDeletionResult = {
+  deletedCount: number;
+  roomCodes: string[];
+};
 
 export type RoomStore = {
   createRoom: (input: CreatePersistedRoomInput) => Promise<PersistedRoom>;
@@ -35,6 +52,9 @@ export type RoomStore = {
   ) => Promise<RoomUpdateResult>;
   deleteRoom: (code: string) => Promise<void>;
   deleteExpiredRooms: (now: number) => Promise<number>;
+  deleteExpiredRoomsWithCodes?: (
+    now: number,
+  ) => Promise<ExpiredRoomsDeletionResult>;
   listRooms: (
     query: Pick<
       RoomListQuery,
@@ -65,11 +85,54 @@ export function createRoomCode(): string {
 }
 
 function cloneRoom(room: PersistedRoom): PersistedRoom {
+  const playbackSync = clonePlaybackSyncState(room.playbackSync);
   return {
     ...room,
+    memberPermissions: cloneMemberPermissions(room.memberPermissions),
     sharedVideo: room.sharedVideo ? { ...room.sharedVideo } : null,
     playback: room.playback ? { ...room.playback } : null,
+    playbackSync,
+    chatMessages: (room.chatMessages ?? []).map((message) => ({
+      ...message,
+    })),
   };
+}
+
+export function createDefaultPlaybackSyncState(
+  strategy: PlaybackSyncStrategy = "smooth",
+): PlaybackSyncState {
+  return {
+    strategy,
+    hold: {
+      active: false,
+    },
+    bufferingMemberIds: [],
+  };
+}
+
+export function clonePlaybackSyncState(
+  state: PlaybackSyncState | undefined,
+): PlaybackSyncState {
+  if (!state) {
+    return createDefaultPlaybackSyncState();
+  }
+  return {
+    strategy: state.strategy,
+    hold: { ...state.hold },
+    bufferingMemberIds: [...state.bufferingMemberIds],
+  };
+}
+
+export function cloneMemberPermissions(
+  permissions: Record<string, RoomMemberPermissions> | undefined,
+): Record<string, RoomMemberPermissions> {
+  const next: Record<string, RoomMemberPermissions> = {};
+  for (const [memberId, memberPermissions] of Object.entries(
+    permissions ?? {},
+  )) {
+    next[memberId] = { ...memberPermissions };
+  }
+  return next;
 }
 
 export function createPersistedRoom(
@@ -81,8 +144,11 @@ export function createPersistedRoom(
     createdAt: input.createdAt,
     ownerMemberId: input.ownerMemberId ?? null,
     ownerDisplayName: input.ownerDisplayName ?? null,
+    memberPermissions: {},
     sharedVideo: null,
     playback: null,
+    playbackSync: createDefaultPlaybackSyncState(),
+    chatMessages: [],
     version: 0,
     lastActiveAt: input.createdAt,
     expiresAt: null,
@@ -94,6 +160,22 @@ export function createInMemoryRoomStore(
 ): RoomStore {
   const rooms = new Map<string, PersistedRoom>();
   const now = options.now ?? Date.now;
+
+  function deleteExpiredRoomsWithCodes(
+    currentTime: number,
+  ): ExpiredRoomsDeletionResult {
+    const roomCodes: string[] = [];
+    for (const [code, room] of rooms.entries()) {
+      if (room.expiresAt !== null && room.expiresAt <= currentTime) {
+        rooms.delete(code);
+        roomCodes.push(code);
+      }
+    }
+    return {
+      deletedCount: roomCodes.length,
+      roomCodes,
+    };
+  }
 
   function matchesQuery(
     room: PersistedRoom,
@@ -155,6 +237,9 @@ export function createInMemoryRoomStore(
       const nextRoom: PersistedRoom = {
         ...currentRoom,
         ...patch,
+        chatMessages: patch.chatMessages
+          ? patch.chatMessages.slice(-ROOM_CHAT_HISTORY_LIMIT)
+          : currentRoom.chatMessages,
         version: currentRoom.version + 1,
         lastActiveAt: patch.lastActiveAt ?? now(),
       };
@@ -165,14 +250,10 @@ export function createInMemoryRoomStore(
       rooms.delete(code);
     },
     async deleteExpiredRooms(currentTime): Promise<number> {
-      let deletedCount = 0;
-      for (const [code, room] of rooms.entries()) {
-        if (room.expiresAt !== null && room.expiresAt <= currentTime) {
-          rooms.delete(code);
-          deletedCount += 1;
-        }
-      }
-      return deletedCount;
+      return deleteExpiredRoomsWithCodes(currentTime).deletedCount;
+    },
+    async deleteExpiredRoomsWithCodes(currentTime) {
+      return deleteExpiredRoomsWithCodes(currentTime);
     },
     async listRooms(query) {
       const items = Array.from(rooms.values())
@@ -210,19 +291,29 @@ export function roomStateFromSessions(
     displayName: string;
   }>,
 ): RoomStoreRoomState {
-  const members = new Map<string, { id: string; name: string }>();
+  type StateMember = {
+    id: string;
+    name: string;
+    permissions?: RoomMemberPermissions;
+  };
+  const members = new Map<string, StateMember>();
   for (const session of sessions) {
     const memberId = session.memberId ?? session.id;
+    const permissions = room.memberPermissions?.[memberId];
     members.set(memberId, {
       id: memberId,
       name: session.displayName,
+      ...(permissions ? { permissions: { ...permissions } } : {}),
     });
   }
 
   return {
     roomCode: room.code,
+    ...(room.ownerMemberId ? { hostMemberId: room.ownerMemberId } : {}),
     sharedVideo: room.sharedVideo,
     playback: room.playback,
+    playbackSync: clonePlaybackSyncState(room.playbackSync),
     members: Array.from(members.values()),
+    chatMessages: (room.chatMessages ?? []).slice(-ROOM_CHAT_HISTORY_LIMIT),
   };
 }

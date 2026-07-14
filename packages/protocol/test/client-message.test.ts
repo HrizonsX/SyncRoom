@@ -5,7 +5,7 @@ import { isClientMessage, parseSharedVideoRef } from "../src/index.js";
 const VALID_TOKEN = "valid-member-token-123";
 const DISPLAY_NAME_MAX_LENGTH = 32;
 const TITLE_MAX_LENGTH = 128;
-const URL_MAX_LENGTH = 512;
+const URL_MAX_LENGTH = 2048;
 
 function createBilibiliUrlWithExactLength(targetLength: number): string {
   const baseUrl = "https://www.bilibili.com/video/BV1xx411c7mD?from=test&pad=";
@@ -251,7 +251,7 @@ test("accepts video:share when title is exactly 128 characters", () => {
   );
 });
 
-test("accepts video:share when url is exactly 512 characters", () => {
+test("accepts video:share when url is exactly 2048 characters", () => {
   const exactBoundaryUrl = createBilibiliUrlWithExactLength(URL_MAX_LENGTH);
 
   assert.equal(exactBoundaryUrl.length, URL_MAX_LENGTH);
@@ -414,7 +414,144 @@ test("accepts a valid playback:update message", () => {
   );
 });
 
-test("accepts playback:update when url is exactly 512 characters", () => {
+test("accepts explicit play and pause playback intents", () => {
+  for (const syncIntent of ["explicit-play", "explicit-pause"] as const) {
+    assert.equal(
+      isClientMessage({
+        type: "playback:update",
+        payload: {
+          memberToken: VALID_TOKEN,
+          playback: {
+            url: "https://www.bilibili.com/video/BV1xx411c7mD",
+            currentTime: 12,
+            playState: syncIntent === "explicit-play" ? "playing" : "paused",
+            syncIntent,
+            playbackRate: 1,
+            updatedAt: 1_000,
+            serverTime: 1_000,
+            actorId: "member-1",
+            seq: 7,
+          },
+        },
+      }),
+      true,
+    );
+  }
+});
+
+test("accepts playback buffer coordination messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "buffering",
+        currentTime: 42,
+        bufferAheadSeconds: 0.25,
+        playbackRevision: '["video","member-1",7,1000]',
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "playback:sync-strategy:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        strategy: "wait",
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects malformed playback buffer coordination messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "ready",
+        currentTime: 42,
+        playbackRevision: "x".repeat(1_025),
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "playback:buffer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        state: "stalled",
+        currentTime: 42,
+      },
+    }),
+    false,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "playback:sync-strategy:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        strategy: "strict",
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts host member management messages", () => {
+  assert.equal(
+    isClientMessage({
+      type: "room:member-permission:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+        permission: "chat",
+        allowed: false,
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "room:member:kick",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    isClientMessage({
+      type: "room:host:transfer",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+      },
+    }),
+    true,
+  );
+});
+
+test("rejects host member management messages with malformed permissions", () => {
+  assert.equal(
+    isClientMessage({
+      type: "room:member-permission:set",
+      payload: {
+        memberToken: VALID_TOKEN,
+        targetMemberId: "member-2",
+        permission: "screen-share",
+        allowed: false,
+      },
+    }),
+    false,
+  );
+});
+
+test("accepts playback:update when url is exactly 2048 characters", () => {
   const exactBoundaryUrl = createBilibiliUrlWithExactLength(URL_MAX_LENGTH);
 
   assert.equal(exactBoundaryUrl.length, URL_MAX_LENGTH);

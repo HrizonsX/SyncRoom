@@ -175,6 +175,58 @@ test("room event consumer sends member join deltas to other local room sessions"
   ]);
 });
 
+test("room event consumer observes member-event state for hold scheduling", async () => {
+  const bus = createInMemoryRoomEventBus();
+  const joiningSession = createSession("member-a", "ROOM01");
+  const existingSession = createSession("member-b", "ROOM01");
+  let roomStateLoads = 0;
+  const observedRoomCodes: string[] = [];
+
+  const consumer = await createRoomEventConsumer({
+    roomEventBus: bus,
+    async getRoomStateByCode(roomCode) {
+      roomStateLoads += 1;
+      return {
+        roomCode,
+        sharedVideo: null,
+        playback: null,
+        playbackSync: {
+          strategy: "wait",
+          hold: { active: true, startedAt: 1_000, deadlineAt: 31_000 },
+          bufferingMemberIds: ["member-a"],
+        },
+        members: [
+          { id: "member-a", name: "Alice" },
+          { id: "member-b", name: "Bob" },
+        ],
+      };
+    },
+    listLocalSessionsByRoom() {
+      return [joiningSession, existingSession];
+    },
+    send() {},
+    onRoomStateObserved(state) {
+      observedRoomCodes.push(state.roomCode);
+    },
+  });
+
+  try {
+    await bus.publish({
+      type: "room_member_joined",
+      roomCode: "ROOM01",
+      sourceInstanceId: "instance-b",
+      emittedAt: 1_100,
+      memberId: "member-a",
+      displayName: "Alice",
+    });
+  } finally {
+    await consumer.close();
+  }
+
+  assert.equal(roomStateLoads, 1);
+  assert.deepEqual(observedRoomCodes, ["ROOM01"]);
+});
+
 test("room event consumer broadcasts voice state to local room sessions", async () => {
   const bus = createInMemoryRoomEventBus();
   const roomSession = createSession("member-a", "ROOM01");
@@ -431,6 +483,7 @@ test("room event consumer emits an empty state for deleted rooms", async () => {
   const bus = createInMemoryRoomEventBus();
   const localRoomSession = createSession("member-a", "ROOM01");
   const sent: Array<{ roomCode: string; members: number }> = [];
+  const deletedRooms: string[] = [];
 
   const consumer = await createRoomEventConsumer({
     roomEventBus: bus,
@@ -446,6 +499,9 @@ test("room event consumer emits an empty state for deleted rooms", async () => {
         members: message.payload.members.length,
       });
     },
+    onRoomDeleted(roomCode) {
+      deletedRooms.push(roomCode);
+    },
   });
 
   try {
@@ -460,6 +516,7 @@ test("room event consumer emits an empty state for deleted rooms", async () => {
   }
 
   assert.deepEqual(sent, [{ roomCode: "ROOM01", members: 0 }]);
+  assert.deepEqual(deletedRooms, ["ROOM01"]);
 });
 
 test("room event consumer skips detached sessions", async () => {

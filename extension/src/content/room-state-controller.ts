@@ -1,5 +1,9 @@
 import type { RoomState, SharedVideo } from "@syncroom/protocol";
 import type { SharedVideoToastPayload } from "../shared/messages";
+import {
+  beginInitialRoomStateHydration,
+  clearRoomHydrationState,
+} from "./hydration-runtime-state";
 import type { ContentRuntimeState } from "./runtime-state";
 import type { ToastCoordinatorState } from "./toast";
 import {
@@ -103,12 +107,11 @@ export function createRoomStateController(args: {
         `room changed ${previousRoomCode} -> ${payload.roomCode}`,
       );
       args.toastState.lastRoomState = null;
-      args.runtimeState.hasReceivedInitialRoomState = false;
-      args.runtimeState.pendingRoomStateHydration = true;
+      beginInitialRoomStateHydration(args.runtimeState);
     }
 
     if (payload.roomCode && !args.runtimeState.hasReceivedInitialRoomState) {
-      args.runtimeState.pendingRoomStateHydration = true;
+      beginInitialRoomStateHydration(args.runtimeState);
       if (lastWaitingRoomStateLogRoomCode !== payload.roomCode) {
         args.debugLog(`Waiting for initial room state of ${payload.roomCode}`);
         lastWaitingRoomStateLogRoomCode = payload.roomCode;
@@ -122,8 +125,7 @@ export function createRoomStateController(args: {
       }
       args.runtimeState.activeSharedUrl = null;
       args.toastState.lastRoomState = null;
-      args.runtimeState.pendingRoomStateHydration = false;
-      args.runtimeState.hasReceivedInitialRoomState = false;
+      clearRoomHydrationState(args.runtimeState);
       lastWaitingRoomStateLogRoomCode = null;
     }
   }

@@ -410,6 +410,104 @@ test("rooms and events pages render direct admin ui tables", async () => {
   assert.equal(eventsPage.html.includes("data-view-json"), true);
 });
 
+test("room views show safe current host identity without tokens", async () => {
+  const secretValues = ["member-secret-token", "SESSDATA=secret", "raw-cookie"];
+  const pageLoaders = createPageLoaders({
+    document: createDocumentStub(),
+    location: { search: "" },
+    history: { replaceState() {} },
+    state: {
+      overviewAutoRefresh: true,
+      lastOverviewData: { instanceId: "instance-1" },
+    },
+    api: {
+      async listRooms() {
+        return {
+          items: [
+            {
+              roomCode: "ROOM8A",
+              isActive: true,
+              ownerDisplayName: "Alice Host",
+              ownerMemberId: "member-host",
+              memberToken: secretValues[0],
+              providerCredential: secretValues[1],
+              memberCount: 2,
+              sharedVideo: { title: "测试视频" },
+              playback: null,
+              lastActiveAt: Date.now(),
+              expiresAt: Date.now() + 60_000,
+            },
+          ],
+          pagination: { total: 1 },
+        };
+      },
+      async getRoomDetail() {
+        return {
+          instanceId: "instance-1",
+          room: {
+            roomCode: "ROOM8A",
+            isActive: true,
+            memberCount: 2,
+            instanceId: "instance-1",
+            ownerDisplayName: "Alice Host",
+            ownerMemberId: "member-host",
+            memberToken: secretValues[0],
+            providerCredential: secretValues[1],
+            createdAt: Date.now(),
+            lastActiveAt: Date.now(),
+            expiresAt: Date.now() + 60_000,
+            sharedVideo: null,
+            playback: null,
+          },
+          members: [
+            {
+              displayName: "Alice Host",
+              memberId: "member-host",
+              sessionId: "session-host",
+              joinedAt: Date.now(),
+              remoteAddress: "127.0.0.1",
+              origin: "https://example.com",
+              cookie: secretValues[2],
+            },
+          ],
+          recentEvents: [],
+        };
+      },
+    },
+    routeHref(path: string) {
+      return `/admin${path}`;
+    },
+    withDemoQuery(url: string) {
+      return url;
+    },
+    serializeQuery() {
+      return "";
+    },
+    navigate() {},
+    navigateToUrl() {},
+    rerender() {},
+    canManage() {
+      return true;
+    },
+    confirmAction() {},
+    openReasonDialog() {},
+  });
+
+  const roomsPage = await pageLoaders.renderRoomsPage();
+  const detailPage = await pageLoaders.renderRoomDetailPage("ROOM8A");
+
+  assert.equal(roomsPage.html.includes("<th>房主</th>"), true);
+  assert.equal(roomsPage.html.includes("Alice Host"), true);
+  assert.equal(roomsPage.html.includes("memberId member-host"), true);
+  assert.equal(detailPage.html.includes("<dt>房主</dt>"), true);
+  assert.equal(detailPage.html.includes("Alice Host"), true);
+  assert.equal(detailPage.html.includes("memberId member-host"), true);
+  for (const secret of secretValues) {
+    assert.equal(roomsPage.html.includes(secret), false);
+    assert.equal(detailPage.html.includes(secret), false);
+  }
+});
+
 test("ip block page renders add form and blacklist rows", async () => {
   const pageLoaders = createPageLoaders({
     document: createDocumentStub(),

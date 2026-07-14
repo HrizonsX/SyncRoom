@@ -14,6 +14,8 @@ import {
   SESSION_NOT_FOUND_MESSAGE,
 } from "../messages.js";
 import type { LogEvent, PersistedRoom } from "../types.js";
+import type { VideoAuthLifecycle } from "../video-auth-session.js";
+import { redactSensitiveText } from "../sensitive-redaction.js";
 import type { IpBlockStore } from "./ip-block-store.js";
 import type { RoomStore, RoomUpdateResult } from "../room-store.js";
 import type { RuntimeStore } from "../runtime-store.js";
@@ -48,6 +50,7 @@ export function createAdminActionService(options: {
   getRoomStateByCode: (roomCode: string) => Promise<unknown | null>;
   publishRoomStateUpdate: (roomCode: string) => Promise<void>;
   publishRoomDeleted: (roomCode: string) => Promise<void>;
+  videoAuthLifecycle?: Pick<VideoAuthLifecycle, "clearRoom">;
   logEvent: LogEvent;
   now?: () => number;
 }) {
@@ -129,6 +132,33 @@ export function createAdminActionService(options: {
         error: error instanceof Error ? error.message : String(error),
       });
     });
+  }
+
+  async function clearVideoAuthRoom(
+    roomCode: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const deletedCount =
+        (await options.videoAuthLifecycle?.clearRoom?.(roomCode)) ?? 0;
+      if (deletedCount > 0) {
+        options.logEvent("video_auth_lifecycle_cleanup", {
+          roomCode,
+          scope: "room",
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      options.logEvent("video_auth_lifecycle_cleanup_failed", {
+        roomCode,
+        scope: "room",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
   }
 
   async function disconnectSessionsByIp(
@@ -333,6 +363,7 @@ export function createAdminActionService(options: {
 
       await options.roomStore.deleteRoom(roomCode);
       options.runtimeStore.deleteRoom(roomCode);
+      await clearVideoAuthRoom(roomCode, "admin_room_closed");
       await options.publishRoomDeleted(roomCode);
       const disconnectedSessionCount = disconnectResults.filter(
         ({ result }) => result.status === "ok",
@@ -361,6 +392,9 @@ export function createAdminActionService(options: {
 
       await getRoomOrThrow(roomCode);
       await options.roomStore.deleteRoom(roomCode);
+      options.runtimeStore.deleteRoom(roomCode);
+      await clearVideoAuthRoom(roomCode, "admin_room_expired");
+      await options.publishRoomDeleted(roomCode);
 
       options.logEvent("admin_room_expired", {
         roomCode,

@@ -6,6 +6,11 @@ import {
   createProgrammaticPlaybackSignature,
   pauseVideo,
 } from "./player-binding";
+import {
+  clearPendingHydrationWhenRoomMissing,
+  markHydrationReady,
+  recordHydrationResponseMetadata,
+} from "./hydration-runtime-state";
 import type { ContentRuntimeState } from "./runtime-state";
 
 export interface RoomStateApplyController {
@@ -644,12 +649,10 @@ export function createRoomStateApplyController(args: {
       type: "content:get-room-state",
     });
     if (destroyed || response === null) {
-      if (!destroyed) args.runtimeState.hydrationReady = true;
+      if (!destroyed) markHydrationReady(args.runtimeState);
       return;
     }
-    args.runtimeState.localMemberId = response?.memberId ?? null;
-    args.runtimeState.activeRoomCode =
-      response?.roomCode ?? args.runtimeState.activeRoomCode;
+    recordHydrationResponseMetadata(args.runtimeState, response);
 
     if (response?.ok && response.roomState) {
       args.debugLog(
@@ -679,17 +682,15 @@ export function createRoomStateApplyController(args: {
         pauseVideo(video);
       }
       await applyRoomState(response.roomState as RoomState);
-      args.runtimeState.hydrationReady = true;
+      markHydrationReady(args.runtimeState);
       return;
     }
 
-    if (!response?.roomCode) {
-      args.runtimeState.pendingRoomStateHydration = false;
-    }
+    clearPendingHydrationWhenRoomMissing(args.runtimeState, response);
 
     if (!response?.memberId) {
       args.debugLog("Hydrate skipped without member id");
-      args.runtimeState.hydrationReady = true;
+      markHydrationReady(args.runtimeState);
       return;
     }
 

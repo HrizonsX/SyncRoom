@@ -72,6 +72,7 @@ function createService(options: {
   deleteRoom?: (roomCode: string) => Promise<void>;
   deleteRuntimeRoom?: (roomCode: string) => void;
   publishRoomDeleted?: (roomCode: string) => Promise<void>;
+  clearVideoAuthRoom?: (roomCode: string) => Promise<number>;
   auditLogService?: ReturnType<typeof createAuditLogService>;
 }) {
   const auditLogService = options.auditLogService ?? createAuditLogService();
@@ -102,6 +103,9 @@ function createService(options: {
     getRoomStateByCode: async () => null,
     publishRoomStateUpdate: async () => {},
     publishRoomDeleted: options.publishRoomDeleted ?? (async () => {}),
+    videoAuthLifecycle: options.clearVideoAuthRoom
+      ? { clearRoom: options.clearVideoAuthRoom }
+      : undefined,
     logEvent: () => {},
     now: () => 10_000,
   });
@@ -240,4 +244,58 @@ test("admin action service keeps room state when closeRoom cannot disconnect eve
   assert.equal(auditLogs.total, 1);
   assert.equal(auditLogs.items[0]?.result, "rejected");
   assert.equal(auditLogs.items[0]?.reason, "command_failed");
+});
+
+test("admin action service clears room video auth when closing or expiring a room", async () => {
+  const clearedRoomCodes: string[] = [];
+  const deletedRuntimeRooms: string[] = [];
+  const publishedDeletedRooms: string[] = [];
+  const session = createSession();
+  const closeService = createService({
+    sessionsByRoom: [session],
+    requestAdminCommand: async () => ({
+      requestId: "req-close-auth",
+      targetInstanceId: "node-a",
+      executorInstanceId: "node-a",
+      status: "ok",
+      sessionId: session.id,
+      roomCode: "ROOM01",
+      completedAt: 10_004,
+    }),
+    clearVideoAuthRoom: async (roomCode) => {
+      clearedRoomCodes.push(roomCode);
+      return 1;
+    },
+    deleteRuntimeRoom: (roomCode) => {
+      deletedRuntimeRooms.push(roomCode);
+    },
+    publishRoomDeleted: async (roomCode) => {
+      publishedDeletedRooms.push(roomCode);
+    },
+  });
+
+  await closeService.closeRoom(ACTOR, "ROOM01", "shutdown");
+
+  const expireService = createService({
+    sessionsByRoom: [],
+    requestAdminCommand: async () => {
+      throw new Error("requestAdminCommand should not be called.");
+    },
+    clearVideoAuthRoom: async (roomCode) => {
+      clearedRoomCodes.push(roomCode);
+      return 1;
+    },
+    deleteRuntimeRoom: (roomCode) => {
+      deletedRuntimeRooms.push(roomCode);
+    },
+    publishRoomDeleted: async (roomCode) => {
+      publishedDeletedRooms.push(roomCode);
+    },
+  });
+
+  await expireService.expireRoom(ACTOR, "ROOM02", "idle cleanup");
+
+  assert.deepEqual(clearedRoomCodes, ["ROOM01", "ROOM02"]);
+  assert.deepEqual(deletedRuntimeRooms, ["ROOM01", "ROOM02"]);
+  assert.deepEqual(publishedDeletedRooms, ["ROOM01", "ROOM02"]);
 });

@@ -4,6 +4,7 @@ import type {
   AdminConfig,
   AdminUiConfig,
   LogLevel,
+  MediaExtractorConfig,
   PersistenceConfig,
   SecurityConfig,
   VoiceConfig,
@@ -11,6 +12,7 @@ import type {
 import { loadAdminConfig, loadAdminUiConfig } from "./admin-config.js";
 import type { EnvSource } from "./env.js";
 import { parseIntegerEnv, readTrimmedEnv } from "./env.js";
+import { loadMediaExtractorConfig } from "./media-extractor-config.js";
 import { loadPersistenceConfig } from "./persistence-config.js";
 import {
   getConfigValue,
@@ -49,6 +51,8 @@ type SecurityConfigFile = {
     playbackUpdatePerSecond?: number;
     playbackUpdateBurst?: number;
     syncRequestPer10Seconds?: number;
+    chatMessagePer5Seconds?: number;
+    danmakuMessagePer5Seconds?: number;
     syncPingPerSecond?: number;
     syncPingBurst?: number;
   };
@@ -82,27 +86,35 @@ type VoiceConfigFile = {
   maxMembers?: number;
 };
 
+type MediaExtractorConfigFile = {
+  baseUrl?: string;
+};
+
 export type ServerConfigFile = {
   port?: number;
   globalAdminPort?: number;
   metricsPort?: number;
+  nginxCacheMetricsPort?: number;
   logLevel?: LogLevel;
   security?: SecurityConfigFile;
   persistence?: PersistenceConfigFile;
   adminUi?: AdminUiConfigFile;
   voice?: VoiceConfigFile;
+  mediaExtractor?: MediaExtractorConfigFile;
 };
 
 export type RuntimeConfig = {
   port: number;
   globalAdminPort: number;
   metricsPort: number | undefined;
+  nginxCacheMetricsPort: number | undefined;
   logLevel: LogLevel;
   securityConfig: SecurityConfig;
   persistenceConfig: PersistenceConfig;
   adminConfig: AdminConfig;
   adminUiConfig: AdminUiConfig;
   voiceConfig: VoiceConfig;
+  mediaExtractorConfig: MediaExtractorConfig;
 };
 
 const DEFAULT_CONFIG_FILE = "server.config.json";
@@ -290,6 +302,10 @@ export async function loadRuntimeConfig(
       readTrimmedEnv(mergedEnv, "METRICS_PORT") !== undefined
         ? parseIntegerEnv(mergedEnv, "METRICS_PORT", 0)
         : undefined,
+    nginxCacheMetricsPort:
+      readTrimmedEnv(mergedEnv, "NGINX_CACHE_METRICS_PORT") !== undefined
+        ? parseIntegerEnv(mergedEnv, "NGINX_CACHE_METRICS_PORT", 0)
+        : undefined,
     logLevel: parseConfigEnvFieldValue<LogLevel>(
       LOG_LEVEL_FIELD,
       mergedEnv,
@@ -300,6 +316,7 @@ export async function loadRuntimeConfig(
     adminConfig: loadAdminConfig(env),
     adminUiConfig: loadAdminUiConfig(mergedEnv),
     voiceConfig: loadVoiceConfig(mergedEnv),
+    mediaExtractorConfig: loadMediaExtractorConfig(mergedEnv),
   };
 
   assertAllowedOriginsStartupPolicy(runtimeConfig.securityConfig);

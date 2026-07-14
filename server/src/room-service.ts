@@ -3,13 +3,20 @@ import {
   normalizeSharedVideoUrl,
   type ClientMessage,
   type ErrorCode,
+  type PlaybackBufferReport,
   type PlaybackState,
+  type PlaybackSyncStrategy,
+  type RoomChatMessage,
+  type RoomMemberPermissionName,
+  type RoomMemberPermissions,
   type SharedVideo,
 } from "@syncroom/protocol";
 import {
   INTERNAL_SERVER_ERROR_MESSAGE,
   JOIN_TOKEN_INVALID_MESSAGE,
   MEMBER_KICKED_REJOIN_MESSAGE,
+  MEMBER_NOT_FOUND_MESSAGE,
+  MEMBER_PERMISSION_DENIED_MESSAGE,
   MEMBER_TOKEN_INVALID_MESSAGE,
   NOT_IN_ROOM_MESSAGE,
   PLAYBACK_URL_MISMATCH_MESSAGE,
@@ -20,13 +27,29 @@ import {
 } from "./messages.js";
 import { decidePlaybackAcceptance } from "./playback-authority.js";
 import {
+  coordinatePlaybackCommand,
+  coordinatePlaybackBufferReport,
+  coordinatePlaybackHoldExpiry,
+  coordinatePlaybackMemberJoin,
+  coordinatePlaybackMemberDeparture,
+  coordinatePlaybackSyncStrategyChange,
+  derivePlaybackAuthorityKind,
+  isLiveSharedVideo,
+  isSamePlaybackSyncState,
+  preservePlayingIntentForSeek,
+  shouldIgnorePlaybackUpdateDuringHold,
+} from "./playback-coordinator.js";
+import {
   createRoomCode,
+  clonePlaybackSyncState,
   roomStateFromSessions,
   roomStateOf,
   type RoomStore,
 } from "./room-store.js";
 import type { RuntimeStore } from "./runtime-store.js";
+import { redactSensitiveText } from "./sensitive-redaction.js";
 import { hasAttachedSocket } from "./types.js";
+import type { VideoAuthLifecycle } from "./video-auth-session.js";
 import type {
   ActiveRoom,
   LogEvent,
@@ -44,11 +67,19 @@ const JOIN_ADMISSION_LOCK_KEY = "join-admission";
 const JOIN_ADMISSION_LOCK_TTL_MS = 30_000;
 const JOIN_ADMISSION_LOCK_MAX_WAIT_MS = 5_000;
 const JOIN_ADMISSION_LOCK_RETRY_INTERVAL_MS = 25;
+const DEFAULT_ROOM_MEMBER_PERMISSIONS: RoomMemberPermissions = {
+  voice: true,
+  playbackControl: true,
+  chat: true,
+  danmaku: true,
+};
 
 type ServiceErrorReason =
   | "room_not_found"
   | "join_token_invalid"
   | "member_token_invalid"
+  | "member_permission_denied"
+  | "member_kicked"
   | "not_in_room"
   | "room_full"
   | "server_room_limit_reached"
@@ -88,6 +119,220 @@ type PersistJoinedRoomResult = {
   joinTargetState: JoinTargetState;
 };
 
+type ProviderPlaybackDescriptor = NonNullable<SharedVideo["provider"]>;
+
+type SafeProviderSourceSummary = {
+  sourceId: string;
+  itemId: string;
+  defaultCandidateId?: string;
+  sourceType?: string;
+};
+
+type HostProviderAuditEvent = {
+  event: string;
+  data: Record<string, unknown>;
+};
+
+function getDefaultProviderCandidate(provider: ProviderPlaybackDescriptor) {
+  return (
+    provider.candidates.find(
+      (candidate) => candidate.id === provider.defaultCandidateId,
+    ) ??
+    provider.candidates.find((candidate) => candidate.default === true) ??
+    provider.candidates[0] ??
+    null
+  );
+}
+
+function summarizeProviderSource(
+  provider: ProviderPlaybackDescriptor,
+): SafeProviderSourceSummary {
+  const candidate = getDefaultProviderCandidate(provider);
+  return {
+    sourceId: provider.sourceId,
+    itemId: provider.item.itemId,
+    ...(candidate?.id ? { defaultCandidateId: candidate.id } : {}),
+    ...(candidate?.sourceType ? { sourceType: candidate.sourceType } : {}),
+  };
+}
+
+function providerSourceChanged(
+  previous: SafeProviderSourceSummary,
+  next: SafeProviderSourceSummary,
+): boolean {
+  return (
+    previous.sourceId !== next.sourceId ||
+    previous.itemId !== next.itemId ||
+    previous.defaultCandidateId !== next.defaultCandidateId ||
+    previous.sourceType !== next.sourceType
+  );
+}
+
+function providerPolicyChanged(
+  previous: ProviderPlaybackDescriptor["policy"],
+  next: ProviderPlaybackDescriptor["policy"],
+): boolean {
+  return previous.proxy !== next.proxy || previous.shared !== next.shared;
+}
+
+function buildHostProviderAuditEvents(input: {
+  roomCode: string;
+  session: Session;
+  previousVideo: SharedVideo | null;
+  nextVideo: SharedVideo;
+}): HostProviderAuditEvent[] {
+  const nextProvider = input.nextVideo.provider;
+  if (!nextProvider) {
+    return [];
+  }
+
+  const nextSource = summarizeProviderSource(nextProvider);
+  const candidate = getDefaultProviderCandidate(nextProvider);
+  const actorId = input.session.memberId ?? input.session.id;
+  const actorBase = {
+    roomCode: input.roomCode,
+    actorId,
+    actorDisplayName: input.session.displayName,
+    providerId: nextProvider.providerId,
+  };
+  const events: HostProviderAuditEvent[] = [
+    {
+      event: "host_video_selected",
+      data: {
+        ...actorBase,
+        sourceId: nextProvider.sourceId,
+        itemId: nextProvider.item.itemId,
+        itemKind: nextProvider.item.kind,
+        itemTitle: nextProvider.item.title,
+        ...(candidate?.id ? { defaultCandidateId: candidate.id } : {}),
+        ...(candidate?.sourceType ? { sourceType: candidate.sourceType } : {}),
+        policy: {
+          proxy: nextProvider.policy.proxy,
+          shared: nextProvider.policy.shared,
+        },
+        result: "ok",
+      },
+    },
+  ];
+
+  const previousProvider = input.previousVideo?.provider;
+  if (
+    !previousProvider ||
+    previousProvider.providerId !== nextProvider.providerId
+  ) {
+    return events;
+  }
+
+  if (providerPolicyChanged(previousProvider.policy, nextProvider.policy)) {
+    events.push({
+      event: "host_playback_policy_changed",
+      data: {
+        ...actorBase,
+        previousPolicy: {
+          proxy: previousProvider.policy.proxy,
+          shared: previousProvider.policy.shared,
+        },
+        nextPolicy: {
+          proxy: nextProvider.policy.proxy,
+          shared: nextProvider.policy.shared,
+        },
+        result: "ok",
+      },
+    });
+  }
+
+  const previousSource = summarizeProviderSource(previousProvider);
+  if (providerSourceChanged(previousSource, nextSource)) {
+    events.push({
+      event: "host_playback_source_changed",
+      data: {
+        ...actorBase,
+        previousSource,
+        nextSource,
+        result: "ok",
+      },
+    });
+  }
+
+  return events;
+}
+
+function createProviderShareDedupIdentity(video: SharedVideo): string {
+  const provider = video.provider;
+  if (!provider) {
+    return "legacy";
+  }
+  const source = summarizeProviderSource(provider);
+  return [
+    provider.providerId,
+    source.sourceId,
+    source.itemId,
+    source.defaultCandidateId ?? "",
+    source.sourceType ?? "",
+    provider.policy.proxy ? "proxy" : "direct",
+    provider.policy.shared ? "shared" : "private",
+  ].join(":");
+}
+
+function getRequiredPermissionForMessage(
+  messageType: ClientMessage["type"],
+): RoomMemberPermissionName | null {
+  switch (messageType) {
+    case "voice:access":
+    case "voice:state":
+      return "voice";
+    case "video:share":
+    case "playback:update":
+      return "playbackControl";
+    case "chat:message":
+      return "chat";
+    case "danmaku:message":
+      return "danmaku";
+    default:
+      return null;
+  }
+}
+
+function getRoomMemberPermissions(
+  room: PersistedRoom,
+  memberId: string,
+): RoomMemberPermissions {
+  return {
+    ...DEFAULT_ROOM_MEMBER_PERMISSIONS,
+    ...(room.memberPermissions[memberId] ?? {}),
+  };
+}
+
+function areDefaultRoomMemberPermissions(
+  permissions: RoomMemberPermissions,
+): boolean {
+  return (
+    permissions.voice === DEFAULT_ROOM_MEMBER_PERMISSIONS.voice &&
+    permissions.playbackControl ===
+      DEFAULT_ROOM_MEMBER_PERMISSIONS.playbackControl &&
+    permissions.chat === DEFAULT_ROOM_MEMBER_PERMISSIONS.chat &&
+    permissions.danmaku === DEFAULT_ROOM_MEMBER_PERMISSIONS.danmaku
+  );
+}
+
+function selectNextHostSession(activeRoom: ActiveRoom | null): Session | null {
+  if (!activeRoom) {
+    return null;
+  }
+  return (
+    Array.from(activeRoom.members.values())
+      .map((session, index) => ({ session, index }))
+      .sort((left, right) => {
+        const leftJoinedAt = left.session.joinedAt ?? Number.MAX_SAFE_INTEGER;
+        const rightJoinedAt = right.session.joinedAt ?? Number.MAX_SAFE_INTEGER;
+        if (leftJoinedAt !== rightJoinedAt) {
+          return leftJoinedAt - rightJoinedAt;
+        }
+        return left.index - right.index;
+      })[0]?.session ?? null
+  );
+}
+
 type JoinAdmissionLock = {
   token: string;
   expiresAt: number;
@@ -97,11 +342,20 @@ type JoinAdmissionLockGuard = {
   assertActive: () => void;
 };
 
+type PlaybackProxyLifecycle = {
+  clearRoom: (roomCode: string) => number;
+  cleanupExpired: () => number;
+};
+
 type JoinedSessionSnapshot = {
   roomCode: string;
   memberId: string;
   memberToken: string;
   joinedAt: number | null;
+};
+
+export type LeaveRoomOptions = {
+  reason?: "disconnect" | "explicit";
 };
 
 export function createRoomService(options: {
@@ -125,6 +379,8 @@ export function createRoomService(options: {
     memberToken: string,
     currentTime: number,
   ) => Promise<boolean>;
+  videoAuthLifecycle?: VideoAuthLifecycle;
+  playbackProxyLifecycle?: PlaybackProxyLifecycle;
 }): {
   createRoomForSession: (
     session: Session,
@@ -137,11 +393,41 @@ export function createRoomService(options: {
     displayName?: string,
     previousMemberToken?: string,
   ) => Promise<{ room: PersistedRoom; memberToken: string }>;
-  leaveRoomForSession: (session: Session) => Promise<{
+  leaveRoomForSession: (
+    session: Session,
+    options?: LeaveRoomOptions,
+  ) => Promise<{
     room: PersistedRoom | null;
     notifyRoom?: boolean;
     memberRemoved?: boolean;
+    hostTransferred?: boolean;
   }>;
+  setRoomMemberPermissionForSession: (
+    session: Session,
+    memberToken: string,
+    targetMemberId: string,
+    permission: RoomMemberPermissionName,
+    allowed: boolean,
+  ) => Promise<{ room: PersistedRoom }>;
+  kickRoomMemberForSession: (
+    session: Session,
+    memberToken: string,
+    targetMemberId: string,
+  ) => Promise<{
+    room: PersistedRoom;
+    targetSession: Session;
+    targetMemberId: string;
+    targetMemberToken: string;
+  }>;
+  transferRoomHostForSession: (
+    session: Session,
+    memberToken: string,
+    targetMemberId: string,
+  ) => Promise<{ room: PersistedRoom }>;
+  transferDisconnectedHostIfMissing: (
+    roomCode: string,
+    ownerMemberId: string,
+  ) => Promise<{ room: PersistedRoom | null; hostTransferred: boolean }>;
   shareVideoForSession: (
     session: Session,
     memberToken: string,
@@ -153,6 +439,21 @@ export function createRoomService(options: {
     memberToken: string,
     playback: PlaybackState,
   ) => Promise<{ room: PersistedRoom | null; ignored: boolean }>;
+  updatePlaybackBufferForSession: (
+    session: Session,
+    memberToken: string,
+    report: PlaybackBufferReport,
+  ) => Promise<{ room: PersistedRoom; changed: boolean }>;
+  releaseExpiredPlaybackHold: (
+    roomCode: string,
+    expectedDeadline: number,
+    currentTime?: number,
+  ) => Promise<{ room: PersistedRoom | null; changed: boolean }>;
+  setPlaybackSyncStrategyForSession: (
+    session: Session,
+    memberToken: string,
+    strategy: PlaybackSyncStrategy,
+  ) => Promise<{ room: PersistedRoom }>;
   updateProfileForSession: (
     session: Session,
     memberToken: string,
@@ -163,6 +464,15 @@ export function createRoomService(options: {
     memberToken: string,
     messageType: ClientMessage["type"],
   ) => Promise<ReturnType<typeof roomStateOf>>;
+  appendChatMessageForSession: (
+    session: Session,
+    memberToken: string,
+    message: RoomChatMessage,
+  ) => Promise<{ room: PersistedRoom }>;
+  appendSystemChatMessageForRoom: (
+    roomCode: string,
+    message: RoomChatMessage,
+  ) => Promise<{ room: PersistedRoom } | null>;
   getVoiceMemberAccessForSession: (
     session: Session,
     memberToken: string,
@@ -185,6 +495,8 @@ export function createRoomService(options: {
   deleteExpiredRooms: (currentTime?: number) => Promise<number>;
 } {
   const { config, persistence, roomStore, generateToken, logEvent } = options;
+  const videoAuthLifecycle = options.videoAuthLifecycle;
+  const playbackProxyLifecycle = options.playbackProxyLifecycle;
   const runtimeStoreOption = options.runtimeStore ?? options.activeRooms;
   const now = options.now ?? Date.now;
   const nextRoomCode = options.createRoomCode ?? createRoomCode;
@@ -209,6 +521,161 @@ export function createRoomService(options: {
       ));
   const roomJoinLocks = new Map<string, Promise<void>>();
   let roomCreateAdmissionQueue: Promise<void> = Promise.resolve();
+
+  function supportsPlaybackReadiness(session: Session): boolean {
+    // Extension clients do not expose media-buffer reports. Waiting for them
+    // would keep a web-room readiness barrier blocked until its timeout.
+    return (
+      session.origin === null ||
+      session.origin.startsWith("http://") ||
+      session.origin.startsWith("https://")
+    );
+  }
+
+  async function listPlaybackReadinessMemberIds(
+    roomCode: string,
+  ): Promise<string[]> {
+    const activeRoom = await resolveActiveRoom(roomCode);
+    return activeRoom
+      ? Array.from(activeRoom.members.entries())
+          .filter(([, session]) => supportsPlaybackReadiness(session))
+          .map(([memberId]) => memberId)
+      : [];
+  }
+
+  async function clearVideoAuthRoom(
+    roomCode: string,
+    reason: string,
+  ): Promise<void> {
+    try {
+      const deletedCount =
+        (await videoAuthLifecycle?.clearRoom?.(roomCode)) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          roomCode,
+          scope: "room",
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        roomCode,
+        scope: "room",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function clearVideoAuthOwner(args: {
+    roomCode: string;
+    ownerMemberId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const deletedCount =
+        (await videoAuthLifecycle?.clearOwner?.({
+          roomCode: args.roomCode,
+          ownerMemberId: args.ownerMemberId,
+        })) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          roomCode: args.roomCode,
+          ownerMemberId: args.ownerMemberId,
+          scope: "owner",
+          deletedCount,
+          reason: args.reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        roomCode: args.roomCode,
+        ownerMemberId: args.ownerMemberId,
+        scope: "owner",
+        reason: args.reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function pruneExpiredVideoAuthSessions(reason: string): Promise<void> {
+    try {
+      const deletedCount = (await videoAuthLifecycle?.pruneExpired?.()) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("video_auth_lifecycle_cleanup", {
+          scope: "expired",
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("video_auth_lifecycle_cleanup_failed", {
+        scope: "expired",
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  function clearPlaybackProxyRoom(roomCode: string, reason: string): void {
+    try {
+      const deletedCount = playbackProxyLifecycle?.clearRoom(roomCode) ?? 0;
+      if (deletedCount > 0) {
+        logEvent("playback_proxy_lifecycle_cleanup", {
+          roomCode,
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("playback_proxy_lifecycle_cleanup_failed", {
+        roomCode,
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  function pruneExpiredPlaybackProxyResources(reason: string): void {
+    try {
+      const deletedCount = playbackProxyLifecycle?.cleanupExpired() ?? 0;
+      if (deletedCount > 0) {
+        logEvent("playback_proxy_lifecycle_cleanup", {
+          deletedCount,
+          reason,
+          result: "ok",
+        });
+      }
+    } catch (error) {
+      logEvent("playback_proxy_lifecycle_cleanup_failed", {
+        reason,
+        result: "error",
+        error: redactSensitiveText(error),
+      });
+    }
+  }
+
+  async function deleteExpiredRoomsWithCodes(currentTime: number): Promise<{
+    deletedCount: number;
+    roomCodes: string[];
+  }> {
+    if (roomStore.deleteExpiredRoomsWithCodes) {
+      return await roomStore.deleteExpiredRoomsWithCodes(currentTime);
+    }
+    return {
+      deletedCount: await roomStore.deleteExpiredRooms(currentTime),
+      roomCodes: [],
+    };
+  }
 
   async function acquireDistributedJoinLock(
     roomCode: string,
@@ -458,6 +925,9 @@ export function createRoomService(options: {
     if (room.expiresAt !== null && room.expiresAt <= now()) {
       await roomStore.deleteRoom(code);
       runtimeStore.deleteRoom(code);
+      playbackAuthorityByRoom.delete(code);
+      await clearVideoAuthRoom(code, "room_expired");
+      clearPlaybackProxyRoom(code, "room_expired");
       return null;
     }
     return room;
@@ -473,48 +943,6 @@ export function createRoomService(options: {
       return null;
     }
     return authority;
-  }
-
-  function derivePlaybackAuthorityKind(args: {
-    currentPlayback: PlaybackState | null;
-    nextPlayback: PlaybackState;
-  }): PlaybackAuthority["kind"] | null {
-    if (!args.currentPlayback) {
-      return "play";
-    }
-    if (
-      args.nextPlayback.playState === "paused" ||
-      args.nextPlayback.playState === "buffering"
-    ) {
-      return "pause";
-    }
-    if (
-      Math.abs(
-        args.nextPlayback.playbackRate - args.currentPlayback.playbackRate,
-      ) > 0.01
-    ) {
-      return "ratechange";
-    }
-    if (
-      args.nextPlayback.syncIntent === "explicit-seek" &&
-      args.nextPlayback.playState === "playing"
-    ) {
-      return "seek";
-    }
-    if (
-      Math.abs(
-        args.nextPlayback.currentTime - args.currentPlayback.currentTime,
-      ) >= 2.5
-    ) {
-      return "seek";
-    }
-    if (
-      args.currentPlayback.playState !== "playing" &&
-      args.nextPlayback.playState === "playing"
-    ) {
-      return "play";
-    }
-    return null;
   }
 
   function recordPlaybackAuthority(args: {
@@ -559,6 +987,63 @@ export function createRoomService(options: {
         "member_token_invalid",
       );
     }
+  }
+
+  function isRoomHost(session: Session, room: PersistedRoom): boolean {
+    return Boolean(
+      room.ownerMemberId &&
+      (session.memberId ?? session.id) === room.ownerMemberId,
+    );
+  }
+
+  function denyMemberPermission(args: {
+    session: Session;
+    room: PersistedRoom;
+    messageType: ClientMessage["type"];
+    permission?: RoomMemberPermissionName;
+    reason?: string;
+  }): never {
+    logEvent("auth_failed", {
+      sessionId: args.session.id,
+      roomCode: args.room.code,
+      remoteAddress: args.session.remoteAddress,
+      origin: args.session.origin,
+      messageType: args.messageType,
+      result: "rejected",
+      reason: args.reason ?? "member_permission_denied",
+      ...(args.permission ? { permission: args.permission } : {}),
+    });
+    throw new RoomServiceError(
+      "member_permission_denied",
+      MEMBER_PERMISSION_DENIED_MESSAGE,
+      "member_permission_denied",
+      {
+        messageType: args.messageType,
+        ...(args.permission ? { permission: args.permission } : {}),
+      },
+    );
+  }
+
+  function ensureMemberPermissionAllowed(
+    access: JoinedRoomAccess,
+    messageType: ClientMessage["type"],
+  ): void {
+    const permission = getRequiredPermissionForMessage(messageType);
+    if (!permission || isRoomHost(access.session, access.persistedRoom)) {
+      return;
+    }
+
+    const memberId = access.session.memberId ?? access.session.id;
+    if (getRoomMemberPermissions(access.persistedRoom, memberId)[permission]) {
+      return;
+    }
+
+    denyMemberPermission({
+      session: access.session,
+      room: access.persistedRoom,
+      messageType,
+      permission,
+    });
   }
 
   async function requireJoinedRoomSession(
@@ -626,7 +1111,9 @@ export function createRoomService(options: {
     }
 
     requireMemberToken(activeRoom, session, memberToken, messageType);
-    return { session, persistedRoom, activeRoom };
+    const access = { session, persistedRoom, activeRoom };
+    ensureMemberPermissionAllowed(access, messageType);
+    return access;
   }
 
   async function withVersionRetry<T = PersistedRoom>(
@@ -652,15 +1139,195 @@ export function createRoomService(options: {
     return null;
   }
 
+  async function appendRoomChatMessage(
+    roomCode: string,
+    message: RoomChatMessage,
+  ): Promise<PersistedRoom | null> {
+    return await withVersionRetry(roomCode, async (currentRoom) => {
+      // Chat is room-scoped and expires with the room, but it must live in
+      // room state so refreshes and late joiners can hydrate the recent chat.
+      const result = await roomStore.updateRoom(
+        currentRoom.code,
+        currentRoom.version,
+        {
+          chatMessages: [...currentRoom.chatMessages, message],
+          lastActiveAt: now(),
+        },
+      );
+      if (!result.ok) {
+        return null;
+      }
+      return result.room;
+    });
+  }
+
+  function getTargetActiveMember(
+    access: JoinedRoomAccess,
+    targetMemberId: string,
+    messageType: ClientMessage["type"],
+  ): { targetSession: Session; targetMemberToken: string } {
+    if (targetMemberId === (access.session.memberId ?? access.session.id)) {
+      throw new RoomServiceError(
+        "invalid_message",
+        MEMBER_NOT_FOUND_MESSAGE,
+        "invalid_message",
+        { targetMemberId, messageType },
+      );
+    }
+
+    const targetSession = access.activeRoom.members.get(targetMemberId);
+    const targetMemberToken =
+      access.activeRoom.memberTokens.get(targetMemberId);
+    if (!targetSession || !targetMemberToken) {
+      throw new RoomServiceError(
+        "invalid_message",
+        MEMBER_NOT_FOUND_MESSAGE,
+        "invalid_message",
+        { targetMemberId, messageType },
+      );
+    }
+
+    return { targetSession, targetMemberToken };
+  }
+
+  async function requireHostRoomAccess(
+    session: Session,
+    memberToken: string,
+    messageType: Extract<
+      ClientMessage["type"],
+      | "room:member-permission:set"
+      | "room:member:kick"
+      | "room:host:transfer"
+      | "playback:sync-strategy:set"
+    >,
+  ): Promise<JoinedRoomAccess> {
+    const access = await requireJoinedRoomSession(
+      session,
+      memberToken,
+      messageType,
+    );
+    if (!isRoomHost(session, access.persistedRoom)) {
+      denyMemberPermission({
+        session,
+        room: access.persistedRoom,
+        messageType,
+        reason: "not_room_host",
+      });
+    }
+    return access;
+  }
+
+  async function updateRoomMemberPermission(args: {
+    roomCode: string;
+    targetMemberId: string;
+    permission: RoomMemberPermissionName;
+    allowed: boolean;
+  }): Promise<PersistedRoom | null> {
+    return await withVersionRetry(args.roomCode, async (currentRoom) => {
+      const permissions = getRoomMemberPermissions(
+        currentRoom,
+        args.targetMemberId,
+      );
+      const nextMemberPermissions: RoomMemberPermissions = {
+        ...permissions,
+        [args.permission]: args.allowed,
+      };
+      const memberPermissions = { ...currentRoom.memberPermissions };
+      if (areDefaultRoomMemberPermissions(nextMemberPermissions)) {
+        delete memberPermissions[args.targetMemberId];
+      } else {
+        memberPermissions[args.targetMemberId] = nextMemberPermissions;
+      }
+
+      const result = await roomStore.updateRoom(
+        currentRoom.code,
+        currentRoom.version,
+        {
+          memberPermissions,
+          lastActiveAt: now(),
+        },
+      );
+      if (!result.ok) {
+        return null;
+      }
+      return result.room;
+    });
+  }
+
+  async function removeRoomMemberPermissionEntry(args: {
+    roomCode: string;
+    targetMemberId: string;
+  }): Promise<PersistedRoom | null> {
+    return await withVersionRetry(args.roomCode, async (currentRoom) => {
+      const memberPermissions = { ...currentRoom.memberPermissions };
+      delete memberPermissions[args.targetMemberId];
+      const result = await roomStore.updateRoom(
+        currentRoom.code,
+        currentRoom.version,
+        {
+          memberPermissions,
+          lastActiveAt: now(),
+        },
+      );
+      if (!result.ok) {
+        return null;
+      }
+      return result.room;
+    });
+  }
+
+  async function updateRoomHost(args: {
+    roomCode: string;
+    expectedOwnerMemberId: string;
+    targetSession: Session;
+    targetMemberId: string;
+    reason: string;
+  }): Promise<PersistedRoom | null> {
+    const targetDisplayName = args.targetSession.displayName;
+    const updatedRoom = await withVersionRetry(
+      args.roomCode,
+      async (currentRoom) => {
+        if (currentRoom.ownerMemberId !== args.expectedOwnerMemberId) {
+          return currentRoom.ownerMemberId === args.targetMemberId
+            ? currentRoom
+            : null;
+        }
+        const result = await roomStore.updateRoom(
+          currentRoom.code,
+          currentRoom.version,
+          {
+            ownerMemberId: args.targetMemberId,
+            ownerDisplayName: targetDisplayName,
+            lastActiveAt: now(),
+          },
+        );
+        if (!result.ok) {
+          return null;
+        }
+        return result.room;
+      },
+    );
+
+    if (updatedRoom && args.expectedOwnerMemberId !== args.targetMemberId) {
+      await clearVideoAuthOwner({
+        roomCode: args.roomCode,
+        ownerMemberId: args.expectedOwnerMemberId,
+        reason: args.reason,
+      });
+    }
+    return updatedRoom;
+  }
+
   async function resolveJoinTargetState(
     roomCode: string,
     previousMemberToken?: string,
   ): Promise<JoinTargetState> {
     const activeRoom = await resolveActiveRoom(roomCode);
-    const reconnectMemberId =
+    const tokenMemberId =
       previousMemberToken && activeRoom
         ? await resolveMemberIdByToken(roomCode, previousMemberToken)
         : null;
+    const reconnectMemberId = tokenMemberId ?? null;
 
     return {
       activeRoom,
@@ -754,6 +1421,10 @@ export function createRoomService(options: {
       });
       const needsCapacitySerialization =
         joinTargetState.reconnectMemberId === null;
+      const shouldClaimRetainedRoomHost =
+        room.expiresAt !== null &&
+        joinTargetState.activeMemberCount === 0 &&
+        joinTargetState.reconnectMemberId === null;
 
       if (
         room.expiresAt === null &&
@@ -772,10 +1443,27 @@ export function createRoomService(options: {
 
       const result = await roomStore.updateRoom(args.roomCode, room.version, {
         ...(room.expiresAt === null ? {} : { expiresAt: null }),
+        ...(shouldClaimRetainedRoomHost
+          ? {
+              ownerMemberId: args.session.id,
+              ownerDisplayName: args.session.displayName,
+            }
+          : {}),
         lastActiveAt: currentTime,
       });
       if (!result.ok) {
         return null;
+      }
+      if (
+        shouldClaimRetainedRoomHost &&
+        room.ownerMemberId &&
+        room.ownerMemberId !== args.session.id
+      ) {
+        await clearVideoAuthOwner({
+          roomCode: args.roomCode,
+          ownerMemberId: room.ownerMemberId,
+          reason: "retained_room_host_reclaimed",
+        });
       }
       return { room: result.room, joinTargetState };
     });
@@ -835,10 +1523,42 @@ export function createRoomService(options: {
     return readyState === OPEN;
   }
 
-  async function leaveCurrentRoom(session: Session): Promise<{
+  async function removeDepartedMemberFromPlaybackCoordination(
+    roomCode: string,
+    memberId: string,
+  ): Promise<PersistedRoom | null> {
+    const currentTime = now();
+    return withVersionRetry(roomCode, async (room) => {
+      const coordination = coordinatePlaybackMemberDeparture({
+        room,
+        memberId,
+        currentTime,
+      });
+      if (
+        isSamePlaybackSyncState(room.playbackSync, coordination.playbackSync) &&
+        room.playback === coordination.playback
+      ) {
+        return room;
+      }
+      const result = await roomStore.updateRoom(roomCode, room.version, {
+        playbackSync: coordination.playbackSync,
+        ...(room.playback !== coordination.playback
+          ? { playback: coordination.playback }
+          : {}),
+        lastActiveAt: currentTime,
+      });
+      return result.ok ? result.room : null;
+    });
+  }
+
+  async function leaveCurrentRoom(
+    session: Session,
+    options: LeaveRoomOptions = {},
+  ): Promise<{
     room: PersistedRoom | null;
     notifyRoom?: boolean;
     memberRemoved?: boolean;
+    hostTransferred?: boolean;
   }> {
     if (!session.roomCode) {
       return { room: null };
@@ -855,6 +1575,17 @@ export function createRoomService(options: {
           roomEmpty: false,
           removed: false,
         };
+    if (
+      options.reason === "explicit" &&
+      session.memberId &&
+      session.memberToken
+    ) {
+      runtimeStore.removeMemberToken(
+        roomCode,
+        session.memberId,
+        session.memberToken,
+      );
+    }
     await runtimeStore.flush?.();
     clearSessionRoom(session);
 
@@ -862,6 +1593,58 @@ export function createRoomService(options: {
       const persistedRoom = await resolveRoom(roomCode);
       if (!persistedRoom) {
         return { room: null };
+      }
+      let roomAfterOwnerChange = persistedRoom;
+      let hostTransferred = false;
+      if (
+        options.reason === "explicit" &&
+        removal.removed &&
+        persistedRoom.ownerMemberId &&
+        persistedRoom.ownerMemberId === leavingMemberId
+      ) {
+        const nextHostSession = selectNextHostSession(removal.room);
+        if (!removal.roomEmpty && nextHostSession?.memberId) {
+          const updatedRoom = await updateRoomHost({
+            roomCode,
+            expectedOwnerMemberId: leavingMemberId,
+            targetSession: nextHostSession,
+            targetMemberId: nextHostSession.memberId,
+            reason: "owner_left",
+          });
+          if (!updatedRoom) {
+            throw new RoomServiceError(
+              "internal_error",
+              INTERNAL_SERVER_ERROR_MESSAGE,
+              "internal_error",
+            );
+          }
+          roomAfterOwnerChange = updatedRoom;
+          hostTransferred =
+            updatedRoom.ownerMemberId === nextHostSession.memberId;
+        } else {
+          await clearVideoAuthOwner({
+            roomCode,
+            ownerMemberId: leavingMemberId,
+            reason: "owner_left",
+          });
+        }
+      }
+
+      if (removal.removed) {
+        const coordinatedRoom =
+          await removeDepartedMemberFromPlaybackCoordination(
+            roomCode,
+            leavingMemberId,
+          );
+        if (!coordinatedRoom) {
+          throw new RoomServiceError(
+            "internal_error",
+            INTERNAL_SERVER_ERROR_MESSAGE,
+            "internal_error",
+            { roomCode, reason: "leave_playback_coordination_failed" },
+          );
+        }
+        roomAfterOwnerChange = coordinatedRoom;
       }
 
       if (!removal.roomEmpty) {
@@ -874,7 +1657,11 @@ export function createRoomService(options: {
           origin: session.origin,
           result: "ok",
         });
-        return { room: persistedRoom, memberRemoved: removal.removed };
+        return {
+          room: roomAfterOwnerChange,
+          memberRemoved: removal.removed,
+          hostTransferred,
+        };
       }
 
       const expiresAt = now() + persistence.emptyRoomTtlMs;
@@ -1106,7 +1893,7 @@ export function createRoomService(options: {
           );
         }
 
-        const joinedRoom = joined.room;
+        let joinedRoom = joined.room;
         const reconnectMemberId = joined.joinTargetState.reconnectMemberId;
         const joinIdentity = buildJoinIdentity(
           session,
@@ -1170,6 +1957,43 @@ export function createRoomService(options: {
         }
         disconnectReplacedSession(session, previousLocalSession);
 
+        if (reconnectMemberId === null && supportsPlaybackReadiness(session)) {
+          const coordinatedRoom = await withVersionRetry(
+            joinedRoom.code,
+            async (currentRoom) => {
+              const coordination = coordinatePlaybackMemberJoin({
+                room: currentRoom,
+                memberId: joinIdentity.memberId,
+                currentTime: now(),
+              });
+              if (
+                isSamePlaybackSyncState(
+                  currentRoom.playbackSync,
+                  coordination.playbackSync,
+                ) &&
+                currentRoom.playback === coordination.playback
+              ) {
+                return currentRoom;
+              }
+              const result = await roomStore.updateRoom(
+                currentRoom.code,
+                currentRoom.version,
+                {
+                  playbackSync: coordination.playbackSync,
+                  ...(currentRoom.playback !== coordination.playback
+                    ? { playback: coordination.playback }
+                    : {}),
+                  lastActiveAt: now(),
+                },
+              );
+              return result.ok ? result.room : null;
+            },
+          );
+          if (coordinatedRoom) {
+            joinedRoom = coordinatedRoom;
+          }
+        }
+
         logEvent("room_restored", {
           roomCode: joinedRoom.code,
           version: joinedRoom.version,
@@ -1184,6 +2008,167 @@ export function createRoomService(options: {
 
     leaveRoomForSession: leaveCurrentRoom,
 
+    async transferDisconnectedHostIfMissing(roomCode, ownerMemberId) {
+      const persistedRoom = await resolveRoom(roomCode);
+      if (!persistedRoom || persistedRoom.ownerMemberId !== ownerMemberId) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      const activeRoom = await resolveActiveRoom(roomCode);
+      if (!activeRoom || activeRoom.members.has(ownerMemberId)) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      const nextHostSession = selectNextHostSession(activeRoom);
+      if (!nextHostSession?.memberId) {
+        return { room: persistedRoom, hostTransferred: false };
+      }
+
+      // Disconnect and refresh look identical at WebSocket close time. This
+      // method is called only after a reconnect grace period, then re-checks
+      // whether the original host has returned before transferring authority.
+      const updatedRoom = await updateRoomHost({
+        roomCode,
+        expectedOwnerMemberId: ownerMemberId,
+        targetSession: nextHostSession,
+        targetMemberId: nextHostSession.memberId,
+        reason: "owner_disconnected",
+      });
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "internal_error",
+          INTERNAL_SERVER_ERROR_MESSAGE,
+          "internal_error",
+          { roomCode, reason: "disconnected_host_transfer_failed" },
+        );
+      }
+
+      return {
+        room: updatedRoom,
+        hostTransferred: updatedRoom.ownerMemberId === nextHostSession.memberId,
+      };
+    },
+
+    async setRoomMemberPermissionForSession(
+      session,
+      memberToken,
+      targetMemberId,
+      permission,
+      allowed,
+    ) {
+      const access = await requireHostRoomAccess(
+        session,
+        memberToken,
+        "room:member-permission:set",
+      );
+      getTargetActiveMember(
+        access,
+        targetMemberId,
+        "room:member-permission:set",
+      );
+      const room = await updateRoomMemberPermission({
+        roomCode: access.persistedRoom.code,
+        targetMemberId,
+        permission,
+        allowed,
+      });
+      if (!room) {
+        throw new RoomServiceError(
+          "internal_error",
+          INTERNAL_SERVER_ERROR_MESSAGE,
+          "internal_error",
+        );
+      }
+      logEvent("room_member_permission_updated", {
+        roomCode: room.code,
+        actorId: session.memberId ?? session.id,
+        targetMemberId,
+        permission,
+        allowed,
+        result: "ok",
+      });
+      return { room };
+    },
+
+    async kickRoomMemberForSession(session, memberToken, targetMemberId) {
+      const access = await requireHostRoomAccess(
+        session,
+        memberToken,
+        "room:member:kick",
+      );
+      const { targetSession, targetMemberToken } = getTargetActiveMember(
+        access,
+        targetMemberId,
+        "room:member:kick",
+      );
+      runtimeStore.blockMemberToken(
+        access.persistedRoom.code,
+        targetMemberToken,
+        now() + 60_000,
+      );
+      runtimeStore.removeMember(
+        access.persistedRoom.code,
+        targetMemberId,
+        targetSession,
+      );
+      clearSessionRoom(targetSession);
+      await runtimeStore.flush?.();
+      const room =
+        (await removeRoomMemberPermissionEntry({
+          roomCode: access.persistedRoom.code,
+          targetMemberId,
+        })) ?? access.persistedRoom;
+      logEvent("room_member_kicked", {
+        roomCode: access.persistedRoom.code,
+        actorId: session.memberId ?? session.id,
+        targetMemberId,
+        result: "ok",
+      });
+      return { room, targetSession, targetMemberId, targetMemberToken };
+    },
+
+    async transferRoomHostForSession(session, memberToken, targetMemberId) {
+      const access = await requireHostRoomAccess(
+        session,
+        memberToken,
+        "room:host:transfer",
+      );
+      const { targetSession } = getTargetActiveMember(
+        access,
+        targetMemberId,
+        "room:host:transfer",
+      );
+      const expectedOwnerMemberId = access.persistedRoom.ownerMemberId;
+      if (!expectedOwnerMemberId) {
+        throw new RoomServiceError(
+          "invalid_message",
+          MEMBER_NOT_FOUND_MESSAGE,
+          "invalid_message",
+        );
+      }
+      const room = await updateRoomHost({
+        roomCode: access.persistedRoom.code,
+        expectedOwnerMemberId,
+        targetSession,
+        targetMemberId,
+        reason: "owner_transferred",
+      });
+      if (!room) {
+        throw new RoomServiceError(
+          "internal_error",
+          INTERNAL_SERVER_ERROR_MESSAGE,
+          "internal_error",
+        );
+      }
+      logEvent("room_host_transferred", {
+        roomCode: room.code,
+        actorId: session.memberId ?? session.id,
+        targetMemberId,
+        result: "ok",
+      });
+      return { room };
+    },
+
     async shareVideoForSession(session, memberToken, video, playback) {
       const access = await requireJoinedRoomSession(
         session,
@@ -1192,7 +2177,10 @@ export function createRoomService(options: {
       );
       const currentTime = now();
       const actorId = session.memberId ?? session.id;
-      const shareDedupKey = `share:${actorId}:${video.url}:${playback?.seq ?? 0}`;
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
+      const shareDedupKey = `share:${actorId}:${video.url}:${playback?.seq ?? 0}:${createProviderShareDedupIdentity(video)}`;
       if (
         !(await runtimeStore.tryClaimMessageSlot(
           access.persistedRoom.code,
@@ -1209,6 +2197,7 @@ export function createRoomService(options: {
       }
 
       let room: PersistedRoom | null;
+      let hostAuditEvents: HostProviderAuditEvent[] = [];
       try {
         room = await withVersionRetry(
           access.persistedRoom.code,
@@ -1231,6 +2220,13 @@ export function createRoomService(options: {
                   actorId: session.memberId ?? session.id,
                   seq: 0,
                 };
+            const coordination = coordinatePlaybackCommand({
+              room: currentRoom,
+              nextPlayback,
+              activeMemberIds,
+              command: "share",
+              currentTime,
+            });
             const result = await roomStore.updateRoom(
               currentRoom.code,
               currentRoom.version,
@@ -1240,7 +2236,8 @@ export function createRoomService(options: {
                   sharedByMemberId: session.memberId ?? session.id,
                   sharedByDisplayName: session.displayName,
                 },
-                playback: nextPlayback,
+                playback: coordination.playback,
+                playbackSync: coordination.playbackSync,
                 expiresAt: null,
                 lastActiveAt: currentTime,
               },
@@ -1248,6 +2245,12 @@ export function createRoomService(options: {
             if (!result.ok) {
               return null;
             }
+            hostAuditEvents = buildHostProviderAuditEvents({
+              roomCode: currentRoom.code,
+              session,
+              previousVideo: currentRoom.sharedVideo,
+              nextVideo: video,
+            });
             recordPlaybackAuthority({
               roomCode: currentRoom.code,
               actorId: nextPlayback.actorId,
@@ -1296,6 +2299,9 @@ export function createRoomService(options: {
         playbackRate: room.playback?.playbackRate ?? null,
         result: "ok",
       });
+      for (const event of hostAuditEvents) {
+        logEvent(event.event, event.data);
+      }
 
       return { room };
     },
@@ -1353,11 +2359,43 @@ export function createRoomService(options: {
       }
 
       const currentTime = now();
-      const nextPlayback: PlaybackState = {
-        ...playback,
-        actorId: session.memberId ?? session.id,
-        serverTime: currentTime,
-      };
+      const nextPlayback = preservePlayingIntentForSeek({
+        room: access.persistedRoom,
+        nextPlayback: {
+          ...playback,
+          actorId: session.memberId ?? session.id,
+          serverTime: currentTime,
+        },
+      });
+      if (
+        shouldIgnorePlaybackUpdateDuringHold({
+          room: access.persistedRoom,
+          nextPlayback,
+          currentTime,
+        })
+      ) {
+        const authority = getPlaybackAuthority(access.persistedRoom.code);
+        logEvent("playback_update_ignored", {
+          roomCode: access.persistedRoom.code,
+          sessionId: session.id,
+          actorId: nextPlayback.actorId,
+          seq: nextPlayback.seq,
+          playState: nextPlayback.playState,
+          currentTime: nextPlayback.currentTime,
+          playbackRate: nextPlayback.playbackRate,
+          syncIntent: nextPlayback.syncIntent ?? "none",
+          result: "ignored",
+          reason: "playback-hold-follow",
+          authorityActorId: authority?.actorId ?? null,
+          authorityKind: authority?.kind ?? null,
+          authorityUntil: authority?.until ?? null,
+          currentActorId: access.persistedRoom.playback?.actorId ?? null,
+          currentPlayState: access.persistedRoom.playback?.playState ?? null,
+          currentPlaybackTime:
+            access.persistedRoom.playback?.currentTime ?? null,
+        });
+        return { room: access.persistedRoom, ignored: true };
+      }
       const authorityKind = derivePlaybackAuthorityKind({
         currentPlayback: access.persistedRoom.playback,
         nextPlayback,
@@ -1367,6 +2405,7 @@ export function createRoomService(options: {
         authority: getPlaybackAuthority(access.persistedRoom.code),
         incomingPlayback: nextPlayback,
         currentTime,
+        isLivePlayback: isLiveSharedVideo(access.persistedRoom.sharedVideo),
       });
       if (acceptance.decision !== "accept") {
         const authority = getPlaybackAuthority(access.persistedRoom.code);
@@ -1392,13 +2431,31 @@ export function createRoomService(options: {
         return { room: access.persistedRoom, ignored: true };
       }
 
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
+      const command =
+        authorityKind === "play" ||
+        authorityKind === "pause" ||
+        authorityKind === "seek"
+          ? authorityKind
+          : "other";
+      const coordination = coordinatePlaybackCommand({
+        room: access.persistedRoom,
+        nextPlayback,
+        activeMemberIds,
+        command,
+        currentTime,
+      });
+
       let result: Awaited<ReturnType<typeof roomStore.updateRoom>>;
       try {
         result = await roomStore.updateRoom(
           access.persistedRoom.code,
           access.persistedRoom.version,
           {
-            playback: nextPlayback,
+            playback: coordination.playback,
+            playbackSync: coordination.playbackSync,
             expiresAt: null,
             lastActiveAt: currentTime,
           },
@@ -1494,6 +2551,180 @@ export function createRoomService(options: {
       return { room: result.room, ignored: false };
     },
 
+    async updatePlaybackBufferForSession(session, memberToken, report) {
+      const access = await requireJoinedRoomSession(
+        session,
+        memberToken,
+        "playback:buffer",
+      );
+      const memberId = session.memberId ?? session.id;
+      const currentTime = now();
+      let changed = false;
+      const updatedRoom = await withVersionRetry(
+        access.persistedRoom.code,
+        async (currentRoom) => {
+          const coordination = coordinatePlaybackBufferReport({
+            room: currentRoom,
+            memberId,
+            report,
+            currentTime,
+          });
+          const playbackSyncChanged = !isSamePlaybackSyncState(
+            currentRoom.playbackSync,
+            coordination.playbackSync,
+          );
+          const playbackChanged =
+            currentRoom.playback !== coordination.playback;
+          if (!playbackSyncChanged && !playbackChanged) {
+            return currentRoom;
+          }
+          const result = await roomStore.updateRoom(
+            currentRoom.code,
+            currentRoom.version,
+            {
+              playbackSync: coordination.playbackSync,
+              ...(playbackChanged ? { playback: coordination.playback } : {}),
+              expiresAt: null,
+              lastActiveAt: currentTime,
+            },
+          );
+          if (result.ok) {
+            changed = true;
+          }
+          return result.ok ? result.room : null;
+        },
+      );
+
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "room_not_found",
+          ROOM_NOT_FOUND_MESSAGE,
+          "room_not_found",
+        );
+      }
+
+      const playbackSync = clonePlaybackSyncState(updatedRoom.playbackSync);
+      logEvent("playback_buffer_report_applied", {
+        roomCode: updatedRoom.code,
+        sessionId: session.id,
+        ...actorDetails(session),
+        state: report.state,
+        currentTime: report.currentTime,
+        bufferAheadSeconds: report.bufferAheadSeconds ?? null,
+        playbackRevision: report.playbackRevision ?? null,
+        strategy: playbackSync.strategy,
+        holdActive: playbackSync.hold.active,
+        result: "ok",
+      });
+      return { room: updatedRoom, changed };
+    },
+
+    async releaseExpiredPlaybackHold(
+      roomCode,
+      expectedDeadline,
+      currentTime = now(),
+    ) {
+      if (!Number.isFinite(expectedDeadline) || !Number.isFinite(currentTime)) {
+        return { room: null, changed: false };
+      }
+      const result = await withVersionRetry<{
+        room: PersistedRoom;
+        changed: boolean;
+      }>(roomCode, async (currentRoom) => {
+        const coordination = coordinatePlaybackHoldExpiry({
+          room: currentRoom,
+          expectedDeadline,
+          currentTime,
+        });
+        if (!coordination.expired) {
+          return { room: currentRoom, changed: false };
+        }
+        const updated = await roomStore.updateRoom(
+          roomCode,
+          currentRoom.version,
+          {
+            playbackSync: coordination.playbackSync,
+            ...(currentRoom.playback !== coordination.playback
+              ? { playback: coordination.playback }
+              : {}),
+            // Timeout recovery is coordination housekeeping, not user activity.
+            lastActiveAt: currentRoom.lastActiveAt,
+          },
+        );
+        return updated.ok ? { room: updated.room, changed: true } : null;
+      });
+      if (result?.changed) {
+        logEvent("playback_hold_expired", {
+          roomCode,
+          expectedDeadline,
+          result: "ok",
+        });
+      }
+      return result ?? { room: null, changed: false };
+    },
+
+    async setPlaybackSyncStrategyForSession(session, memberToken, strategy) {
+      const access = await requireHostRoomAccess(
+        session,
+        memberToken,
+        "playback:sync-strategy:set",
+      );
+      const currentTime = now();
+      const activeMemberIds = await listPlaybackReadinessMemberIds(
+        access.persistedRoom.code,
+      );
+      const updatedRoom = await withVersionRetry(
+        access.persistedRoom.code,
+        async (currentRoom) => {
+          const coordination = coordinatePlaybackSyncStrategyChange({
+            room: currentRoom,
+            strategy,
+            currentTime,
+            activeMemberIds,
+          });
+          if (
+            isSamePlaybackSyncState(
+              currentRoom.playbackSync,
+              coordination.playbackSync,
+            ) &&
+            currentRoom.playback === coordination.playback
+          ) {
+            return currentRoom;
+          }
+          const result = await roomStore.updateRoom(
+            currentRoom.code,
+            currentRoom.version,
+            {
+              playbackSync: coordination.playbackSync,
+              ...(currentRoom.playback !== coordination.playback
+                ? { playback: coordination.playback }
+                : {}),
+              expiresAt: null,
+              lastActiveAt: currentTime,
+            },
+          );
+          return result.ok ? result.room : null;
+        },
+      );
+
+      if (!updatedRoom) {
+        throw new RoomServiceError(
+          "room_not_found",
+          ROOM_NOT_FOUND_MESSAGE,
+          "room_not_found",
+        );
+      }
+
+      logEvent("playback_sync_strategy_updated", {
+        roomCode: updatedRoom.code,
+        sessionId: session.id,
+        ...actorDetails(session),
+        strategy,
+        result: "ok",
+      });
+      return { room: updatedRoom };
+    },
+
     async updateProfileForSession(session, memberToken, displayName) {
       const access = await requireJoinedRoomSession(
         session,
@@ -1537,6 +2768,41 @@ export function createRoomService(options: {
       }
       await runtimeStore.flush?.();
       return { room };
+    },
+
+    async appendChatMessageForSession(session, memberToken, message) {
+      const access = await requireJoinedRoomSession(
+        session,
+        memberToken,
+        "chat:message",
+      );
+      const room = await appendRoomChatMessage(
+        access.persistedRoom.code,
+        message,
+      );
+      if (!room) {
+        logEvent("chat_history_persist_failed", {
+          roomCode: access.persistedRoom.code,
+          sessionId: session.id,
+          provider: persistence.provider,
+          result: "error",
+          reason: "room_version_conflict",
+        });
+      }
+      return { room: room ?? access.persistedRoom };
+    },
+
+    async appendSystemChatMessageForRoom(roomCode, message) {
+      const room = await appendRoomChatMessage(roomCode, message);
+      if (!room) {
+        logEvent("chat_history_system_persist_failed", {
+          roomCode,
+          provider: persistence.provider,
+          result: "error",
+          reason: "room_not_found_or_version_conflict",
+        });
+      }
+      return room ? { room } : null;
     },
 
     async getRoomStateForSession(session, memberToken, messageType) {
@@ -1610,7 +2876,16 @@ export function createRoomService(options: {
     },
 
     async deleteExpiredRooms(currentTime = now()) {
-      return await roomStore.deleteExpiredRooms(currentTime);
+      const result = await deleteExpiredRoomsWithCodes(currentTime);
+      for (const roomCode of result.roomCodes) {
+        runtimeStore.deleteRoom(roomCode);
+        playbackAuthorityByRoom.delete(roomCode);
+        await clearVideoAuthRoom(roomCode, "room_expired");
+        clearPlaybackProxyRoom(roomCode, "room_expired");
+      }
+      await pruneExpiredVideoAuthSessions("owner_offline_ttl_expired");
+      pruneExpiredPlaybackProxyResources("resource_ttl_expired");
+      return result.deletedCount;
     },
   };
 }

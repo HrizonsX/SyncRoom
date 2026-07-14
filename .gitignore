@@ -4,6 +4,9 @@ dist-firefox/
 build/
 coverage/
 *.log
+logs/
+__pycache__/
+*.py[cod]
 tmp-test-extension/
 release/
 .vscode/

@@ -1,4 +1,8 @@
-import type { ClientMessage } from "@syncroom/protocol";
+import type {
+  ClientMessage,
+  RoomChatMessage,
+  RoomSystemChatEventType,
+} from "@syncroom/protocol";
 import type { WebSocket } from "ws";
 import { performance } from "node:perf_hooks";
 import type {
@@ -8,10 +12,15 @@ import type {
 import {
   consumeFixedWindow,
   consumeTokenBucket,
+  createTokenBucket,
   WINDOW_10_SECONDS_MS,
+  WINDOW_5_SECONDS_MS,
   WINDOW_MINUTE_MS,
 } from "./rate-limit.js";
 import {
+  CHAT_RATE_LIMITED_MESSAGE,
+  DANMAKU_RATE_LIMITED_MESSAGE,
+  MEMBER_KICKED_MESSAGE,
   MEMBER_TOKEN_INVALID_MESSAGE,
   RATE_LIMITED_MESSAGE,
   UNSUPPORTED_PROTOCOL_VERSION_MESSAGE,
@@ -19,7 +28,7 @@ import {
   CURRENT_PROTOCOL_VERSION,
   VOICE_UNAVAILABLE_MESSAGE,
 } from "./messages.js";
-import { RoomServiceError } from "./room-service.js";
+import { RoomServiceError, type LeaveRoomOptions } from "./room-service.js";
 import type { RoomEventBusMessage } from "./room-event-bus.js";
 import { hasAttachedSocket } from "./types.js";
 import type { LogEvent, SendError, SendMessage, Session } from "./types.js";
@@ -28,6 +37,10 @@ import { VoiceServiceError, type VoiceAccessDetails } from "./voice-service.js";
 type RoomEventBusPublishInput<T> = T extends unknown
   ? Omit<T, "sourceInstanceId" | "emittedAt">
   : never;
+
+const HOST_DISCONNECT_TRANSFER_GRACE_MS = 5_000;
+const PLAYBACK_BUFFER_REPORTS_PER_SECOND = 4;
+const PLAYBACK_BUFFER_REPORT_BURST = 6;
 
 export function createMessageHandler(options: {
   config: {
@@ -39,6 +52,8 @@ export function createMessageHandler(options: {
       playbackUpdatePerSecond: number;
       playbackUpdateBurst: number;
       syncRequestPer10Seconds: number;
+      chatMessagePer5Seconds: number;
+      danmakuMessagePer5Seconds: number;
       syncPingPerSecond: number;
       syncPingBurst: number;
     };
@@ -58,11 +73,44 @@ export function createMessageHandler(options: {
       displayName?: string,
       previousMemberToken?: string,
     ) => Promise<{ room: { code: string }; memberToken: string }>;
-    leaveRoomForSession: (session: Session) => Promise<{
+    leaveRoomForSession: (
+      session: Session,
+      options?: LeaveRoomOptions,
+    ) => Promise<{
       room: { code: string } | null;
       notifyRoom?: boolean;
       memberRemoved?: boolean;
+      hostTransferred?: boolean;
     }>;
+    setRoomMemberPermissionForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+      permission: Extract<
+        ClientMessage,
+        { type: "room:member-permission:set" }
+      >["payload"]["permission"],
+      allowed: boolean,
+    ) => Promise<{ room: { code: string } }>;
+    kickRoomMemberForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+    ) => Promise<{
+      room: { code: string };
+      targetSession: Session;
+      targetMemberId: string;
+      targetMemberToken: string;
+    }>;
+    transferRoomHostForSession?: (
+      session: Session,
+      memberToken: string,
+      targetMemberId: string,
+    ) => Promise<{ room: { code: string } }>;
+    transferDisconnectedHostIfMissing?: (
+      roomCode: string,
+      ownerMemberId: string,
+    ) => Promise<{ room: { code: string } | null; hostTransferred: boolean }>;
     shareVideoForSession: (
       session: Session,
       memberToken: string,
@@ -84,6 +132,22 @@ export function createMessageHandler(options: {
         { type: "playback:update" }
       >["payload"]["playback"],
     ) => Promise<{ room: { code: string } | null; ignored: boolean }>;
+    updatePlaybackBufferForSession?: (
+      session: Session,
+      memberToken: string,
+      report: Omit<
+        Extract<ClientMessage, { type: "playback:buffer" }>["payload"],
+        "memberToken"
+      >,
+    ) => Promise<{ room: { code: string }; changed?: boolean }>;
+    setPlaybackSyncStrategyForSession?: (
+      session: Session,
+      memberToken: string,
+      strategy: Extract<
+        ClientMessage,
+        { type: "playback:sync-strategy:set" }
+      >["payload"]["strategy"],
+    ) => Promise<{ room: { code: string } }>;
     updateProfileForSession: (
       session: Session,
       memberToken: string,
@@ -94,6 +158,15 @@ export function createMessageHandler(options: {
       memberToken: string,
       messageType: ClientMessage["type"],
     ) => Promise<import("./types.js").RoomStoreRoomState>;
+    appendChatMessageForSession?: (
+      session: Session,
+      memberToken: string,
+      message: RoomChatMessage,
+    ) => Promise<{ room: { code: string } }>;
+    appendSystemChatMessageForRoom?: (
+      roomCode: string,
+      message: RoomChatMessage,
+    ) => Promise<{ room: { code: string } } | null>;
     getVoiceMemberAccessForSession?: (
       session: Session,
       memberToken: string,
@@ -122,11 +195,16 @@ export function createMessageHandler(options: {
   instanceId: string;
   metricsCollector?: Pick<
     MetricsCollector,
-    "observeMessageHandlerDuration" | "recordRoomEventPublishDropped"
+    | "observeMessageHandlerDuration"
+    | "recordRoomEventPublishDropped"
+    | "recordPlaybackStartupFailure"
+    | "recordDirectLinkPlaybackOutcome"
+    | "recordMemberPlayerError"
   >;
   maxPendingPublishes?: number;
   backpressureWaitMs?: number;
   publishTimeoutMs?: number;
+  hostDisconnectTransferGraceMs?: number;
   onRoomJoined?: (
     session: Session,
     roomCode: string,
@@ -146,9 +224,88 @@ export function createMessageHandler(options: {
   const now = options.now ?? Date.now;
   const metricsCollector = options.metricsCollector;
   const pendingPublishes = new Set<Promise<void>>();
+  const playbackBufferRateLimits = new WeakMap<
+    Session,
+    ReturnType<typeof createTokenBucket>
+  >();
   const maxPendingPublishes = options.maxPendingPublishes ?? 256;
   const backpressureWaitMs = options.backpressureWaitMs ?? 5_000;
   const publishTimeoutMs = options.publishTimeoutMs ?? 5_000;
+  const hostDisconnectTransferGraceMs =
+    options.hostDisconnectTransferGraceMs ?? HOST_DISCONNECT_TRANSFER_GRACE_MS;
+
+  function consumePlaybackBufferSlot(
+    session: Session,
+    currentTime: number,
+  ): boolean {
+    let bucket = playbackBufferRateLimits.get(session);
+    if (!bucket) {
+      bucket = createTokenBucket(PLAYBACK_BUFFER_REPORT_BURST, currentTime);
+      playbackBufferRateLimits.set(session, bucket);
+    }
+    return consumeTokenBucket(
+      bucket,
+      PLAYBACK_BUFFER_REPORTS_PER_SECOND,
+      PLAYBACK_BUFFER_REPORT_BURST,
+      currentTime,
+    );
+  }
+
+  const systemChatSuffix: Record<RoomSystemChatEventType, string> = {
+    member_joined: "加入了房间",
+    member_left: "离开了房间",
+    voice_unmuted: "开启了麦克风",
+    voice_muted: "关闭了麦克风",
+  };
+
+  function recordPlaybackReport(
+    roomCode: string,
+    payload: Extract<ClientMessage, { type: "playback:report" }>["payload"],
+  ): void {
+    if (payload.event === "startup_failure") {
+      metricsCollector?.recordPlaybackStartupFailure({
+        roomCode,
+        providerId: payload.providerId,
+        stage: payload.stage ?? "unknown",
+      });
+      return;
+    }
+
+    if (payload.event === "direct_link_success") {
+      metricsCollector?.recordDirectLinkPlaybackOutcome({
+        roomCode,
+        providerId: payload.providerId,
+        outcome: "success",
+      });
+      return;
+    }
+
+    if (payload.event === "direct_link_failure") {
+      metricsCollector?.recordDirectLinkPlaybackOutcome({
+        roomCode,
+        providerId: payload.providerId,
+        outcome: "failure",
+      });
+      return;
+    }
+
+    if (payload.event === "proxy_fallback") {
+      metricsCollector?.recordDirectLinkPlaybackOutcome({
+        roomCode,
+        providerId: payload.providerId,
+        outcome: "proxy_fallback",
+      });
+      return;
+    }
+
+    metricsCollector?.recordMemberPlayerError({
+      roomCode,
+      providerId: payload.providerId,
+      stage: payload.stage ?? "unknown",
+      browser: payload.browser ?? "unknown",
+      system: payload.system ?? "unknown",
+    });
+  }
 
   async function runRoomJoinedHook(
     session: Session,
@@ -372,12 +529,50 @@ export function createMessageHandler(options: {
     }
   }
 
-  async function leaveRoom(session: Session): Promise<void> {
+  async function appendSystemChatHistory(args: {
+    roomCode: string;
+    memberId: string;
+    displayName: string;
+    eventType: RoomSystemChatEventType;
+    timestamp: number;
+    session: Session;
+    reason: string;
+  }): Promise<void> {
+    if (!roomService.appendSystemChatMessageForRoom) {
+      return;
+    }
+    try {
+      await roomService.appendSystemChatMessageForRoom(args.roomCode, {
+        kind: "system",
+        systemEventType: args.eventType,
+        memberId: args.memberId,
+        displayName: args.displayName,
+        content: `${args.displayName} ${systemChatSuffix[args.eventType]}`,
+        timestamp: args.timestamp,
+      });
+    } catch (error) {
+      logEvent("chat_history_system_persist_failed", {
+        sessionId: args.session.id,
+        roomCode: args.roomCode,
+        memberId: args.memberId,
+        remoteAddress: args.session.remoteAddress,
+        origin: args.session.origin,
+        result: "error",
+        reason: args.reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function leaveRoom(
+    session: Session,
+    reason: LeaveRoomOptions["reason"] = "disconnect",
+  ): Promise<void> {
     const roomCode = session.roomCode;
     const memberId = session.memberId ?? session.id;
     const displayName = session.displayName;
-    const { room, notifyRoom, memberRemoved } =
-      await roomService.leaveRoomForSession(session);
+    const { room, notifyRoom, memberRemoved, hostTransferred } =
+      await roomService.leaveRoomForSession(session, { reason });
     if (!roomCode || (!room && !notifyRoom)) {
       return;
     }
@@ -385,6 +580,16 @@ export function createMessageHandler(options: {
     if (!memberRemoved && !notifyRoom) {
       return;
     }
+
+    await appendSystemChatHistory({
+      roomCode,
+      memberId,
+      displayName,
+      eventType: "member_left",
+      timestamp: now(),
+      session,
+      reason: "member_left_history_failed",
+    });
 
     await firePublishRoomEvent(
       {
@@ -400,6 +605,67 @@ export function createMessageHandler(options: {
         origin: session.origin,
       },
     );
+    if (hostTransferred && room) {
+      await firePublishRoomEvent(
+        {
+          type: "room_state_updated",
+          roomCode: room.code,
+        },
+        {
+          reason: "host_transfer_broadcast_failed",
+          sessionId: session.id,
+          remoteAddress: session.remoteAddress,
+          origin: session.origin,
+        },
+      );
+    }
+    if (
+      reason === "disconnect" &&
+      memberRemoved &&
+      room &&
+      roomService.transferDisconnectedHostIfMissing
+    ) {
+      // Closing a tab and refreshing both surface as WebSocket disconnects.
+      // Wait briefly so a refreshed host can reclaim the same member token
+      // before we promote the next still-online member.
+      const transferTimer = setTimeout(() => {
+        void (async () => {
+          try {
+            const transfer =
+              await roomService.transferDisconnectedHostIfMissing!(
+                roomCode,
+                memberId,
+              );
+            if (!transfer.hostTransferred || !transfer.room) {
+              return;
+            }
+            await firePublishRoomEvent(
+              {
+                type: "room_state_updated",
+                roomCode: transfer.room.code,
+              },
+              {
+                reason: "host_disconnect_transfer_broadcast_failed",
+                sessionId: session.id,
+                remoteAddress: session.remoteAddress,
+                origin: session.origin,
+              },
+            );
+          } catch (error) {
+            logEvent("host_disconnect_transfer_failed", {
+              sessionId: session.id,
+              roomCode,
+              memberId,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+              result: "error",
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        })();
+      }, hostDisconnectTransferGraceMs);
+      transferTimer.unref?.();
+    }
   }
 
   function handleRateLimitedMessage(
@@ -523,6 +789,15 @@ export function createMessageHandler(options: {
             runRoomLeftHook(session, previousRoomCode);
           }
           await runRoomJoinedHook(session, room.code, previousRoomCode);
+          await appendSystemChatHistory({
+            roomCode: room.code,
+            memberId: session.memberId ?? session.id,
+            displayName: session.displayName,
+            eventType: "member_joined",
+            timestamp: currentTime,
+            session,
+            reason: "member_joined_history_failed",
+          });
           send(socket, {
             type: "room:created",
             payload: {
@@ -584,6 +859,15 @@ export function createMessageHandler(options: {
             const joinedRoomCode = room.code;
             const joinedMemberId = session.memberId ?? session.id;
             const joinedDisplayName = session.displayName;
+            await appendSystemChatHistory({
+              roomCode: joinedRoomCode,
+              memberId: joinedMemberId,
+              displayName: joinedDisplayName,
+              eventType: "member_joined",
+              timestamp: currentTime,
+              session,
+              reason: "member_joined_history_failed",
+            });
             send(socket, {
               type: "room:joined",
               payload: {
@@ -648,7 +932,80 @@ export function createMessageHandler(options: {
             );
             return;
           }
-          await measureMessageHandling("room:leave", () => leaveRoom(session));
+          await measureMessageHandling("room:leave", () =>
+            leaveRoom(session, "explicit"),
+          );
+          return;
+        }
+        case "room:member-permission:set": {
+          const result = await roomService.setRoomMemberPermissionForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+            message.payload.permission,
+            message.payload.allowed,
+          );
+          await firePublishRoomEvent(
+            {
+              type: "room_state_updated",
+              roomCode: result.room.code,
+            },
+            {
+              reason: "member_permission_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          return;
+        }
+        case "room:member:kick": {
+          const result = await roomService.kickRoomMemberForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+          );
+          if (hasAttachedSocket(result.targetSession)) {
+            const targetSocket = result.targetSession.socket;
+            sendError(targetSocket, "member_kicked", MEMBER_KICKED_MESSAGE, {
+              messageType: message.type,
+            });
+            targetSocket.close(1000, MEMBER_KICKED_MESSAGE);
+          }
+          await firePublishRoomEvent(
+            {
+              type: "room_member_left",
+              roomCode: result.room.code,
+              memberId: result.targetMemberId,
+              displayName: result.targetSession.displayName,
+            },
+            {
+              reason: "member_kick_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          return;
+        }
+        case "room:host:transfer": {
+          const result = await roomService.transferRoomHostForSession!(
+            session,
+            message.payload.memberToken,
+            message.payload.targetMemberId,
+          );
+          await firePublishRoomEvent(
+            {
+              type: "room_state_updated",
+              roomCode: result.room.code,
+            },
+            {
+              reason: "host_transfer_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
           return;
         }
         case "profile:update": {
@@ -743,6 +1100,91 @@ export function createMessageHandler(options: {
           });
           return;
         }
+        case "playback:buffer": {
+          if (!consumePlaybackBufferSlot(session, currentTime)) {
+            handleRateLimitedMessage(session, message.type);
+            return;
+          }
+          await measureMessageHandling("playback:buffer", async () => {
+            const serviceResult =
+              await roomService.updatePlaybackBufferForSession?.(
+                session,
+                message.payload.memberToken,
+                {
+                  state: message.payload.state,
+                  currentTime: message.payload.currentTime,
+                  ...(message.payload.bufferAheadSeconds === undefined
+                    ? {}
+                    : {
+                        bufferAheadSeconds: message.payload.bufferAheadSeconds,
+                      }),
+                  ...(message.payload.playbackRevision === undefined
+                    ? {}
+                    : {
+                        playbackRevision: message.payload.playbackRevision,
+                      }),
+                },
+              );
+            if (serviceResult?.changed === false) {
+              return;
+            }
+            if (serviceResult) {
+              await firePublishRoomEvent(
+                {
+                  type: "room_state_updated",
+                  roomCode: serviceResult.room.code,
+                },
+                {
+                  reason: "playback_buffer_broadcast_failed",
+                  sessionId: session.id,
+                  remoteAddress: session.remoteAddress,
+                  origin: session.origin,
+                },
+              );
+            } else {
+              await roomService.getRoomStateForSession(
+                session,
+                message.payload.memberToken,
+                message.type,
+              );
+            }
+          });
+          return;
+        }
+        case "playback:sync-strategy:set": {
+          await measureMessageHandling(
+            "playback:sync-strategy:set",
+            async () => {
+              const serviceResult =
+                await roomService.setPlaybackSyncStrategyForSession?.(
+                  session,
+                  message.payload.memberToken,
+                  message.payload.strategy,
+                );
+              if (serviceResult) {
+                await firePublishRoomEvent(
+                  {
+                    type: "room_state_updated",
+                    roomCode: serviceResult.room.code,
+                  },
+                  {
+                    reason: "playback_sync_strategy_broadcast_failed",
+                    sessionId: session.id,
+                    remoteAddress: session.remoteAddress,
+                    origin: session.origin,
+                  },
+                );
+              } else {
+                await roomService.getRoomStateForSession(
+                  session,
+                  message.payload.memberToken,
+                  message.type,
+                );
+              }
+            },
+          );
+          return;
+        }
         case "sync:request": {
           if (
             !consumeFixedWindow(
@@ -774,6 +1216,154 @@ export function createMessageHandler(options: {
             type: "room:state",
             payload: state,
           });
+          return;
+        }
+        case "chat:message": {
+          if (
+            !consumeFixedWindow(
+              session.rateLimitState.chatMessage,
+              config.rateLimits.chatMessagePer5Seconds,
+              WINDOW_5_SECONDS_MS,
+              currentTime,
+            )
+          ) {
+            const retryAfterMs = getFixedWindowRetryAfterMs({
+              windowStart: session.rateLimitState.chatMessage.windowStart,
+              windowMs: WINDOW_5_SECONDS_MS,
+              currentTime,
+            });
+            handleRateLimitedMessage(session, message.type);
+            sendError(socket, "chat_rate_limited", CHAT_RATE_LIMITED_MESSAGE, {
+              messageType: message.type,
+              retryAfterMs,
+            });
+            return;
+          }
+
+          const chatMessage = {
+            memberId: session.memberId ?? session.id,
+            displayName: session.displayName,
+            content: message.payload.content,
+            timestamp: currentTime,
+          };
+          const stored = await roomService.appendChatMessageForSession?.(
+            session,
+            message.payload.memberToken,
+            chatMessage,
+          );
+          if (!stored) {
+            await roomService.getRoomStateForSession(
+              session,
+              message.payload.memberToken,
+              message.type,
+            );
+          }
+          const roomCode = stored?.room.code ?? session.roomCode;
+          if (!roomCode) {
+            sendError(socket, "not_in_room", "Join a room first.");
+            return;
+          }
+
+          await firePublishRoomEvent(
+            {
+              type: "room_chat_message",
+              roomCode,
+              ...chatMessage,
+            },
+            {
+              reason: "chat_message_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          logEvent("chat_message_sent", {
+            sessionId: session.id,
+            roomCode,
+            memberId: session.memberId ?? session.id,
+            remoteAddress: session.remoteAddress,
+            origin: session.origin,
+            result: "ok",
+          });
+          return;
+        }
+        case "danmaku:message": {
+          if (
+            !consumeFixedWindow(
+              session.rateLimitState.danmakuMessage,
+              config.rateLimits.danmakuMessagePer5Seconds,
+              WINDOW_5_SECONDS_MS,
+              currentTime,
+            )
+          ) {
+            const retryAfterMs = getFixedWindowRetryAfterMs({
+              windowStart: session.rateLimitState.danmakuMessage.windowStart,
+              windowMs: WINDOW_5_SECONDS_MS,
+              currentTime,
+            });
+            handleRateLimitedMessage(session, message.type);
+            sendError(
+              socket,
+              "chat_rate_limited",
+              DANMAKU_RATE_LIMITED_MESSAGE,
+              {
+                messageType: message.type,
+                retryAfterMs,
+              },
+            );
+            return;
+          }
+
+          await roomService.getRoomStateForSession(
+            session,
+            message.payload.memberToken,
+            message.type,
+          );
+          const roomCode = session.roomCode;
+          if (!roomCode) {
+            sendError(socket, "not_in_room", "Join a room first.");
+            return;
+          }
+
+          await firePublishRoomEvent(
+            {
+              type: "room_danmaku_message",
+              roomCode,
+              memberId: session.memberId ?? session.id,
+              displayName: session.displayName,
+              content: message.payload.content,
+              videoTime: message.payload.videoTime,
+              mode: message.payload.mode ?? "scroll",
+              color: message.payload.color ?? "#ffffff",
+              timestamp: currentTime,
+            },
+            {
+              reason: "danmaku_message_broadcast_failed",
+              sessionId: session.id,
+              remoteAddress: session.remoteAddress,
+              origin: session.origin,
+            },
+          );
+          logEvent("danmaku_message_sent", {
+            sessionId: session.id,
+            roomCode,
+            memberId: session.memberId ?? session.id,
+            remoteAddress: session.remoteAddress,
+            origin: session.origin,
+            result: "ok",
+          });
+          return;
+        }
+        case "playback:report": {
+          const state = await roomService.getRoomStateForSession(
+            session,
+            message.payload.memberToken,
+            message.type,
+          );
+          recordPlaybackReport(
+            session.roomCode ?? state.roomCode,
+            message.payload,
+          );
           return;
         }
         case "sync:ping": {
@@ -840,6 +1430,8 @@ export function createMessageHandler(options: {
             return;
           }
 
+          const previousMicrophoneEnabled =
+            session.voiceState?.microphoneEnabled ?? false;
           const memberAccess = roomService.updateVoiceStateForSession
             ? await roomService.updateVoiceStateForSession(
                 session,
@@ -853,6 +1445,19 @@ export function createMessageHandler(options: {
                 session,
                 message.payload.memberToken,
               );
+          const microphoneEnabled =
+            message.payload.connected && !message.payload.muted;
+          if (previousMicrophoneEnabled !== microphoneEnabled) {
+            await appendSystemChatHistory({
+              roomCode: memberAccess.roomCode,
+              memberId: memberAccess.memberId,
+              displayName: memberAccess.displayName,
+              eventType: microphoneEnabled ? "voice_unmuted" : "voice_muted",
+              timestamp: currentTime,
+              session,
+              reason: "voice_state_history_failed",
+            });
+          }
           await firePublishRoomEvent(
             {
               type: "voice_state_updated",

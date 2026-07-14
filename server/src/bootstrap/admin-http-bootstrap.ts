@@ -30,6 +30,8 @@ import type {
   Session,
 } from "../types.js";
 import type { RuntimeStore } from "../runtime-store.js";
+import type { PlaybackProxyRouter } from "../playback-proxy/router.js";
+import type { VideoProviderRouter } from "../providers/video-provider-router.js";
 import { createAdminServices } from "./admin-services.js";
 import { createHttpRequestHandler } from "./http-handler.js";
 import { createMetricsRequestHandler } from "./metrics-handler.js";
@@ -70,6 +72,8 @@ export async function createSharedAdminHttpBootstrap(args: {
   adminUiConfig?: AdminUiConfig;
   serviceVersion: string;
   serviceName?: string;
+  playbackProxyRouter?: PlaybackProxyRouter;
+  videoProviderRouter?: VideoProviderRouter;
   createOverviewService?: typeof createAdminOverviewService;
   createRoomQueryService?: typeof createAdminRoomQueryService;
   metricsPort?: number;
@@ -145,6 +149,8 @@ export async function createSharedAdminHttpBootstrap(args: {
     createHttpRequestHandler({
       adminRouter,
       securityPolicy,
+      playbackProxyRouter: args.playbackProxyRouter,
+      videoProviderRouter: args.videoProviderRouter,
       adminUiConfig: args.adminUiConfig,
       metricsEnabled: metricsOnMain,
     }),

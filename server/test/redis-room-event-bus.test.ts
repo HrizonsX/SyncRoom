@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRedisRoomEventBus } from "../src/redis-room-event-bus.js";
+import {
+  createRedisRoomEventBus,
+  parseRedisRoomEventBusMessage,
+} from "../src/redis-room-event-bus.js";
 
 const REDIS_URL = process.env.REDIS_URL;
 
@@ -65,4 +68,62 @@ test("redis room event bus delivers published events across instances", async (t
     await publisher.close();
     await subscriber.close();
   }
+});
+
+test("redis room event bus parses chat and danmaku room events", () => {
+  assert.deepEqual(
+    parseRedisRoomEventBusMessage(
+      JSON.stringify({
+        type: "room_chat_message",
+        roomCode: "ROOM01",
+        sourceInstanceId: "instance-a",
+        emittedAt: 1,
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "hello",
+        timestamp: 2,
+      }),
+    ),
+    {
+      type: "room_chat_message",
+      roomCode: "ROOM01",
+      sourceInstanceId: "instance-a",
+      emittedAt: 1,
+      memberId: "member-1",
+      displayName: "Alice",
+      content: "hello",
+      timestamp: 2,
+    },
+  );
+
+  assert.deepEqual(
+    parseRedisRoomEventBusMessage(
+      JSON.stringify({
+        type: "room_danmaku_message",
+        roomCode: "ROOM01",
+        sourceInstanceId: "instance-a",
+        emittedAt: 1,
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "danmaku",
+        videoTime: 3,
+        mode: "scroll",
+        color: "#ffffff",
+        timestamp: 4,
+      }),
+    ),
+    {
+      type: "room_danmaku_message",
+      roomCode: "ROOM01",
+      sourceInstanceId: "instance-a",
+      emittedAt: 1,
+      memberId: "member-1",
+      displayName: "Alice",
+      content: "danmaku",
+      videoTime: 3,
+      mode: "scroll",
+      color: "#ffffff",
+      timestamp: 4,
+    },
+  );
 });

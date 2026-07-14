@@ -17,6 +17,7 @@ test("room store persists create, update, delete, and expiry behaviors", async (
   assert.equal(createdRoom.version, 0);
   assert.equal(createdRoom.ownerMemberId, "member-owner");
   assert.equal(createdRoom.ownerDisplayName, "Alice");
+  assert.deepEqual(createdRoom.chatMessages, []);
 
   const updated = await store.updateRoom(
     createdRoom.code,
@@ -57,6 +58,8 @@ test("roomStateOf serializes persisted room state with active members", () => {
     code: "ROOM01",
     joinToken: "join-token",
     createdAt: 1,
+    ownerMemberId: "member-1",
+    ownerDisplayName: "Alice",
     sharedVideo: {
       url: "https://www.bilibili.com/video/BV1xx411c7mD",
       title: "Video",
@@ -74,6 +77,14 @@ test("roomStateOf serializes persisted room state with active members", () => {
       actorId: "member-1",
       seq: 2,
     },
+    chatMessages: [
+      {
+        memberId: "member-1",
+        displayName: "Alice",
+        content: "hello",
+        timestamp: 2,
+      },
+    ],
     version: 3,
     lastActiveAt: 1,
     expiresAt: null,
@@ -86,8 +97,17 @@ test("roomStateOf serializes persisted room state with active members", () => {
 
   assert.deepEqual(roomStateOf(persistedRoom, activeRoom), {
     roomCode: "ROOM01",
+    hostMemberId: "member-1",
     sharedVideo: persistedRoom.sharedVideo,
     playback: persistedRoom.playback,
+    playbackSync: {
+      strategy: "smooth",
+      hold: {
+        active: false,
+      },
+      bufferingMemberIds: [],
+    },
     members: [{ id: "member-1", name: "Alice" }],
+    chatMessages: persistedRoom.chatMessages,
   });
 });

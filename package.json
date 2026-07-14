@@ -4,6 +4,7 @@
   "private": true,
   "workspaces": [
     "packages/*",
+    "apps/*",
     "server",
     "extension"
   ],
@@ -20,12 +21,12 @@
     "bench:reconnect-storm": "tsx bench/reconnect-storm.ts",
     "prebench:ci-light": "npm run build -w @syncroom/protocol",
     "bench:ci-light": "tsx bench/ci-light.ts",
-    "typecheck": "npm run typecheck -w @syncroom/protocol && npm run typecheck -w @syncroom/server && npm run typecheck -w @syncroom/extension",
-    "build": "npm run build -w @syncroom/protocol && npm run build -w @syncroom/server && npm run build -w @syncroom/extension",
+    "typecheck": "npm run typecheck -w @syncroom/protocol && npm run typecheck -w @syncroom/server && npm run typecheck -w @syncroom/extension && npm run typecheck -w @syncroom/web-room",
+    "build": "npm run build -w @syncroom/protocol && npm run build -w @syncroom/server && npm run build -w @syncroom/extension && npm run build -w @syncroom/web-room",
     "pretest": "npm run build -w @syncroom/protocol",
-    "test": "npm run test:audit-gate && npm run test:scripts && npm run --ignore-scripts test -w @syncroom/protocol && npm run --ignore-scripts test -w @syncroom/server && npm run --ignore-scripts test -w @syncroom/extension",
+    "test": "npm run test:audit-gate && npm run test:scripts && npm run --ignore-scripts test -w @syncroom/protocol && npm run --ignore-scripts test -w @syncroom/server && npm run --ignore-scripts test -w @syncroom/extension && npm run --ignore-scripts test -w @syncroom/web-room",
     "test:scripts": "node --test scripts/target-browser.test.mjs",
-    "coverage": "npm run --ignore-scripts coverage -w @syncroom/protocol && npm run --ignore-scripts coverage -w @syncroom/server && npm run --ignore-scripts coverage -w @syncroom/extension",
+    "coverage": "npm run --ignore-scripts coverage -w @syncroom/protocol && npm run --ignore-scripts coverage -w @syncroom/server && npm run --ignore-scripts coverage -w @syncroom/extension && npm run --ignore-scripts coverage -w @syncroom/web-room",
     "audit": "node scripts/audit-gate.mjs",
     "test:audit-gate": "node --test scripts/audit-gate.test.mjs",
     "test:e2e": "npm run --ignore-scripts test:e2e -w @syncroom/server",
@@ -47,5 +48,10 @@
     "prettier": "^3.5.3",
     "typescript-eslint": "^8.26.1",
     "tsx": "^4.20.6"
+  },
+  "overrides": {
+    "mpegts.js": {
+      "webworkify-webpack": "2.1.5"
+    }
   }
 }

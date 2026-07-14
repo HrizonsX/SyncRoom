@@ -3,6 +3,7 @@ import {
   rememberSharedSource,
 } from "./tab-coordinator";
 import type { RoomSessionState, ShareState } from "./runtime-state";
+import { describeSharedVideoCapabilities } from "@syncroom/protocol";
 
 export interface TabController {
   rememberSharedSourceTab(tabId: number | undefined, url: string): void;
@@ -66,8 +67,17 @@ export function createTabController(args: {
     return decision.accepted;
   }
 
+  function getOpenableSharedVideoUrl(): string | null {
+    const sharedVideo = args.roomSessionState.roomState?.sharedVideo;
+    const capabilities = describeSharedVideoCapabilities(sharedVideo);
+    if (!capabilities.page.canOpen) {
+      return null;
+    }
+    return capabilities.page.normalizedUrl ?? null;
+  }
+
   async function ensureSharedVideoOpen(): Promise<void> {
-    const targetUrl = args.roomSessionState.roomState?.sharedVideo?.url;
+    const targetUrl = getOpenableSharedVideoUrl();
     if (!targetUrl) {
       return;
     }
@@ -139,7 +149,7 @@ export function createTabController(args: {
   }
 
   async function openSharedVideoFromPopup(): Promise<void> {
-    const targetUrl = args.roomSessionState.roomState?.sharedVideo?.url;
+    const targetUrl = getOpenableSharedVideoUrl();
     if (!targetUrl) {
       return;
     }

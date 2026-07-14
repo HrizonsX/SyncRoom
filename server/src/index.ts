@@ -8,12 +8,14 @@ import { logEffectiveOriginPolicy } from "./config/security-config.js";
 const {
   port,
   metricsPort,
+  nginxCacheMetricsPort,
   logLevel,
   securityConfig,
   persistenceConfig,
   adminConfig,
   adminUiConfig,
   voiceConfig,
+  mediaExtractorConfig,
 } = await loadRuntimeConfig();
 
 assertMetricsPortDoesNotCollide(metricsPort, port, "PORT");
@@ -27,7 +29,9 @@ const { httpServer, metricsHttpServer } = await createSyncServer(
     adminUiConfig,
     logLevel,
     metricsPort,
+    nginxCacheMetricsPort,
     voiceConfig,
+    mediaExtractorConfig,
   },
 );
 httpServer.listen(port, () => {

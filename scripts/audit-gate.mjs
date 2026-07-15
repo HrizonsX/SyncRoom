@@ -320,17 +320,31 @@ function loadJsonFile(filePath, fallback) {
   return JSON.parse(content);
 }
 
+function createNpmAuditCommand(auditLevel) {
+  const auditArgs = ["audit", "--json", `--audit-level=${auditLevel}`];
+  if (process.env.npm_execpath) {
+    return {
+      command: process.execPath,
+      args: [process.env.npm_execpath, ...auditArgs],
+    };
+  }
+  if (process.platform === "win32") {
+    return {
+      command: process.env.ComSpec ?? "cmd.exe",
+      args: ["/d", "/s", "/c", "npm", ...auditArgs],
+    };
+  }
+  return { command: "npm", args: auditArgs };
+}
+
 function runNpmAudit(auditLevel) {
-  const result = spawnSync(
-    "npm",
-    ["audit", "--json", `--audit-level=${auditLevel}`],
-    {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  const stdout = result.stdout.trim();
-  const stderr = result.stderr.trim();
+  const npmAuditCommand = createNpmAuditCommand(auditLevel);
+  const result = spawnSync(npmAuditCommand.command, npmAuditCommand.args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout = String(result.stdout ?? "").trim();
+  const stderr = String(result.stderr ?? "").trim();
 
   if (!stdout) {
     if (result.status === 0) {

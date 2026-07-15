@@ -20,6 +20,17 @@ function withMockedNow<T>(now: number, callback: () => T): T {
   }
 }
 
+function formatExpectedChatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 const joinedRoomState: WebRoomState = {
   view: "joined",
   connectionState: "connected",
@@ -637,13 +648,15 @@ test("renders chat messages as directional bubbles with timestamps", () => {
   assert.match(html, /data-chat-author="self"/);
   assert.match(html, /class="chat-message is-other"/);
   assert.match(html, /data-chat-author="other"/);
-  assert.match(
-    html,
-    /<time datetime="1725000000000">2024\/08\/30 14:40<\/time>/,
+  assert.ok(
+    html.includes(
+      `<time datetime="1725000000000">${formatExpectedChatTimestamp(1_725_000_000_000)}</time>`,
+    ),
   );
-  assert.match(
-    html,
-    /<time datetime="1725000060000">2024\/08\/30 14:41<\/time>/,
+  assert.ok(
+    html.includes(
+      `<time datetime="1725000060000">${formatExpectedChatTimestamp(1_725_000_060_000)}</time>`,
+    ),
   );
 });
 

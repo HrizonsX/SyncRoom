@@ -59,6 +59,12 @@ ws://8.163.88.33:8787
 
 ## Docker 镜像
 
+镜像已发布到 Docker Hub 仓库 `benxl/syncroom-server`，其中 `benxl` 是 Docker Hub 用户名/命名空间。下载当前版本镜像：
+
+```bash
+docker pull benxl/syncroom-server:1.0.3
+```
+
 服务端、网页房间、Nginx、Redis、LiveKit 和媒体解析服务可以作为单镜像运行：
 
 ```bash

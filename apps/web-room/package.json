@@ -1,6 +1,6 @@
 {
   "name": "@syncroom/web-room",
-  "version": "0.3.1",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "main": "dist/src/index.js",
@@ -13,7 +13,7 @@
     "coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
   },
   "dependencies": {
-    "@syncroom/protocol": "0.3.1",
+    "@syncroom/protocol": "1.0.3",
     "livekit-client": "^2.19.1",
     "media-chrome": "^4.19.2",
     "mpegts.js": "^1.8.0",

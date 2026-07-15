@@ -1,6 +1,6 @@
 {
   "name": "@syncroom/extension",
-  "version": "0.3.1",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,7 +13,7 @@
     "coverage": "tsx --test --experimental-test-coverage test/**/*.test.ts"
   },
   "dependencies": {
-    "@syncroom/protocol": "0.3.1",
+    "@syncroom/protocol": "1.0.3",
     "livekit-client": "^2.19.1"
   },
   "devDependencies": {

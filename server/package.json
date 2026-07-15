@@ -1,6 +1,6 @@
 {
   "name": "@syncroom/server",
-  "version": "0.3.1",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "test:redis": "node scripts/run-redis-test.mjs"
   },
   "dependencies": {
-    "@syncroom/protocol": "0.3.1",
+    "@syncroom/protocol": "1.0.3",
     "ioredis": "^5.10.0",
     "livekit-server-sdk": "^2.15.4",
     "qrcode": "^1.5.4",

@@ -20,6 +20,12 @@ Use this server URL in the extension advanced settings or the web room entry scr
 
 ## Docker Image
 
+The image has been published to the Docker Hub repository `benxl/syncroom-server`, where `benxl` is the Docker Hub username/namespace. Download the current image with one command:
+
+```bash
+docker pull benxl/syncroom-server:1.0.3
+```
+
 The server, web room, Nginx, Redis, LiveKit, and media extractor can run as a single image:
 
 ```bash
